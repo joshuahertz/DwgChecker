@@ -1,0 +1,187 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.9.3"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # dwgread from the pinned LibreDWG release, identical flags on every platform.
+  # Cached on the version file + build script (+ patches, which the script applies).
+  # ---------------------------------------------------------------------------
+  dwgread-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: build-dwgread/dwgread.exe
+          key: dwgread-win64-${{ hashFiles('third_party/libredwg.version', 'scripts/build_dwgread.sh', 'third_party/patches/**') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel make patch tar xz curl
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-libiconv mingw-w64-x86_64-pkgconf
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_dwgread.sh build-dwgread
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dwgread-windows
+          path: build-dwgread/dwgread.exe
+
+  dwgread-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: build-dwgread/dwgread
+          key: dwgread-macos-universal-${{ hashFiles('third_party/libredwg.version', 'scripts/build_dwgread.sh', 'third_party/patches/**') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_dwgread.sh build-dwgread
+      - run: lipo -info build-dwgread/dwgread
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dwgread-macos
+          path: build-dwgread/dwgread
+
+  # ---------------------------------------------------------------------------
+  # Fast feedback: core + GUI + unit tests on Linux (tests use committed fixtures;
+  # tst_dwgread skips itself because no dwgread is bundled here).
+  # ---------------------------------------------------------------------------
+  test-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y qt6-base-dev ninja-build
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+
+  # ---------------------------------------------------------------------------
+  # Windows: MSVC build, tests, windeployqt, zip with dwgread next to the exe.
+  # ---------------------------------------------------------------------------
+  build-windows:
+    needs: dwgread-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dwgread-windows
+          path: dwgread
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDWGCHECK_DWGREAD="${{ github.workspace }}/dwgread/dwgread.exe"
+      - name: Build
+        run: cmake --build build
+      - name: Tests (unit tests + tst_dwgread end to end with the bundled dwgread)
+        run: ctest --test-dir build --output-on-failure
+      - name: Dump the corpus with the bundled dwgread (for the parity job)
+        shell: bash
+        run: |
+          dwgread/dwgread.exe --version
+          mkdir -p json-windows
+          for f in tests/corpus/dwg/*.dwg; do
+            dwgread/dwgread.exe -O JSON -o "json-windows/$(basename "${f%.dwg}").json" "$f" 2>/dev/null
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: json-windows
+          path: json-windows
+      - name: Package
+        run: cmake --install build --prefix stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DwgChecker-windows
+          path: stage
+
+  # ---------------------------------------------------------------------------
+  # macOS: universal build, tests, macdeployqt, sign + notarize (when secrets exist).
+  # ---------------------------------------------------------------------------
+  build-macos:
+    needs: dwgread-macos
+    runs-on: macos-14
+    env:
+      HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dwgread-macos
+          path: dwgread
+      - run: chmod +x dwgread/dwgread
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+      - name: Configure (universal)
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DDWGCHECK_DWGREAD="${{ github.workspace }}/dwgread/dwgread"
+      - name: Build
+        run: cmake --build build
+      - name: Tests (unit tests + tst_dwgread end to end with the bundled dwgread)
+        run: ctest --test-dir build --output-on-failure
+      - name: Dump the corpus with the bundled dwgread (for the parity job)
+        run: |
+          dwgread/dwgread --version
+          mkdir -p json-macos
+          for f in tests/corpus/dwg/*.dwg; do
+            dwgread/dwgread -O JSON -o "json-macos/$(basename "${f%.dwg}").json" "$f" 2>/dev/null
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: json-macos
+          path: json-macos
+      - name: Package (macdeployqt)
+        run: cmake --install build --prefix stage
+      - name: Sign and notarize
+        if: env.HAS_SIGNING == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: bash packaging/macos/sign_and_notarize.sh "stage/DwgChecker.app"
+      - run: ditto -c -k --keepParent stage/DwgChecker.app DwgChecker-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DwgChecker-macos
+          path: DwgChecker-macos.zip
+
+  # Both platforms must parse the corpus identically (same pinned source, same flags).
+  parity:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: json-windows
+          path: json-windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: json-macos
+          path: json-macos
+      - run: python3 scripts/compare_json_dirs.py json-windows json-macos

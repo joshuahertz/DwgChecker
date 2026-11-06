@@ -1,0 +1,14 @@
+/build*/
+/out/
+/stage/
+CMakeUserPresets.json
+*.user
+.vs/
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+# AutoCAD lock / backup files next to corpus drawings
+*.dwl
+*.dwl2
+*.bak

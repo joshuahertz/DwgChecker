@@ -1,0 +1,14 @@
+diff --git a/src/out_json.c b/src/out_json.c
+index 754b05b..0455a64 100644
+--- a/src/out_json.c
++++ b/src/out_json.c
+@@ -216,7 +216,8 @@ static char *_path_field (const char *path);
+ #define VALUE_TV(nam, dxf)
+ 
+ #define FIELD(nam, type, dxf)                                                 \
+-  if (!memBEGINc (#nam, "num_"))                                              \
++  if (!memBEGINc (#nam, "num_") || !strcmp (#nam, "num_cols")                 \
++      || !strcmp (#nam, "num_rows"))                                          \
+     {                                                                         \
+       FIRSTPREFIX fprintf (dat->fh, JSON_KEY FORMAT_##type,                   \
+                            _path_field (#nam), JSON_SPC, _obj->nam);          \

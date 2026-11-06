@@ -1,0 +1,13 @@
+diff --git a/src/out_json.c b/src/out_json.c
+index 754b05b..97897e8 100644
+--- a/src/out_json.c
++++ b/src/out_json.c
+@@ -139,7 +139,7 @@ static char *_path_field (const char *path);
+ #undef FORMAT_4BITS
+ #undef FORMAT_RD
+ #undef FORMAT_BD
+-#define FORMAT_RD "%.14f"
++#define FORMAT_RD "%.17g"
+ #define FORMAT_BD FORMAT_RD
+ #define FORMAT_RLL "%" PRIu64
+ #define FORMAT_BLL "%" PRIu64

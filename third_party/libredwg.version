@@ -1,0 +1,5 @@
+# The one place the LibreDWG version is pinned. Read by scripts/build_dwgread.sh,
+# CMake (for the About box / logs) and the GitHub Actions cache key.
+LIBREDWG_VERSION=0.14
+LIBREDWG_URL=https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz
+LIBREDWG_SHA256=62ebb73b984f865960f20ed26619ea5f8789d5e3fd088fa40a2598384da81275
