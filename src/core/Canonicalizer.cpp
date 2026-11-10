@@ -540,7 +540,12 @@ private:
         return n.isEmpty() ? QStringLiteral("USER") : n;
     }
 
-    static int arcSteps(double sweep) { return std::max(2, static_cast<int>(std::ceil(std::fabs(sweep) / (kPi / 64)))); }
+    // Segments for an arc: one per pi/64 of sweep. A sweep on a multiple of pi/64 (a quarter
+    // circle is 32) must not tip to the next count on the last digit of the file's angles, or
+    // the same drawing flattens differently depending on how precisely dwgread prints it.
+    static int arcSteps(double sweep) {
+        return std::max(2, static_cast<int>(std::ceil(std::fabs(sweep) / (kPi / 64) - 1e-6)));
+    }
 
     // Intermediate points of a bulge segment p0 -> p1 (endpoints excluded), in path order.
     static void flattenBulge(std::vector<Vec2>& pts, Vec2 p0, Vec2 p1, double bulge) {
@@ -566,7 +571,7 @@ private:
             const double a0 = DwgJson::num(s, "start_angle"), a1 = DwgJson::num(s, "end_angle");
             const bool ccw = DwgJson::integer(s, "is_ccw", 1) != 0;
             double sweep = a1 - a0;
-            while (sweep <= 0) sweep += kTwoPi;
+            while (sweep <= 1e-9) sweep += kTwoPi;  // start == end (to rounding): a full turn
             sweep = std::min(sweep, kTwoPi);
             Vec2 major, minor;
             if (type == 2) {

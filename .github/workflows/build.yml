@@ -107,8 +107,9 @@ jobs:
         run: |
           foreach ($line in Get-Content build/Testing/Temporary/LastTestsFailed.log -ErrorAction SilentlyContinue) {
             $name = $line.Split(':')[1]
-            Write-Host "=== $name, run directly ==="
-            & "build/$name.exe" -o "build/$name-log.txt,txt"
+            $exe = Get-ChildItem build -Recurse -Filter "$name.exe" | Select-Object -First 1
+            Write-Host "=== $name, run directly: $($exe.FullName) ==="
+            & $exe.FullName -o "build/$name-log.txt,txt"
             $code = $LASTEXITCODE
             Write-Host ("exit code: {0} (0x{1:X8})" -f $code, $code)
             Get-Content "build/$name-log.txt" -ErrorAction SilentlyContinue
@@ -165,8 +166,9 @@ jobs:
         run: |
           set +e
           for name in $(cut -d: -f2 build/Testing/Temporary/LastTestsFailed.log 2>/dev/null); do
-            echo "=== $name, run directly ==="
-            "build/$name" -o "build/$name-log.txt,txt"
+            exe="$(find build -type f -name "$name" -perm -u+x | head -n1)"
+            echo "=== $name, run directly: $exe ==="
+            "$exe" -o "build/$name-log.txt,txt"
             echo "exit code: $?"
             cat "build/$name-log.txt"
           done

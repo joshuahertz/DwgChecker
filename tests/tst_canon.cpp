@@ -50,6 +50,7 @@ private slots:
     // Rule 10
     void linetypeByLayer();
     void linetypeByBlock();
+    void hatchArcStepsIgnoreLastDigit();
     void linetypeExplicitAndPatterns();
     void layerZeroInheritance();
     // Misc
@@ -450,6 +451,31 @@ void TestCanon::nonZeroZWarning() {
     const Drawing d = b.canon();
     QCOMPARE(d.prims.size(), size_t(1));
     QVERIFY(hasWarning(d, WarnKind::NonZeroZ));
+}
+
+void TestCanon::hatchArcStepsIgnoreLastDigit() {
+    // A hatch boundary with a quarter-circle edge, its end angle as a 14-decimal dump prints it
+    // (1.5707963267949, just over pi/2) and at full precision: the same number of points.
+    // (hatch_edges_select failed in CI on this: 33 points against 32.)
+    auto loopSize = [](double endAngle) {
+        DocBuilder b;
+        auto edgeLine = [](Vec2 a, Vec2 e) {
+            return QJsonObject{{"curve_type", 1}, {"first_endpoint", QJsonArray{a.x, a.y}}, {"second_endpoint", QJsonArray{e.x, e.y}}};
+        };
+        const QJsonObject arc{{"curve_type", 2}, {"center", QJsonArray{0.0, 0.0}}, {"radius", 1.0},
+                              {"start_angle", 0.0}, {"end_angle", endAngle}, {"is_ccw", 1}};
+        const QJsonArray segs{edgeLine({0, 0}, {1, 0}), arc, edgeLine({0, 1}, {0, 0})};
+        b.raw(QStringLiteral("HATCH"), QStringLiteral("0"),
+              QJsonObject{{"name", "SOLID"}, {"is_solid_fill", 1}, {"style", 0},
+                          {"paths", QJsonArray{QJsonObject{{"flag", 1}, {"segs", segs}}}}});
+        const Drawing d = b.canon();
+        for (const auto& p : d.prims)
+            if (p.kind == PrimKind::Hatch && p.loops && p.loops->size() == 1) return static_cast<int>(p.loops->front().size());
+        return -1;
+    };
+    const int printed = loopSize(1.5707963267949), exact = loopSize(kPi / 2);
+    QVERIFY(exact > 30);
+    QCOMPARE(printed, exact);
 }
 
 QTEST_GUILESS_MAIN(TestCanon)

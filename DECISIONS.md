@@ -771,6 +771,15 @@ the full path as a tooltip.
   `source <(grep ...)`, which macOS's /bin/bash 3.2 runs as an empty file, so the
   macOS dwgread job stopped at "LIBREDWG_VERSION: missing". The script must stay
   bash 3.2 compatible.
+- **The tst_dwgread failure (Windows and macOS) was a fragile arc split.**
+  Hatch boundary arcs are flattened into one segment per pi/64 of sweep with
+  `ceil()`. hatch_edges_select's quarter-round corner sweeps exactly pi/2 (32
+  segments). The fixture's 14-decimal angle 1.5707963267949 is a hair over pi/2,
+  which gave 33 segments; CI's dwgread prints full precision and gave 32, hence
+  "loop size". `arcSteps` now subtracts 1e-6 steps before rounding up. An edge
+  whose start and end angles agree to 1e-9 is a full turn, not a sliver. Test:
+  tst_canon `hatchArcStepsIgnoreLastDigit`. The backslash fix above is kept as a
+  real but separate issue.
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
