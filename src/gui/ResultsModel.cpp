@@ -48,6 +48,17 @@ QString errorsTooltip(const StudentRun& r) {
     return lines.join('\n') + QObject::tr("\n\nClick the row for the detail view.");
 }
 
+// The student row of a student with several files: a faint tint of the highlight color, so
+// it stands apart from the file rows under it (and from the alternating stripes).
+QColor studentRowColor() {
+    const QPalette pal = QApplication::palette();
+    const QColor base = pal.color(QPalette::Base), hl = pal.color(QPalette::Highlight);
+    const double t = 0.12;
+    return QColor::fromRgbF(static_cast<float>(base.redF() * (1 - t) + hl.redF() * t),
+                            static_cast<float>(base.greenF() * (1 - t) + hl.greenF() * t),
+                            static_cast<float>(base.blueF() * (1 - t) + hl.blueF() * t));
+}
+
 QString flagTooltip(const CopyFlag& f) {
     QString t = f.level == Strength::Info ? QString() : f.text;
     if (!f.tooltip.isEmpty()) t += (t.isEmpty() ? QString() : QStringLiteral("\n\n")) + f.tooltip;
@@ -122,12 +133,18 @@ QVariant ResultsModel::headerData(int section, Qt::Orientation o, int role) cons
     if (role == Qt::InitialSortOrderRole)
         return section == ColFlag ? static_cast<int>(Qt::DescendingOrder) : static_cast<int>(Qt::AscendingOrder);
     if (role == Qt::ToolTipRole && section == ColFlag)
-        return tr("Possible duplicate (copying): red = strong evidence, amber = weaker. Hover over an icon for the details.");
+        return tr("Possible cheating (shared or copied files): red = strong evidence, amber = weaker. Hover over an icon "
+                  "for the details.");
+    if (role == Qt::ToolTipRole && section == ColName && m_batch && m_batch->multipleRefs()) {
+        QStringList l;
+        for (int k = 0; k < static_cast<int>(m_batch->refPaths.size()); ++k) l << drawingLabel(k) + QStringLiteral(": ") + QFileInfo(m_batch->refPaths[k]).fileName();
+        return l.join('\n');
+    }
     if (role != Qt::DisplayRole) return {};
     switch (section) {
     case ColName: return tr("Student");
     case ColAcad: return tr("AutoCAD");
-    case ColFlag: return tr("Poss. dup.");
+    case ColFlag: return tr("Possible cheating");
     case ColCorrectness: return tr("Correctness");
     case ColErrors: return tr("Errors");
     }
@@ -150,35 +167,19 @@ QVariant ResultsModel::groupData(int gi, int column, int role) const {
     }
     const CopyFlag& f = m_groupFlags[gi];
     const bool multi = m_batch->multipleRefs();
-    auto refName = [&](int k) { return QFileInfo(m_batch->refPaths.value(k)).completeBaseName(); };
-    auto combinedErrors = [&]() {
-        QStringList parts;
-        if (multi) {
-            for (int k = 0; k < static_cast<int>(g.byRef.size()); ++k) {
-                const int fi = g.byRef[k];
-                parts << QStringLiteral("%1: %2").arg(refName(k), fi >= 0 ? m_batch->students[fi].result.errorSummary() : tr("no file"));
-            }
-        } else if (!g.byRef.empty() && g.byRef[0] >= 0) {
-            parts << m_batch->students[g.byRef[0]].result.errorSummary();
-        } else {
-            parts << tr("no readable file");
-        }
-        int extra = 0;
-        for (int fi : g.files) extra += !m_batch->students[fi].matched();
-        QString t = parts.join(QStringLiteral("  ·  "));
-        if (extra > 0) t += tr("; %1 extra file(s)").arg(extra);
-        return t;
-    };
+    // The student row only names the student (and says when drawings are missing); each file
+    // row has its own errors.
     switch (role) {
     case StudentIndexRole: return -1;
     case HasChildrenRole: return true;
     case FlagLevelRole: return static_cast<int>(f.level);
     case LoadedRole: return true;
     case FileNameRole: {
-        if (!multi) return tr("%1 files").arg(g.files.size());
+        if (!multi) return QString();
         int submitted = 0;
         for (int fi : g.byRef) submitted += fi >= 0;
-        return tr("%1 of %2 drawings submitted").arg(submitted).arg(g.byRef.size());
+        return submitted < static_cast<int>(g.byRef.size()) ? tr("%1 / %2 drawings").arg(submitted).arg(g.byRef.size())
+                                                            : QString();
     }
     case Qt::ToolTipRole:
         switch (column) {
@@ -188,7 +189,6 @@ QVariant ResultsModel::groupData(int gi, int column, int role) const {
             return t.isEmpty() ? QVariant() : QVariant(t);
         }
         case ColCorrectness: return multi ? tr("The mean over the %1 solution drawings; a drawing without a file counts 0%").arg(g.byRef.size()) : QVariant();
-        case ColErrors: return combinedErrors();
         }
         return {};
     case SortRole:
@@ -208,12 +208,9 @@ QVariant ResultsModel::groupData(int gi, int column, int role) const {
         switch (column) {
         case ColName: return g.identity.name;
         case ColCorrectness: return percentText(g.correctness);
-        case ColErrors: return combinedErrors();
         default: return QString();
         }
-    case Qt::BackgroundRole:
-        if (column == ColCorrectness) return correctnessColor(g.correctness);
-        return {};
+    case Qt::BackgroundRole: return column == ColCorrectness ? correctnessColor(g.correctness) : studentRowColor();
     case Qt::ForegroundRole:
         if (column == ColFlag) return f.level == Strength::Strong ? kStrong : kWeak;
         return {};
@@ -226,10 +223,11 @@ QVariant ResultsModel::fileData(int fi, int column, int role, bool subrow) const
     const CopyFlag& f = m_flags[fi];
     const bool multi = m_batch->multipleRefs();
     auto refName = [&](int k) { return QFileInfo(m_batch->refPaths.value(k)).fileName(); };
+    auto refLabel = [&](int k) { return multi ? drawingLabel(k) : refName(k); };
     auto errorsText = [&]() {
         if (!r.ok()) return tr("could not read file: %1").arg(r.loadError);
         if (!r.matched())
-            return tr("not matched to a solution drawing; closest: %1 (%2)").arg(refName(r.closestRef), percentText(r.result.correctness));
+            return tr("not matched to a solution drawing; closest: %1 (%2)").arg(refLabel(r.closestRef), percentText(r.result.correctness));
         return r.result.errorSummary();
     };
     switch (role) {
@@ -237,10 +235,13 @@ QVariant ResultsModel::fileData(int fi, int column, int role, bool subrow) const
     case HasChildrenRole: return false;
     case FlagLevelRole: return static_cast<int>(f.level);
     case LoadedRole: return r.ok();
-    case FileNameRole: return r.identity.fileName;
+    case FileNameRole: return subrow ? QString() : r.identity.fileName;  // a file row is one line
     case Qt::ToolTipRole:
         switch (column) {
-        case ColName: return QDir::toNativeSeparators(r.path);
+        case ColName:
+            if (subrow && multi && r.matched())
+                return tr("%1: %2\nStudent's file: %3").arg(drawingLabel(r.refIndex), refName(r.refIndex), QDir::toNativeSeparators(r.path));
+            return QDir::toNativeSeparators(r.path);
         case ColAcad: return tr("Open this file in AutoCAD\n%1").arg(QDir::toNativeSeparators(r.path));
         case ColFlag: {
             const QString t = flagTooltip(f);
@@ -264,9 +265,9 @@ QVariant ResultsModel::fileData(int fi, int column, int role, bool subrow) const
         switch (column) {
         case ColName:
             if (!subrow) return r.identity.name;
-            if (!r.ok()) return tr("could not be read");
-            if (!r.matched()) return tr("extra file (not graded)");
-            return multi ? refName(r.refIndex) : tr("graded file");
+            if (!r.ok()) return tr("Unreadable file");
+            if (!r.matched()) return tr("Extra file (not graded)");
+            return multi ? drawingLabel(r.refIndex) : tr("Graded file");
         case ColAcad: return tr("Open in AutoCAD");
         case ColCorrectness: return correctnessText(r);
         case ColErrors: return errorsText();
@@ -282,13 +283,18 @@ QVariant ResultsModel::fileData(int fi, int column, int role, bool subrow) const
     return {};
 }
 
+QString ResultsModel::drawingLabel(int ref) const { return tr("Drawing %1").arg(ref + 1); }
+
 QVariant ResultsModel::noFileData(int, int ref, int column, int role) const {
     switch (role) {
     case StudentIndexRole: return -1;
     case HasChildrenRole: return false;
     case FlagLevelRole: return static_cast<int>(Strength::Info);
     case LoadedRole: return false;
-    case FileNameRole: return tr("no file submitted for this drawing");
+    case FileNameRole: return QString();
+    case Qt::ToolTipRole:
+        if (column == ColName) return tr("%1: %2\nNo file was submitted for this drawing.").arg(drawingLabel(ref), QFileInfo(m_batch->refPaths.value(ref)).fileName());
+        return {};
     case SortRole:
         switch (column) {
         case ColName: return ref;
@@ -298,9 +304,9 @@ QVariant ResultsModel::noFileData(int, int ref, int column, int role) const {
         }
     case Qt::DisplayRole:
         switch (column) {
-        case ColName: return QFileInfo(m_batch->refPaths.value(ref)).fileName();
+        case ColName: return drawingLabel(ref);
         case ColCorrectness: return percentText(0);
-        case ColErrors: return tr("no file matched this solution drawing");
+        case ColErrors: return tr("no file");
         default: return QString();
         }
     case Qt::BackgroundRole:
@@ -325,16 +331,19 @@ void ResultsDelegate::paint(QPainter* p, const QStyleOptionViewItem& option, con
     const QColor fg = selected ? opt.palette.highlightedText().color() : opt.palette.text().color();
     switch (idx.column()) {
     case ColName: {
-        QFont bold = opt.font;
-        bold.setBold(true);
-        p->setFont(bold);
+        QFont name = opt.font;
+        name.setBold(!idx.parent().isValid());  // the student, not a file row under it
+        p->setFont(name);
         p->setPen(fg);
         p->drawText(QRect(inner.left(), inner.top(), inner.width(), fm.height()), Qt::AlignLeft | Qt::AlignVCenter,
-                    QFontMetrics(bold).elidedText(text, Qt::ElideRight, inner.width()));
-        p->setFont(opt.font);
-        p->setPen(selected ? fg : opt.palette.color(QPalette::PlaceholderText));
-        p->drawText(QRect(inner.left(), inner.top() + fm.height(), inner.width(), fm.height()), Qt::AlignLeft | Qt::AlignVCenter,
-                    fm.elidedText(idx.data(FileNameRole).toString(), Qt::ElideMiddle, inner.width()));
+                    QFontMetrics(name).elidedText(text, Qt::ElideRight, inner.width()));
+        const QString second = idx.data(FileNameRole).toString();
+        if (!second.isEmpty()) {
+            p->setFont(opt.font);
+            p->setPen(selected ? fg : opt.palette.color(QPalette::PlaceholderText));
+            p->drawText(QRect(inner.left(), inner.top() + fm.height(), inner.width(), fm.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                        fm.elidedText(second, Qt::ElideMiddle, inner.width()));
+        }
         break;
     }
     case ColAcad: {
@@ -393,7 +402,7 @@ QSize ResultsDelegate::sizeHint(const QStyleOptionViewItem& option, const QModel
         return std::max(r.height(), fm.height()) + 2 * kPad;
     };
     switch (idx.column()) {
-    case ColName: return QSize(260, 2 * fm.height() + 2 * kPad);
+    case ColName: return QSize(260, (idx.data(FileNameRole).toString().isEmpty() ? 1 : 2) * fm.height() + 2 * kPad);
     case ColAcad: return QSize(fm.horizontalAdvance(opt.text) + 2 * kPad + 8, fm.height() + 2 * kPad);
     case ColFlag: return QSize(kFlagIcon + 2 * kPad, std::max(kFlagIcon, fm.height()) + 2 * kPad);
     case ColCorrectness: return QSize(110, fm.height() + 2 * kPad);

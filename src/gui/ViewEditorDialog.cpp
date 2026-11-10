@@ -32,7 +32,9 @@ ViewEditorDialog::ViewEditorDialog(DrawingPtr ref, const QString& refPath, const
     resize(1200, 760);
     auto* lay = new QVBoxLayout(this);
     auto* help = new QLabel(tr("Confirm how the reference splits into views. Drag with the left button to lasso primitives "
-                               "(Shift adds to the selection), then assign them to a view. Right-drag pans, the wheel zooms."),
+                               "(Shift adds to the selection), then assign them to a view. Right-drag pans, the wheel zooms. "
+                               "Name a view \"Ignored\" to leave it out of grading, e.g. a title block or notes: it is "
+                               "still found in each drawing, so a student's copy of it is not counted as extra."),
                             this);
     help->setWordWrap(true);
     lay->addWidget(help);

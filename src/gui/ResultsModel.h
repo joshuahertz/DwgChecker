@@ -23,7 +23,7 @@ enum ResultsRole {
     StudentIndexRole,  // int: the file (index into BatchOutput::students), -1 = none
     FlagLevelRole,     // int (dc::Strength)
     LoadedRole,        // bool
-    FileNameRole,      // QString: the gray second line of the Student column
+    FileNameRole,      // QString: the gray second line of the Student column ("2 / 3 drawings"), often empty
     HasChildrenRole    // bool: a student row with subrows
 };
 
@@ -49,6 +49,8 @@ private:
     QVariant groupData(int g, int column, int role) const;
     QVariant fileData(int file, int column, int role, bool subrow) const;
     QVariant noFileData(int g, int ref, int column, int role) const;
+    // "Drawing 2": a file row's name with several solution drawings (in the card's order).
+    QString drawingLabel(int ref) const;
 
     std::shared_ptr<const dc::BatchOutput> m_batch;
     std::vector<dc::CopyFlag> m_flags;       // per file

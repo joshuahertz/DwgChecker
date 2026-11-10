@@ -73,7 +73,7 @@ private:
     QLabel* m_badge = nullptr;
     QLabel* m_captionLabel = nullptr;
     ElidedLabel* m_title = nullptr;
-    ElidedLabel* m_detail = nullptr;
+    QLabel* m_detail = nullptr;  // wraps (a line per solution drawing)
     QToolButton* m_recentBtn = nullptr;
     QMenu* m_menu = nullptr;
     QHBoxLayout* m_buttons = nullptr;
@@ -81,5 +81,19 @@ private:
 
 // A round step badge: the number, or a check when done (also used for the Run step).
 QPixmap stepBadge(int step, PathCard::State state, int size, qreal dpr);
+
+// A step of the main window that holds controls instead of a path (step 2: the location
+// mode). It looks like a PathCard: a badge for the step's state, a frame that is outlined
+// while the step is next.
+class StepBox : public QFrame {
+public:
+    StepBox(int step, QWidget* content, QWidget* parent = nullptr);
+    void setState(PathCard::State s);
+
+private:
+    int m_step;
+    PathCard::State m_state = PathCard::State::Waiting;
+    QLabel* m_badge = nullptr;
+};
 
 }  // namespace dcgui

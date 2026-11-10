@@ -23,8 +23,11 @@ QString fmtLen(double v, double other) {
     return fixed(v, dec);
 }
 
-QString fmtCoord(double v) {
-    QString s = fixed(v, 3);
+QString fmtCoord(double v, double other) {
+    int dec = 3;
+    if (std::isfinite(other))
+        while (dec < 8 && fixed(v, dec) == fixed(other, dec)) ++dec;
+    QString s = fixed(v, dec);
     if (s.contains('.')) {
         while (s.endsWith('0') && !s.endsWith(".0")) s.chop(1);
     }
@@ -33,7 +36,17 @@ QString fmtCoord(double v) {
 
 QString fmtPt(Vec2 p) { return QStringLiteral("(%1, %2)").arg(fmtCoord(p.x), fmtCoord(p.y)); }
 
-QString fmtDeg(double radians) { return QString::number(radians * 180.0 / kPi, 'f', 2) + QChar(0x00B0); }
+QString fmtOffset(Vec2 d) { return QStringLiteral("(%1, %2)").arg(fmtCoord(d.x, 0.0), fmtCoord(d.y, 0.0)); }
+
+QString fmtDeg(double radians, double other) {
+    const double deg = radians * 180.0 / kPi;
+    int dec = 2;
+    if (std::isfinite(other)) {
+        const double o = other * 180.0 / kPi;
+        while (dec < 6 && fixed(deg, dec) == fixed(o, dec)) ++dec;
+    }
+    return fixed(deg, dec) + QChar(0x00B0);
+}
 
 QString lineDescriptor(const Primitive& p, bool forLinetypeError) {
     const QString kind = kindName(p.kind);

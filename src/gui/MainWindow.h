@@ -19,6 +19,7 @@ class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
 class QScrollArea;
+class QSplitter;
 class QSortFilterProxyModel;
 class QStackedWidget;
 class QTabWidget;
@@ -31,6 +32,7 @@ class AutoCadController;
 class DetailDialog;
 class DuplicatesTab;
 class PathCard;
+class StepBox;
 class ResultsDelegate;
 class ResultsModel;
 class SettingsPanel;
@@ -56,7 +58,6 @@ private:
     void cancel();
     void onFinished();
     void editViews(const QString& refPath = QString());  // empty: the only drawing, or ask which
-    void fitSettingsArea();
     void exportResults();
     void exportDuplicates();
     void openDetail(int student, int errorIndex = -1);
@@ -74,11 +75,13 @@ private:
     // Top bar
     PathCard* m_refCard = nullptr;
     PathCard* m_dirCard = nullptr;
+    StepBox* m_modeBox = nullptr;  // step 2: the location mode
     int m_refReadable = 0;  // 1 read, -1 not readable, 0 reading / nothing chosen
     QByteArray m_refCanonSig;  // reading rules the solution card was last described with
     int m_dirCount = 0;     // drawings in the chosen folder
     QToolButton* m_settingsToggle = nullptr;
     QScrollArea* m_settingsArea = nullptr;
+    QSplitter* m_split = nullptr;  // the steps and settings | the results
     SettingsPanel* m_settings = nullptr;
     QPushButton* m_runBtn = nullptr;
     QPushButton* m_cancelBtn = nullptr;

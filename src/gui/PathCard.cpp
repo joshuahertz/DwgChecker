@@ -1,5 +1,6 @@
 #include "PathCard.h"
 
+#include <QCollator>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -15,6 +16,8 @@
 #include <QPainterPath>
 #include <QStyle>
 #include <QToolButton>
+
+#include <algorithm>
 
 namespace dcgui {
 
@@ -88,7 +91,9 @@ PathCard::PathCard(Kind kind, int step, const QString& caption, const QString& e
         "QFrame#pathCard[step=\"waiting\"] { background: palette(window); }"));
     setAcceptDrops(true);
     setCursor(Qt::PointingHandCursor);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    QSizePolicy sp(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    sp.setHeightForWidth(true);  // the detail wraps, so the card's height follows its width
+    setSizePolicy(sp);
 
     auto* grid = new QGridLayout(this);
     grid->setContentsMargins(12, 10, 12, 10);
@@ -106,7 +111,9 @@ PathCard::PathCard(Kind kind, int step, const QString& caption, const QString& e
     big.setPointSizeF(big.pointSizeF() * 1.15);
     m_title->setFont(big);
     grid->addWidget(m_title, 1, 1);
-    m_detail = new ElidedLabel(this);
+    m_detail = new QLabel(this);
+    m_detail->setWordWrap(true);
+    m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // never widens the card
     grid->addWidget(m_detail, 2, 1);
     grid->setColumnStretch(1, 1);
 
@@ -131,6 +138,13 @@ void PathCard::setPaths(const QStringList& paths) {
     for (const QString& p : paths)
         if (!p.isEmpty() && !clean.contains(QDir::cleanPath(p))) clean << QDir::cleanPath(p);
     if (!m_multiple && clean.size() > 1) clean = clean.mid(0, 1);
+    // Several solution drawings in name order, numbers by value ("Problem 2" before "Problem 10"):
+    // the results call them Drawing 1, 2, 3… in this order.
+    QCollator byName;
+    byName.setNumericMode(true);
+    byName.setCaseSensitivity(Qt::CaseInsensitive);
+    std::sort(clean.begin(), clean.end(),
+              [&](const QString& a, const QString& b) { return byName.compare(QFileInfo(a).fileName(), QFileInfo(b).fileName()) < 0; });
     if (clean == m_paths) return;
     m_paths = clean;
     refresh();
@@ -138,7 +152,7 @@ void PathCard::setPaths(const QStringList& paths) {
 }
 
 void PathCard::setDetail(const QString& text, bool problem) {
-    m_detail->setFullText(text);
+    m_detail->setText(text);
     QPalette pal = m_detail->palette();
     if (problem) {
         pal.setColor(QPalette::WindowText, QColor(200, 40, 30));
@@ -172,6 +186,34 @@ void PathCard::setState(State s) {
     style()->unpolish(this);
     style()->polish(this);
     updateBadge();
+    update();
+}
+
+StepBox::StepBox(int step, QWidget* content, QWidget* parent) : QFrame(parent), m_step(step) {
+    setObjectName(QStringLiteral("stepBox"));
+    setStyleSheet(QStringLiteral(
+        "QFrame#stepBox { border: 1px solid palette(mid); border-radius: 8px; background: palette(base); }"
+        "QFrame#stepBox[step=\"active\"] { border: 2px solid palette(highlight); }"
+        "QFrame#stepBox[step=\"waiting\"] { background: palette(window); }"));
+    auto* grid = new QGridLayout(this);
+    grid->setContentsMargins(12, 10, 12, 10);
+    grid->setHorizontalSpacing(12);
+    m_badge = new QLabel(this);
+    m_badge->setAlignment(Qt::AlignTop);
+    grid->addWidget(m_badge, 0, 0, Qt::AlignTop);
+    content->setParent(this);
+    grid->addWidget(content, 0, 1);
+    grid->setColumnStretch(1, 1);
+    content->show();
+    setState(PathCard::State::Waiting);
+}
+
+void StepBox::setState(PathCard::State s) {
+    m_state = s;
+    setProperty("step", s == PathCard::State::Active ? "active" : s == PathCard::State::Done ? "done" : "waiting");
+    style()->unpolish(this);
+    style()->polish(this);
+    m_badge->setPixmap(stepBadge(m_step, m_state, kBadge, devicePixelRatioF()));
     update();
 }
 

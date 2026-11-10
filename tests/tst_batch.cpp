@@ -133,7 +133,7 @@ void TestBatch::severalSolutionDrawings() {
     QCOMPARE(copyFlagFor(out, x).level, Strength::Strong);  // byte copy of solution A
 
     const QString csv = resultsCsv(out);
-    QVERIFY(csv.contains(QStringLiteral("Student,Solution drawing,File,Possible duplicate,Correctness,Errors")));
+    QVERIFY(csv.contains(QStringLiteral("Student,Solution drawing,File,Possible cheating,Correctness,Errors")));
     QVERIFY(csv.contains(QStringLiteral("doejohn,ortho_ref.json,doejohn_102_204_y.json,")));
     QVERIFY(csv.contains(QStringLiteral("lee,ref.json,,,0.0%,no file matched this solution drawing")));
     QVERIFY(csv.contains(QStringLiteral("lee,(extra file),lee_103_205_z.json")));
@@ -156,7 +156,7 @@ void TestBatch::oneSolutionDrawingGroupsByStudent() {
     QVERIFY(qFuzzyCompare(smith.correctness, 90.0));
     QCOMPARE(correctnessText(out.students[fileNamed(out, "smithjane_101_202_partB.json")]), QStringLiteral("not graded"));
     // A single solution drawing keeps the one-row-per-file CSV.
-    QVERIFY(resultsCsv(out).contains(QStringLiteral("File,Possible duplicate,Correctness,Errors")));
+    QVERIFY(resultsCsv(out).contains(QStringLiteral("File,Possible cheating,Correctness,Errors")));
 }
 
 void TestBatch::modePerDrawing() {

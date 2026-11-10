@@ -50,6 +50,7 @@ CanonSettings AppSettings::effectiveCanon() const {
     c.linTol = compare.linTol;
     c.angTol = compare.angTol;
     c.mergeByLayer = compare.requireLayerMatch;
+    c.mergeByColor = compare.matchColor;
     return c;
 }
 
@@ -73,6 +74,8 @@ QJsonObject AppSettings::toJson() const {
         {"allowRotation", compare.allowRotation}, {"allowMirror", compare.allowMirror},
         {"linTol", compare.linTol}, {"angTol", compare.angTol},
         {"requireLayerMatch", compare.requireLayerMatch},
+        {"matchColor", compare.matchColor}, {"colorTolerance", compare.colorTolerance},
+        {"requireByLayer", compare.requireByLayer},
         {"extras", compare.extras == ExtrasPolicy::Penalize ? "penalize" : "report"},
         {"checkDimensions", compare.checkDimensions}, {"checkDimPrecision", compare.checkDimPrecision},
         {"strictCenterlines", compare.strictCenterlines},
@@ -138,6 +141,9 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
     s.compare.linTol = m.value("linTol").toDouble(s.compare.linTol);
     s.compare.angTol = m.value("angTol").toDouble(s.compare.angTol);
     s.compare.requireLayerMatch = m.value("requireLayerMatch").toBool(s.compare.requireLayerMatch);
+    s.compare.matchColor = m.value("matchColor").toBool(s.compare.matchColor);
+    s.compare.colorTolerance = std::clamp(m.value("colorTolerance").toDouble(s.compare.colorTolerance), 0.0, 100.0);
+    s.compare.requireByLayer = m.value("requireByLayer").toBool(s.compare.requireByLayer);
     s.compare.extras = m.value("extras").toString() == "report" ? ExtrasPolicy::ReportOnly : ExtrasPolicy::Penalize;
     s.compare.checkDimensions = m.value("checkDimensions").toBool(s.compare.checkDimensions);
     s.compare.checkDimPrecision = m.value("checkDimPrecision").toBool(s.compare.checkDimPrecision);

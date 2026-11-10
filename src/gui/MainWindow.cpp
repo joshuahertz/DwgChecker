@@ -36,6 +36,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSortFilterProxyModel>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTimer>
@@ -80,57 +81,69 @@ void MainWindow::buildUi() {
     setWindowTitle(tr("DWG Checker"));
     resize(1400, 900);
     auto* central = new QWidget(this);
-    auto* lay = new QVBoxLayout(central);
+    auto* outer = new QHBoxLayout(central);
+    m_split = new QSplitter(Qt::Horizontal, central);
+    m_split->setChildrenCollapsible(false);
+    outer->addWidget(m_split);
 
-    // ---- Top: the reference and the submissions as cards, and Run ----
-    auto* top = new QHBoxLayout;
+    // ---- Left column, top to bottom: the reference, the submissions, Run; then Settings ----
+    auto* left = new QWidget(m_split);
+    left->setMinimumWidth(340);
+    auto* lay = new QVBoxLayout(left);
+    lay->setContentsMargins(0, 0, 6, 0);
     m_refCard = new PathCard(PathCard::Kind::File, 1, tr("Reference (solution)"), tr("Click to choose the reference drawing"),
-                             tr("Drawings (*.dwg *.json)"), {QStringLiteral("dwg"), QStringLiteral("json")}, true, central);
-    m_dirCard = new PathCard(PathCard::Kind::Folder, 2, tr("Student submissions"), tr("Click to choose the submissions folder"),
-                             QString(), {}, false, central);
-    top->addWidget(m_refCard, 1);
-    top->addWidget(m_dirCard, 1);
-    m_runBtn = new QPushButton(tr("Run"), central);
+                             tr("Drawings (*.dwg *.json)"), {QStringLiteral("dwg"), QStringLiteral("json")}, true, left);
+    m_dirCard = new PathCard(PathCard::Kind::Folder, 3, tr("Student submissions"), tr("Click to choose the submissions folder"),
+                             QString(), {}, false, left);
+    // Step 2 (built by the settings panel, which keeps it in step with the other settings):
+    // the location mode, chosen for every assignment.
+    m_settings = new SettingsPanel(m_acad, left);
+    m_modeBox = new StepBox(2, m_settings->modeStepWidget(), left);
+    lay->addWidget(m_refCard);
+    lay->addWidget(m_modeBox);
+    lay->addWidget(m_dirCard);
+    m_runBtn = new QPushButton(tr("Run"), left);
     m_runBtn->setDefault(true);
     m_runBtn->setIconSize(QSize(24, 24));  // the step-3 badge (updateSteps)
     QFont runFont = m_runBtn->font();
     runFont.setBold(true);
     runFont.setPointSizeF(runFont.pointSizeF() * 1.2);
     m_runBtn->setFont(runFont);
-    m_runBtn->setMinimumSize(120, 48);
-    m_cancelBtn = new QPushButton(tr("Cancel"), central);
+    m_runBtn->setMinimumHeight(48);
+    m_runBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_cancelBtn = new QPushButton(tr("Cancel"), left);
+    m_cancelBtn->setMinimumHeight(48);
     m_cancelBtn->setVisible(false);  // shown while a batch runs
-    auto* runCol = new QVBoxLayout;
-    runCol->addWidget(m_runBtn);
-    runCol->addWidget(m_cancelBtn);
-    runCol->addStretch();
-    top->addLayout(runCol);
-    lay->addLayout(top);
+    auto* runRow = new QHBoxLayout;
+    runRow->addWidget(m_runBtn, 1);
+    runRow->addWidget(m_cancelBtn);
+    lay->addLayout(runRow);
+    m_status = new QLabel(left);
+    m_status->setWordWrap(true);
+    m_progress = new QProgressBar(left);
+    m_progress->setVisible(false);
+    lay->addWidget(m_status);
+    lay->addWidget(m_progress);
 
-    auto* statusRow = new QHBoxLayout;
-    m_settingsToggle = new QToolButton(central);
+    // Settings fill the rest of the column and scroll; folded away, the space stays empty.
+    m_settingsToggle = new QToolButton(left);
     m_settingsToggle->setText(tr("Settings"));
     m_settingsToggle->setCheckable(true);
     m_settingsToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_settingsToggle->setArrowType(Qt::RightArrow);
-    m_progress = new QProgressBar(central);
-    m_progress->setVisible(false);
-    m_status = new QLabel(central);
-    statusRow->addWidget(m_settingsToggle);
-    statusRow->addStretch();
-    statusRow->addWidget(m_status);
-    statusRow->addWidget(m_progress, 1);
-    lay->addLayout(statusRow);
-
-    m_settings = new SettingsPanel(m_acad, central);
-    m_settingsArea = new QScrollArea(central);
+    m_settingsToggle->setAutoRaise(true);
+    lay->addSpacing(4);
+    lay->addWidget(m_settingsToggle);
+    m_settingsArea = new QScrollArea(left);
     m_settingsArea->setWidget(m_settings);
     m_settingsArea->setWidgetResizable(true);
-    m_settingsArea->setVisible(false);  // its height follows the panel (fitSettingsArea)
-    lay->addWidget(m_settingsArea);
+    m_settingsArea->setFrameShape(QFrame::NoFrame);
+    m_settingsArea->setVisible(false);
+    lay->addWidget(m_settingsArea, 1);
+    lay->addStretch();  // takes the space while Settings is folded
 
-    // ---- Tabs ----
-    m_tabs = new QTabWidget(central);
+    // ---- Right: the tabs ----
+    m_tabs = new QTabWidget(m_split);
     auto* resultsPage = new QWidget(m_tabs);
     auto* rl = new QVBoxLayout(resultsPage);
     m_table = new QTreeView(resultsPage);
@@ -173,6 +186,8 @@ void MainWindow::buildUi() {
     m_guide = new QLabel(m_resultsStack);
     m_guide->setAlignment(Qt::AlignCenter);
     m_guide->setTextFormat(Qt::RichText);
+    m_guide->setWordWrap(true);
+    m_guide->setContentsMargins(24, 0, 24, 0);
     QFont guideFont = m_guide->font();
     guideFont.setPointSizeF(guideFont.pointSizeF() * 1.25);
     m_guide->setFont(guideFont);
@@ -185,8 +200,8 @@ void MainWindow::buildUi() {
                                     "folds open); click \"Open in AutoCAD\" to open the file there."),
                                  resultsPage);
     tableHint->setForegroundRole(QPalette::PlaceholderText);
-    exportRow->addWidget(tableHint);
-    exportRow->addStretch();
+    tableHint->setWordWrap(true);
+    exportRow->addWidget(tableHint, 1);
     exportRow->addWidget(exportBtn);
     rl->addLayout(exportRow);
     m_tabs->addTab(resultsPage, tr("Results"));
@@ -196,13 +211,17 @@ void MainWindow::buildUi() {
     m_dups = new DuplicatesTab(dupPage);
     dl->addWidget(m_dups);
     auto* dupExportRow = new QHBoxLayout;
-    auto* dupExport = new QPushButton(tr("Export duplicates CSV…"), dupPage);
+    auto* dupExport = new QPushButton(tr("Export possible cheating CSV…"), dupPage);
     dupExportRow->addStretch();
     dupExportRow->addWidget(dupExport);
     dl->addLayout(dupExportRow);
-    m_tabs->addTab(dupPage, tr("Duplicates"));
+    m_tabs->addTab(dupPage, tr("Possible cheating"));
 
-    lay->addWidget(m_tabs, 1);
+    m_split->addWidget(left);
+    m_split->addWidget(m_tabs);
+    m_split->setStretchFactor(0, 0);  // a wider window widens the results
+    m_split->setStretchFactor(1, 1);
+    m_split->setSizes({470, 930});
 
     // The log lives in its own window (Help > Show log).
     m_logWindow = new QDialog(this, Qt::Window);
@@ -220,7 +239,7 @@ void MainWindow::buildUi() {
     // ---- Menu ----
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(tr("Export results CSV…"), this, &MainWindow::exportResults);
-    file->addAction(tr("Export duplicates CSV…"), this, &MainWindow::exportDuplicates);
+    file->addAction(tr("Export possible cheating CSV…"), this, &MainWindow::exportDuplicates);
     file->addSeparator();
     file->addAction(tr("Save settings as JSON…"), this, [this]() {
         const QString p = QFileDialog::getSaveFileName(this, tr("Save settings"), QString(), tr("JSON (*.json)"));
@@ -263,14 +282,17 @@ void MainWindow::buildUi() {
     connect(m_settingsToggle, &QToolButton::toggled, this, [this](bool on) {
         m_settingsArea->setVisible(on);
         m_settingsToggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-        fitSettingsArea();
+        QSettings().setValue("ui/settingsOpen", on);
     });
-    connect(m_settings, &SettingsPanel::sizeChanged, this, &MainWindow::fitSettingsArea);
     connect(m_settings, &SettingsPanel::changed, this, &MainWindow::storeQuizSettings);
     connect(m_settings, &SettingsPanel::changed, this, [this]() {  // the solution card's counts follow the reading rules
         if (canonSignature(currentSettings()) != m_refCanonSig) updateRefInfo();
     });
     connect(m_settings, &SettingsPanel::editViewsRequested, this, &MainWindow::editViews);
+    connect(m_settings, &SettingsPanel::modeChoiceChanged, this, [this]() {
+        if (m_settings->modeChosen()) storeQuizSettings();  // chosen once, remembered for these drawings
+        updateSteps();
+    });
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::run);
     connect(m_cancelBtn, &QPushButton::clicked, this, &MainWindow::cancel);
     connect(exportBtn, &QPushButton::clicked, this, &MainWindow::exportResults);
@@ -303,12 +325,15 @@ void MainWindow::loadState() {
     referenceChanged();
     folderChanged();
     restoreGeometry(q.value("window/geometry").toByteArray());
+    m_split->restoreState(q.value("window/splitter").toByteArray());
+    m_settingsToggle->setChecked(q.value("ui/settingsOpen", true).toBool());  // open unless folded last time
 }
 
 void MainWindow::saveState() const {
     QSettings q;
     q.setValue("settings/json", QJsonDocument(currentSettings().toJson()).toJson(QJsonDocument::Compact));
     q.setValue("window/geometry", saveGeometry());
+    q.setValue("window/splitter", m_split->saveState());
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
@@ -324,7 +349,8 @@ namespace {
 
 QString countText(int n, const QString& one, const QString& many) { return QStringLiteral("%1 %2").arg(n).arg(n == 1 ? one : many); }
 
-// Settings are remembered per assignment: the set of solution drawings, by full path.
+// Settings are remembered per assignment: the set of solution drawings, by full path (the
+// registry key keeps its old name, "quizSettings", so saved settings still load).
 QString quizKey(const QStringList& refPaths) {
     QStringList ps;
     for (const QString& r : refPaths) {
@@ -339,33 +365,50 @@ QString quizKey(const QStringList& refPaths) {
            QString::fromLatin1(QCryptographicHash::hash(ps.join(QLatin1Char('|')).toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
-// "inches  ·  4 objects  ·  5 dimensions", or per drawing when there are several;
-// read in the background.
-QPair<bool, QString> describeReferences(const QStringList& paths, const AppSettings& s) {
+// What the solution card says, and what each drawing contains (for Settings).
+struct RefSummary {
+    bool ok = false;
+    QString text;
+    std::map<QString, DrawingContent> contents;  // by AppSettings::drawingKey
+};
+
+// "inches  ·  42 objects, 2 dimensions; ignoring 51 objects on turned-off or frozen layers",
+// or "inches" and then a line per drawing ("Part A – 42 objects, …") when there are several.
+// Read in the background.
+RefSummary describeReferences(const QStringList& paths, const AppSettings& s) {
     AutoLoader loader(s.loader);
-    QStringList parts, units;
+    RefSummary out;
+    QStringList lines, units;
     for (const QString& path : paths) {
         QString err;
         const auto d = loadDrawing(path, loader, s.referenceCanon(), &err);
-        if (!d) return {false, QObject::tr("could not read %1: %2").arg(QFileInfo(path).fileName(), err)};
+        if (!d) {
+            out.text = QObject::tr("could not read %1: %2").arg(QFileInfo(path).fileName(), err);
+            return out;
+        }
         int objects = 0, dims = 0, hatches = 0;
         for (const auto& p : d->prims) {
             objects += isGeometric(p.kind);
             dims += p.kind == PrimKind::Dimension;
             hatches += p.kind == PrimKind::Hatch;
         }
+        out.contents[AppSettings::drawingKey(path)] = DrawingContent{dims > 0, hatches > 0};
         QStringList counts{countText(objects, QObject::tr("object"), QObject::tr("objects"))};
         if (dims > 0) counts << countText(dims, QObject::tr("dimension"), QObject::tr("dimensions"));
         if (hatches > 0) counts << countText(hatches, QObject::tr("hatch"), QObject::tr("hatches"));
-        for (const auto& w : d->warnings)  // e.g. a sketching grid the instructor turned off
-            if (w.kind == WarnKind::HiddenLayer) counts << w.text;
+        QString line = counts.join(QStringLiteral(", "));
+        if (d->hiddenLayerObjects > 0)  // e.g. a sketching grid the instructor turned off
+            line += (d->hiddenLayerObjectsSkipped ? QObject::tr("; ignoring %1 on turned-off or frozen layers")
+                                                  : QObject::tr("; including %1 on turned-off or frozen layers"))
+                        .arg(countText(d->hiddenLayerObjects, QObject::tr("object"), QObject::tr("objects")));
         if (d->meta.insUnits > 0 && !units.contains(insUnitsName(d->meta.insUnits))) units << insUnitsName(d->meta.insUnits);
-        parts << (paths.size() > 1 ? QStringLiteral("%1: %2").arg(QFileInfo(path).completeBaseName(), counts.join(QStringLiteral(", ")))
-                                   : counts.join(QStringLiteral("  ·  ")));
+        lines << (paths.size() > 1 ? QStringLiteral("%1 \u2013 %2").arg(QFileInfo(path).completeBaseName(), line) : line);
     }
-    QString text = parts.join(QStringLiteral("  ·  "));
-    if (!units.isEmpty()) text = units.join(QStringLiteral(" / ")) + QStringLiteral("  ·  ") + text;
-    return {true, text};
+    const QString sep = paths.size() > 1 ? QStringLiteral("\n") : QStringLiteral("  ·  ");  // one drawing per line
+    out.text = lines.join(sep);
+    if (!units.isEmpty()) out.text = units.join(QStringLiteral(" / ")) + sep + out.text;
+    out.ok = true;
+    return out;
 }
 
 }  // namespace
@@ -385,11 +428,15 @@ void MainWindow::referenceChanged() {
     const QByteArray saved = QSettings().value(quizKey(paths)).toByteArray();
     if (!saved.isEmpty()) {
         m_settings->setSettings(AppSettings::fromJson(QJsonDocument::fromJson(saved).object()));
-        m_refCard->setCaptionNote(tr("settings saved for this quiz"));
+        m_settings->setModeChosen(true);  // the saved mode counts as chosen (after loading it)
+        m_refCard->setCaptionNote(paths.size() > 1 ? tr("settings saved for these reference solutions")
+                                                   : tr("settings saved for this reference solution"));
         log(tr("loaded the settings saved for %1").arg(m_refCard->paths().size() > 1 ? tr("this set of drawings")
                                                                                        : QFileInfo(paths.front()).fileName()));
     } else {
-        m_refCard->setCaptionNote(tr("new quiz: check the settings"));
+        m_settings->setModeChosen(false);  // step 2: choose it
+        m_refCard->setCaptionNote(paths.size() > 1 ? tr("new reference solutions: check the settings")
+                                                   : tr("new reference solution: check the settings"));
     }
     updateRefInfo();
     updateDirInfo();
@@ -414,13 +461,14 @@ void MainWindow::updateRefInfo() {
     AppSettings s = currentSettings();
     m_refCanonSig = canonSignature(s);
     s.loader.dwgreadPath = platform::findDwgRead();
-    auto* w = new QFutureWatcher<QPair<bool, QString>>(this);
+    auto* w = new QFutureWatcher<RefSummary>(this);
     connect(w, &QFutureWatcherBase::finished, this, [this, w, paths]() {
-        const QPair<bool, QString> res = w->result();
+        const RefSummary res = w->result();
         w->deleteLater();
         if (paths != m_refCard->paths()) return;  // a newer choice is being read
-        m_refReadable = res.first ? 1 : -1;
-        m_refCard->setDetail(res.second, !res.first);
+        m_refReadable = res.ok ? 1 : -1;
+        m_refCard->setDetail(res.text, !res.ok);
+        if (res.ok) m_settings->setDrawingContents(res.contents);  // checks only for what the drawings have
         updateSteps();
     });
     w->setFuture(QtConcurrent::run([paths, s]() { return describeReferences(paths, s); }));
@@ -459,50 +507,42 @@ void MainWindow::updateSteps() {
     using State = PathCard::State;
     const bool running = m_watcher.isRunning();
     const bool refDone = !m_refCard->path().isEmpty() && m_refReadable >= 0;  // still reading counts as chosen
+    const bool modeDone = refDone && m_settings->modeChosen();
     const bool dirDone = m_dirCount > 0;
-    const bool ready = refDone && dirDone;
+    const bool ready = refDone && modeDone && dirDone;
     m_refCard->setState(refDone ? State::Done : State::Active);
-    m_dirCard->setState(dirDone ? State::Done : refDone ? State::Active : State::Waiting);
+    m_modeBox->setState(modeDone ? State::Done : refDone ? State::Active : State::Waiting);
+    m_dirCard->setState(dirDone ? State::Done : modeDone ? State::Active : State::Waiting);
     m_runBtn->setEnabled(ready && !running);
-    m_runBtn->setIcon(QIcon(stepBadge(3, ready ? State::Active : State::Waiting, 24, devicePixelRatioF())));
-    m_runBtn->setToolTip(ready    ? tr("Step 3: grade the %1 drawings").arg(m_dirCount)
-                         : !refDone ? tr("First choose the reference drawing (step 1)")
-                                    : tr("Next choose the submissions folder (step 2)"));
+    m_runBtn->setIcon(QIcon(stepBadge(4, ready ? State::Active : State::Waiting, 24, devicePixelRatioF())));
+    m_runBtn->setToolTip(ready      ? tr("Step 4: grade the %1 drawings").arg(m_dirCount)
+                         : !refDone  ? tr("First choose the reference drawing (step 1)")
+                         : !modeDone ? tr("Next choose the location mode (step 2)")
+                                     : tr("Next choose the submissions folder (step 3)"));
 
     // The guide shown in Results until the first run: done steps checked, the next one in bold.
-    const int next = !refDone ? 1 : !dirDone ? 2 : 3;
+    const int next = !refDone ? 1 : !modeDone ? 2 : !dirDone ? 3 : 4;
     auto line = [next](int n, bool done, const QString& text) {
         QString t = QStringLiteral("%1&nbsp;&nbsp;%2").arg(done ? QStringLiteral("&#10003;") : QString::number(n), text);
         if (n == next) t = QStringLiteral("<b>%1</b>").arg(t);
         else if (done) t = QStringLiteral("<span style='color:gray'>%1</span>").arg(t);
         return QStringLiteral("<p>%1</p>").arg(t);
     };
-    m_guide->setText(QStringLiteral("<h2>%1</h2>").arg(tr("Grade a set of drawings in three steps")) +
+    m_guide->setText(QStringLiteral("<h2>%1</h2>").arg(tr("Grade a set of drawings in four steps")) +
                      line(1, refDone, tr("Choose the reference (solution) drawing, or several for a multi-drawing assignment: "
-                                         "click the first card above.")) +
-                     line(2, dirDone, tr("Choose the folder of student submissions: click the second card.")) +
-                     line(3, false, tr("Click <b>Run</b>. The results appear here; click a row for its details.")));
-}
-
-// The settings area is as tall as the panel needs (Advanced open or not, the drawings
-// table shown or not), up to a limit beyond which it scrolls. Laid out again first, and
-// once more after pending layout requests, so a collapse never leaves blank space.
-void MainWindow::fitSettingsArea() {
-    constexpr int kMaxHeight = 560;
-    auto fit = [this]() {
-        if (QLayout* l = m_settings->layout()) l->activate();
-        const int h = m_settings->sizeHint().height() + 2 * m_settingsArea->frameWidth();
-        m_settingsArea->setFixedHeight(std::min(h, kMaxHeight));
-    };
-    fit();
-    QTimer::singleShot(0, this, fit);
+                                         "click the first card on the left.")) +
+                     line(2, modeDone, tr("Choose the location mode (with several drawings, one for each) in the second box. "
+                                          "It is remembered for these reference solutions.")) +
+                     line(3, dirDone, tr("Choose the folder of student submissions: click the third card.")) +
+                     line(4, false, tr("Click <b>Run</b>. The results appear here; click a row for its details.")));
 }
 
 void MainWindow::storeQuizSettings() {
     const QStringList refs = m_refCard->paths();
     if (refs.isEmpty()) return;
     QSettings().setValue(quizKey(refs), QJsonDocument(currentSettings().toJson()).toJson(QJsonDocument::Compact));
-    m_refCard->setCaptionNote(tr("settings saved for this quiz"));
+    m_refCard->setCaptionNote(refs.size() > 1 ? tr("settings saved for these reference solutions")
+                                              : tr("settings saved for this reference solution"));
 }
 
 void MainWindow::addRecent(const char* key, PathCard* card, const QString& path) {
@@ -682,7 +722,7 @@ void MainWindow::exportResults() {
 
 void MainWindow::exportDuplicates() {
     if (!m_batch) { QMessageBox::information(this, tr("Export"), tr("Run a batch first.")); return; }
-    const QString p = QFileDialog::getSaveFileName(this, tr("Export duplicates"), QStringLiteral("duplicates.csv"), tr("CSV (*.csv)"));
+    const QString p = QFileDialog::getSaveFileName(this, tr("Export possible cheating"), QStringLiteral("possible_cheating.csv"), tr("CSV (*.csv)"));
     if (p.isEmpty()) return;
     QFile f(p);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(this, tr("Export"), f.errorString()); return; }

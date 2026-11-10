@@ -66,6 +66,10 @@ private slots:
     void absoluteScaledAboutOrigin();
     void scaleOnlyWhenMostlyWrong();
     void copyPasteIsExact();
+    void colorsAreRead();
+    void colorsMustMatch();
+    void colorTolerance();
+    void colorAndLinetypeByLayer();
 
 private:
     std::shared_ptr<Drawing> ref;
@@ -444,6 +448,81 @@ void TestCorpus::copyPasteIsExact() {
     const CompareResult r = compareDrawings(*ref, *d, absolute(), nullptr);
     QVERIFY2(r.pass, qPrintable(dumpErrors(r)));
     QCOMPARE(r.absoluteMatched, 10);
+}
+
+// color_* (corpus.lsp dc-color-ref): horizontal lines 4 long at y = 0..7: by layer (white),
+// ACI 1, true color 255,0,0, layer RED, layer TC (true color 200,10,10), an explicit HIDDEN
+// linetype, and a ByBlock line in a block inserted in ACI 3 and by layer.
+namespace {
+const Primitive* lineAtY(const Drawing& d, double y) {
+    for (const auto& p : d.prims)
+        if (p.kind == PrimKind::Line && std::fabs(p.p0.y - y) < 1e-9 && std::fabs(p.p1.y - y) < 1e-9) return &p;
+    return nullptr;
+}
+int countLabel(const CompareResult& r, const QString& label) {
+    int n = 0;
+    for (const auto& e : r.errors) n += e.label == label;
+    return n;
+}
+}  // namespace
+
+void TestCorpus::colorsAreRead() {
+    auto d = loadFixture("color_ref");
+    QVERIFY(d);
+    struct Want { double y; int aci; quint32 rgb; bool colorByLayer, ltByLayer; };
+    const Want want[] = {{0, 7, 0xFFFFFF, true, true},  {1, 1, 0xFF0000, false, true}, {2, -1, 0xFF0000, false, true},
+                         {3, 1, 0xFF0000, true, true},  {4, -1, 0xC80A0A, true, true}, {5, 7, 0xFFFFFF, true, false},
+                         {6, 3, 0x00FF00, false, true}, {7, 7, 0xFFFFFF, true, true}};
+    for (const Want& w : want) {
+        const Primitive* p = lineAtY(*d, w.y);
+        QVERIFY2(p, qPrintable(QStringLiteral("no line at y = %1").arg(w.y)));
+        QCOMPARE(p->aci, w.aci);
+        QCOMPARE(p->rgb, w.rgb);
+        QCOMPARE(p->colorByLayer, w.colorByLayer);
+        QCOMPARE(p->ltByLayer, w.ltByLayer);
+    }
+}
+
+void TestCorpus::colorsMustMatch() {
+    auto r0 = loadFixture("color_ref"), wrong = loadFixture("color_wrong"), bylayer = loadFixture("color_bylayer");
+    QVERIFY(r0 && wrong && bylayer);
+    CompareSettings s = absolute();
+    QVERIFY(compareDrawings(*r0, *wrong, s, nullptr).pass);  // colors are not checked by default
+    s.matchColor = true;
+    QVERIFY(compareDrawings(*r0, *r0, s, nullptr).pass);
+    const CompareResult r = compareDrawings(*r0, *wrong, s, nullptr);
+    QVERIFY(!r.pass);
+    QCOMPARE(countLabel(r, QStringLiteral("wrong color")), 1);
+    QVERIFY2(anyError(r, QStringLiteral("is blue (ACI 5), expected red (ACI 1)")), qPrintable(dumpErrors(r)));
+    // The same colors set by layer instead (layer RED for ACI 1 and for 255,0,0) match.
+    QVERIFY2(compareDrawings(*r0, *bylayer, s, nullptr).pass, qPrintable(dumpErrors(compareDrawings(*r0, *bylayer, s, nullptr))));
+}
+
+void TestCorpus::colorTolerance() {
+    auto r0 = loadFixture("color_ref"), near = loadFixture("color_near");  // 250,5,5 for 255,0,0: 2.0 %
+    QVERIFY(r0 && near);
+    CompareSettings s = absolute();
+    s.matchColor = true;
+    const CompareResult exact = compareDrawings(*r0, *near, s, nullptr);
+    QCOMPARE(countLabel(exact, QStringLiteral("wrong color")), 1);
+    QVERIFY2(anyError(exact, QStringLiteral("is RGB 250,5,5, expected RGB 255,0,0")), qPrintable(dumpErrors(exact)));
+    s.colorTolerance = 3;
+    QVERIFY2(compareDrawings(*r0, *near, s, nullptr).pass, qPrintable(dumpErrors(compareDrawings(*r0, *near, s, nullptr))));
+}
+
+void TestCorpus::colorAndLinetypeByLayer() {
+    auto r0 = loadFixture("color_ref"), bylayer = loadFixture("color_bylayer");
+    QVERIFY(r0 && bylayer);
+    CompareSettings s = absolute();
+    s.matchColor = true;
+    s.requireByLayer = true;
+    QVERIFY2(compareDrawings(*r0, *bylayer, s, nullptr).pass, qPrintable(dumpErrors(compareDrawings(*r0, *bylayer, s, nullptr))));
+    // Graded against the by-layer version, the original has four items set on the object:
+    // two colors, the HIDDEN linetype, and the block inserted in green.
+    const CompareResult r = compareDrawings(*bylayer, *r0, s, nullptr);
+    QCOMPARE(countLabel(r, QStringLiteral("not by layer")), 4);
+    QVERIFY2(anyError(r, QStringLiteral("has its color set on the object, not by layer")), qPrintable(dumpErrors(r)));
+    QVERIFY2(anyError(r, QStringLiteral("has its linetype set on the object, not by layer")), qPrintable(dumpErrors(r)));
 }
 
 QTEST_GUILESS_MAIN(TestCorpus)

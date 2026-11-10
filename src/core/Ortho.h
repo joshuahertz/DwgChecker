@@ -13,7 +13,9 @@
 
 namespace dc {
 
-enum class ViewName { Front, Top, Right, Left, Bottom, Rear, Other };
+// Ignored: a part of the reference that is located like a view (so the student's copy of it
+// is not extra) but never graded, such as a title block, notes or construction.
+enum class ViewName { Front, Top, Right, Left, Bottom, Rear, Other, Ignored };
 QString viewNameString(ViewName n);
 bool parseViewName(const QString& s, ViewName* out);
 const QList<ViewName>& allViewNames();
@@ -34,6 +36,7 @@ struct ViewSet {
     QString source;             // "auto" or the sidecar path
 
     int indexOfName(ViewName n) const;
+    bool isIgnored(int viewIdx) const { return viewIdx >= 0 && viewIdx < static_cast<int>(views.size()) && views[viewIdx].name == ViewName::Ignored; }
     QString label(int viewIdx) const;  // "Front view"
     // Recomputes prims lists and boxes from primView; unassigned primitives go to the nearest view.
     void rebuild(const Drawing& ref);

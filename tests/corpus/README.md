@@ -72,6 +72,19 @@ length 0.785.
 | `dim_frac.dwg`, `dim_arch.dwg` | fractional and architectural units at 1/16 |
 | `dim_family.dwg` | DC3 with a radius sub-style (DC3$4) at one decimal place |
 
+Color set (for "line colors must match" and "set by layer"). Eight horizontal
+lines 4 long at y = 0…7: by layer (white), ACI 1 on the object, true color
+255,0,0 on the object, on layer RED, on layer TC (true color 200,10,10), with
+an explicit HIDDEN linetype, and a ByBlock line in a block inserted in ACI 3
+and inserted by layer.
+
+| File | What it is |
+|---|---|
+| `color_ref.dwg` | reference, as above |
+| `color_wrong.dwg` | the ACI 1 line drawn in ACI 5 (blue) |
+| `color_near.dwg` | the 255,0,0 true color drawn as 250,5,5 (2 % different) |
+| `color_bylayer.dwg` | the same colors and linetypes, every one set by layer (layers RED, HID7, GREEN) |
+
 Regenerate everything (a few minutes; it needs a licensed AutoCAD):
 
 ```bash

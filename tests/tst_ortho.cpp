@@ -4,6 +4,8 @@
 #include "Ortho.h"
 #include "TestUtil.h"
 
+#include <algorithm>
+
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -44,6 +46,7 @@ private slots:
     void unassignedPrimitivesJoinNearestView();
     void rebindAfterSettingsChange();
     void scaledDrawing();
+    void ignoredView();
 
 private:
     std::shared_ptr<Drawing> ref;
@@ -226,6 +229,40 @@ void TestOrtho::scaledDrawing() {
     QVERIFY(!r.pass);
     for (const auto& v : r.views) QVERIFY(v.found && v.pass);
     for (const auto& c : r.checks) QVERIFY(!c.applicable || c.passed);
+}
+
+void TestOrtho::ignoredView() {
+    // The Top view named Ignored: never graded, so a misaligned top view passes, and so does
+    // a drawing without it; the student's copy of it is not extra.
+    ViewSet vs = views;
+    const int top = vs.indexOfName(ViewName::Top);
+    QVERIFY(top >= 0);
+    vs.views[top].name = ViewName::Ignored;
+    const std::vector<int> graded = comparableIndices(*ref, ortho());
+    int topCount = 0;  // the top view's graded items
+    for (int i : vs.views[top].prims) topCount += std::count(graded.begin(), graded.end(), i) > 0;
+    QVERIFY(topCount > 0);
+
+    const CompareResult self = compareDrawings(*ref, *ref, ortho(), &vs);
+    QVERIFY2(self.pass, qPrintable(dumpErrors(self)));
+    QVERIFY(self.views[top].ignored);
+    QCOMPARE(self.refCount, static_cast<int>(graded.size()) - topCount);
+    QCOMPARE(self.penalizedExtras, 0);
+
+    auto misaligned = loadFixture("ortho_misaligned");
+    QVERIFY(misaligned);
+    const CompareResult m = compareDrawings(*ref, *misaligned, ortho(), &vs);
+    QVERIFY2(m.pass, qPrintable(dumpErrors(m)));
+    QVERIFY(!anyError(m, QStringLiteral("Top view")));
+
+    Drawing noTop = *ref;  // the student left the top view out
+    std::vector<Primitive> kept;
+    for (int i = 0; i < static_cast<int>(ref->prims.size()); ++i)
+        if (vs.primView[i] != top) kept.push_back(ref->prims[i]);
+    noTop.prims = kept;
+    const CompareResult n = compareDrawings(*ref, noTop, ortho(), &vs);
+    QVERIFY2(n.pass, qPrintable(dumpErrors(n)));
+    QVERIFY(!anyError(n, QStringLiteral("not found")));
 }
 
 QTEST_GUILESS_MAIN(TestOrtho)

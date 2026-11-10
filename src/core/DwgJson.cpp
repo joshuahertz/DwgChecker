@@ -1,5 +1,7 @@
 #include "DwgJson.h"
 
+#include "Color.h"
+
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QRegularExpression>
@@ -107,8 +109,9 @@ void DwgJson::index() {
                 l.name = o.value("name").toString();
                 l.ltype = href(o.value("ltype"));
                 l.flag0 = integer(o, "flag0", 16);
-                const QJsonObject col = o.value("color").toObject();
-                l.color = integer(col, "index", 7);
+                const DwgColor col = parseDwgColor(o.value("color"));
+                l.color = col.kind == DwgColor::Kind::Rgb ? -1 : col.kind == DwgColor::Kind::Aci ? col.aci : 7;
+                l.rgb = col.kind == DwgColor::Kind::Rgb ? col.rgb : aciToRgb(l.color);
                 m_layers.insert(h, l);
                 m_layerByName.insert(l.name.toUpper(), h);
             } else if (type == "LTYPE") {

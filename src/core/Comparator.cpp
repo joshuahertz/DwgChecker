@@ -1,6 +1,7 @@
 #include "Comparator.h"
 
 #include "Aligner.h"
+#include "Color.h"
 #include "DimText.h"
 #include "Format.h"
 #include "HatchCheck.h"
@@ -17,6 +18,9 @@ MatchCriteria criteriaFrom(const CompareSettings& s) {
     c.angTol = s.angTol;
     c.matchLinetype = s.matchLinetype;
     c.requireLayer = s.requireLayerMatch;
+    c.matchColor = s.matchColor;
+    c.colorTol = s.colorTolerance;
+    c.requireByLayer = s.requireByLayer;
     c.strictCenterlines = s.strictCenterlines;
     c.checkDimensions = s.checkDimensions;
     c.checkDimPrecision = s.checkDimPrecision;
@@ -93,19 +97,19 @@ QString nearMissText(const Primitive& r, const Primitive& s, bool superset, bool
             *label = QStringLiteral("wrong size");
             QString t = QStringLiteral("%1 %2%3 drawn as %2%4").arg(lineDescriptor(r), QChar(0x00D8), fmtLen(2 * r.radius),
                                                                     fmtLen(2 * s.radius, 2 * r.radius));
-            if (off.length() > tol) t += QStringLiteral(" and center off by %1").arg(fmtPt(off));
+            if (off.length() > tol) t += QStringLiteral(" and center off by %1").arg(fmtOffset(off));
             return t;
         }
         *label = QStringLiteral("shifted");
         const QString what = r.ltClass == LtClass::Visible ? QStringLiteral("hole") : lineDescriptor(r);
-        return QStringLiteral("%1 %2%3 center off by %4").arg(what, QChar(0x00D8), fmtLen(2 * r.radius), fmtPt(off));
+        return QStringLiteral("%1 %2%3 center off by %4").arg(what, QChar(0x00D8), fmtLen(2 * r.radius), fmtOffset(off));
     }
     case PrimKind::Arc: {
         if (displaced) {  // same radius and sweep, elsewhere, perhaps turned a little
             *label = QStringLiteral("shifted");
-            QString t = QStringLiteral("%1 R%2 center off by %3").arg(lineDescriptor(r), fmtLen(r.radius), fmtPt(s.center - r.center));
+            QString t = QStringLiteral("%1 R%2 center off by %3").arg(lineDescriptor(r), fmtLen(r.radius), fmtOffset(s.center - r.center));
             const double turn = angleDiff(s.a0, r.a0);
-            if (turn > angTol && turn * r.radius > tol) t += QStringLiteral(" and rotated by %1").arg(fmtDeg(turn));
+            if (turn > angTol && turn * r.radius > tol) t += QStringLiteral(" and rotated by %1").arg(fmtDeg(turn, 0));
             return t;
         }
         if (std::fabs(s.radius - r.radius) > tol) {
@@ -115,16 +119,16 @@ QString nearMissText(const Primitive& r, const Primitive& s, bool superset, bool
         if (std::fabs(s.sweep() - r.sweep()) > angTol && std::fabs(s.sweep() - r.sweep()) * r.radius > tol) {
             *label = QStringLiteral("wrong arc angle");
             return QStringLiteral("%1 R%2 at %3: sweep %4 drawn as %5")
-                .arg(lineDescriptor(r), fmtLen(r.radius), at, fmtDeg(r.sweep()), fmtDeg(s.sweep()));
+                .arg(lineDescriptor(r), fmtLen(r.radius), at, fmtDeg(r.sweep()), fmtDeg(s.sweep(), r.sweep()));
         }
         const Vec2 off = s.center - r.center;
         if (off.length() > tol) {
             *label = QStringLiteral("shifted");
-            return QStringLiteral("%1 R%2 center off by %3").arg(lineDescriptor(r), fmtLen(r.radius), fmtPt(off));
+            return QStringLiteral("%1 R%2 center off by %3").arg(lineDescriptor(r), fmtLen(r.radius), fmtOffset(off));
         }
         *label = QStringLiteral("rotated");
         return QStringLiteral("%1 R%2 at %3 is rotated by %4")
-            .arg(lineDescriptor(r), fmtLen(r.radius), at, fmtDeg(angleDiff(s.a0, r.a0)));
+            .arg(lineDescriptor(r), fmtLen(r.radius), at, fmtDeg(angleDiff(s.a0, r.a0), 0));
     }
     case PrimKind::Line: {
         const QString desc = QStringLiteral("%1 %2 long at %3").arg(lineDescriptor(r), fmtLen(r.length()), at);
@@ -135,9 +139,9 @@ QString nearMissText(const Primitive& r, const Primitive& s, bool superset, bool
         }
         if (displaced) {  // same length, elsewhere, perhaps turned a little
             *label = QStringLiteral("shifted");
-            QString t = QStringLiteral("%1 is shifted by %2").arg(desc, fmtPt(s.midpoint() - r.midpoint()));
+            QString t = QStringLiteral("%1 is shifted by %2").arg(desc, fmtOffset(s.midpoint() - r.midpoint()));
             const double turn = lineAngleDiff((r.p1 - r.p0).angle(), (s.p1 - s.p0).angle());
-            if (turn > angTol && turn * r.length() > tol) t += QStringLiteral(" and rotated by %1").arg(fmtDeg(turn));
+            if (turn > angTol && turn * r.length() > tol) t += QStringLiteral(" and rotated by %1").arg(fmtDeg(turn, 0));
             return t;
         }
         if (std::fabs(s.length() - r.length()) > tol) {
@@ -147,15 +151,15 @@ QString nearMissText(const Primitive& r, const Primitive& s, bool superset, bool
         const double da = lineAngleDiff((r.p1 - r.p0).angle(), (s.p1 - s.p0).angle());
         if (da > angTol && da * r.length() > tol) {
             *label = QStringLiteral("rotated");
-            return QStringLiteral("%1 is rotated by %2").arg(desc, fmtDeg(da));
+            return QStringLiteral("%1 is rotated by %2").arg(desc, fmtDeg(da, 0));
         }
         *label = QStringLiteral("shifted");
-        return QStringLiteral("%1 is shifted by %2").arg(desc, fmtPt(s.midpoint() - r.midpoint()));
+        return QStringLiteral("%1 is shifted by %2").arg(desc, fmtOffset(s.midpoint() - r.midpoint()));
     }
     case PrimKind::Dimension: {
         *label = QStringLiteral("wrong dimension value");
         const QString rv = sizeText(r);
-        QString sv = isAngularDimType(s.dimType) ? fmtDeg(s.measurement) : fmtLen(s.measurement, r.measurement);
+        QString sv = isAngularDimType(s.dimType) ? fmtDeg(s.measurement, r.measurement) : fmtLen(s.measurement, r.measurement);
         return QStringLiteral("dimension %1 shows %2").arg(rv, sv);
     }
     default: *label = QStringLiteral("other"); return {};
@@ -166,8 +170,16 @@ QString attributeText(const Primitive& r, const Primitive& s, const MatchCriteri
     QString t = QStringLiteral("%1 %2 at %3").arg(lineDescriptor(r, true), sizeText(r), fmtPt(messageLocation(r)));
     const bool ltWrong = c.matchLinetype && r.ltClass != s.ltClass;
     const bool layerWrong = c.requireLayer && r.layer.compare(s.layer, Qt::CaseInsensitive) != 0;
+    const bool colorWrong = c.matchColor && colorDifference(r.rgb, s.rgb) > c.colorTol + 1e-9;
     if (ltWrong) t += QStringLiteral(" drawn as %1").arg(lineDescriptor(s, true));
+    if (colorWrong) t += QStringLiteral(" is %1, expected %2").arg(colorName(s.aci, s.rgb), colorName(r.aci, r.rgb));
     if (layerWrong) t += QStringLiteral(" is on layer %1, expected %2").arg(s.layer, r.layer);
+    if (c.requireByLayer && !(s.colorByLayer && s.ltByLayer)) {
+        QStringList what;
+        if (!s.colorByLayer) what << QStringLiteral("color");
+        if (!s.ltByLayer) what << QStringLiteral("linetype");
+        t += QStringLiteral(" has its %1 set on the object, not by layer").arg(what.join(QStringLiteral(" and ")));
+    }
     return t;
 }
 
@@ -368,7 +380,8 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
         }
 
     // ---- Pass B: geometry matches with the wrong linetype class / layer / dimension precision ----
-    if (crit.matchLinetype || crit.requireLayer || (crit.checkDimensions && crit.checkDimPrecision)) {
+    if (crit.matchLinetype || crit.requireLayer || crit.matchColor || crit.requireByLayer ||
+        (crit.checkDimensions && crit.checkDimPrecision)) {
         for (int k : gorder) {
             Group& g = groups[k];
             if (ortho && !r.views[k].found) continue;
@@ -383,6 +396,7 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                 r.stuPartner[j] = i;
                 r.stuView[j] = groups[k].view;
                 r.stuT[j] = groups[k].T;
+                if (ortho && views->isIgnored(k)) continue;  // set aside below, never an error
                 const Primitive& R = ref.prims[i];
                 const Primitive& S = groups[k].st[j];
                 if (R.kind == PrimKind::Dimension) {
@@ -390,9 +404,20 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                                      QStringLiteral("wrong precision")});
                     continue;
                 }
-                const bool ltWrong = crit.matchLinetype && R.ltClass != S.ltClass;
-                eAttr.push_back({ltWrong ? ErrCat::Linetype : ErrCat::Layer, groups[k].prefix + attributeText(R, S, crit),
-                                 groups[k].view, {i}, {j}, true, ltWrong ? QStringLiteral("wrong linetype") : QStringLiteral("wrong layer")});
+                // One error per item; its kind is the first thing wrong, in this order.
+                ErrCat cat = ErrCat::ByLayer;
+                QString label = QStringLiteral("not by layer");
+                if (crit.matchLinetype && R.ltClass != S.ltClass) {
+                    cat = ErrCat::Linetype;
+                    label = QStringLiteral("wrong linetype");
+                } else if (crit.matchColor && colorDifference(R.rgb, S.rgb) > crit.colorTol + 1e-9) {
+                    cat = ErrCat::Color;
+                    label = QStringLiteral("wrong color");
+                } else if (crit.requireLayer && R.layer.compare(S.layer, Qt::CaseInsensitive) != 0) {
+                    cat = ErrCat::Layer;
+                    label = QStringLiteral("wrong layer");
+                }
+                eAttr.push_back({cat, groups[k].prefix + attributeText(R, S, crit), groups[k].view, {i}, {j}, true, label});
             }
         }
     }
@@ -415,6 +440,37 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
             if (best < 0) best = 0;
             r.stuView[j] = best;
             r.stuT[j] = groups[best].T;
+        }
+    }
+
+    // ---- Ignored views: located like any view, so the student's copy of one is claimed, but
+    // nothing in them is graded: their reference items, the student items matched to them
+    // and the leftovers nearest to them. ----
+    if (ortho) {
+        bool any = false;
+        for (int k = 0; k < static_cast<int>(groups.size()); ++k) {
+            if (!views->isIgnored(k)) continue;
+            any = true;
+            r.views[k].ignored = true;
+            r.views[k].refCount = 0;
+            for (int i : groups[k].refIdx) {
+                const int j = r.refPartner[i];
+                if (j >= 0) {
+                    r.stuStatus[j] = PrimStatus::NotCompared;
+                    r.stuPartner[j] = -1;
+                }
+                r.refStatus[i] = PrimStatus::NotCompared;
+                r.refPartner[i] = -1;
+                --r.refCount;
+            }
+            groups[k].refIdx.clear();
+            for (int j : stuIdx)
+                if (r.stuView[j] == k && r.stuStatus[j] != PrimStatus::NotCompared) r.stuStatus[j] = PrimStatus::NotCompared;
+        }
+        if (any) {
+            unclaimed.clear();
+            for (int j : stuIdx)
+                if (r.stuStatus[j] == PrimStatus::Extra) unclaimed.push_back(j);
         }
     }
 
@@ -476,7 +532,7 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
         // Alignment and arrangement checks from the per-view translations.
         std::vector<const Transform2D*> ts(groups.size(), nullptr);
         for (int k = 0; k < static_cast<int>(groups.size()); ++k)
-            if (r.views[k].found) ts[k] = &groups[k].T;
+            if (r.views[k].found && !r.views[k].ignored) ts[k] = &groups[k].T;
         r.checks = orthoChecks(*views, ts, s.alignTol > 0 ? s.alignTol : s.linTol);
         for (const auto& c : r.checks) {
             if (!c.applicable || c.passed) continue;
@@ -488,7 +544,7 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                                !fails ? QString() : c.isArrangement ? QStringLiteral("wrong view arrangement") : QStringLiteral("misaligned view")});
         }
         for (const auto& vr : r.views)
-            if (!vr.found && vr.refCount > 0)
+            if (!vr.found && vr.refCount > 0 && !vr.ignored)
                 eChecks.push_back({ErrCat::Alignment, vr.label + QStringLiteral(": view not found in the drawing"), vr.view, {}, {}, true,
                                    QStringLiteral("view not found")});
     }
@@ -680,6 +736,16 @@ static CompareResult compareAtBestScale(const Drawing& ref, const Drawing& stu, 
 }
 
 CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
+    // Dimensions and hatches are checked only where the solution has some; otherwise every
+    // one the student drew would count as extra. (Settings hides those checks then.)
+    const bool dims = s.checkDimensions && ref.count(PrimKind::Dimension) > 0;
+    const bool hatches = s.checkHatches && ref.count(PrimKind::Hatch) > 0;
+    if (dims != s.checkDimensions || hatches != s.checkHatches) {
+        CompareSettings t = s;
+        t.checkDimensions = dims;
+        t.checkHatches = hatches;
+        return compareDrawings(ref, stu, t, views);
+    }
     CompareResult r = compareAtBestScale(ref, stu, s, views);
     if (s.mode != Mode::Absolute || r.refCount == 0 || r.matched >= r.refCount) return r;
     // Absolute mode: is the whole drawing right but displaced? Compare once more wherever it
@@ -696,7 +762,7 @@ CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const Comp
     if (!rel.aligned || rel.T.isIdentity() || rel.matched < needed || rel.matched <= r.matched + 2) return r;
     const Vec2 c = ref.bbox().center();
     const QString where = QStringLiteral("the whole drawing is shifted by %1 from the reference")
-                              .arg(fmtPt(rel.T.inverse().apply(c) - c));  // where the reference's middle was drawn
+                              .arg(fmtOffset(rel.T.inverse().apply(c) - c));  // where the reference's middle was drawn
     auto afterScale = [](std::vector<ErrorItem>& errs) {  // the scale error, when there is one, explains more
         auto at = errs.begin();
         if (at != errs.end() && at->cat == ErrCat::Scale) ++at;

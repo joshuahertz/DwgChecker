@@ -80,7 +80,7 @@ void AutoCadController::open(QWidget* parent, const QString& path, const QByteAr
         QString err;
         target = platform::makeEvidenceCopy(path, &err);
         if (target.isEmpty()) {
-            QMessageBox::warning(parent, tr("Open in AutoCAD"), tr("Could not make a protected copy: %1").arg(err));
+            QMessageBox::warning(parent, tr("Open in AutoCAD"), tr("Could not open it as read-only: %1").arg(err));
             return;
         }
     }

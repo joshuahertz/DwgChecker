@@ -1,6 +1,7 @@
 // Geometry, matching, alignment, identity, formatting, settings and CSV.
 
 #include "Aligner.h"
+#include "Color.h"
 #include "Comparator.h"
 #include "Csv.h"
 #include "Format.h"
@@ -71,6 +72,7 @@ private slots:
     void dimensionsChecked();
     void displacedCopiesArePaired();
     void displacedLineTurnedSlightly();
+    void tinyShiftShowsItsSize();
     void errorSummaryCounts();
     void similarityTransforms();
     void scaleCandidateList();
@@ -221,6 +223,30 @@ void TestMisc::formatting() {
     QCOMPARE(fmtCoord(0.125), QStringLiteral("0.125"));
     QCOMPARE(fmtCoord(-0.0000001), QStringLiteral("0.0"));
     QCOMPARE(fmtPt({3, 2.5}), QStringLiteral("(3.0, 2.5)"));
+    // Offsets and turns below the usual digits still show, for a tight tolerance.
+    QCOMPARE(fmtOffset({0, -2.99e-5}), QStringLiteral("(0.0, -0.00003)"));
+    QCOMPARE(fmtOffset({3, 3}), QStringLiteral("(3.0, 3.0)"));
+    QCOMPARE(fmtOffset({1e-12, 0}), QStringLiteral("(0.0, 0.0)"));  // rounding noise stays 0
+    QCOMPARE(fmtDeg(deg(1)), QStringLiteral("1.00\u00B0"));
+    QCOMPARE(fmtDeg(deg(0.0004), 0), QStringLiteral("0.0004\u00B0"));
+    QCOMPARE(fmtDeg(deg(45.001), deg(45)), QStringLiteral("45.001\u00B0"));
+    // Colors: the ACI palette, names, differences, and dwgread's encodings.
+    QCOMPARE(aciToRgb(1), 0xFF0000u);
+    QCOMPARE(aciToRgb(21), 0xFF9F7Fu);
+    QCOMPARE(aciToRgb(60), 0xBFFF00u);
+    QCOMPARE(aciToRgb(240), 0xFF003Fu);
+    QCOMPARE(aciToRgb(250), 0x333333u);
+    QCOMPARE(colorName(1, 0xFF0000), QStringLiteral("red (ACI 1)"));
+    QCOMPARE(colorName(34, aciToRgb(34)), QStringLiteral("ACI 34"));
+    QCOMPARE(colorName(-1, 0xFA0505), QStringLiteral("RGB 250,5,5"));
+    QCOMPARE(colorDifference(0xFF0000, 0xFF0000), 0.0);
+    QVERIFY(std::fabs(colorDifference(0xFF0000, 0xFA0505) - 1.96) < 0.01);
+    QVERIFY(std::fabs(colorDifference(0x000000, 0xFFFFFF) - 100.0) < 1e-9);
+    QCOMPARE(parseDwgColor(QJsonObject{{"index", 256}, {"rgb", "000000"}, {"flag", 1}}).kind, DwgColor::Kind::ByLayer);
+    QCOMPARE(parseDwgColor(QJsonObject{{"rgb", "000000"}}).kind, DwgColor::Kind::ByBlock);
+    QCOMPARE(parseDwgColor(QJsonObject{{"index", 1}, {"rgb", "c2ff0000"}, {"flag", 128}}).rgb, 0xFF0000u);
+    QCOMPARE(parseDwgColor(QJsonObject{{"index", 256}, {"rgb", "c3000007"}}).aci, 7);
+    QCOMPARE(parseDwgColor(QJsonValue(-3)).aci, 3);  // a turned-off layer (older files)
     Primitive h = line({0, 0}, {1.25, 0}, LtClass::Hidden);
     QCOMPARE(describe(h), QStringLiteral("hidden line 1.250 long"));
     QCOMPARE(describe(circle({0, 0}, 0.375)), QStringLiteral("circle \u00D80.750"));
@@ -241,9 +267,14 @@ void TestMisc::settingsRoundTrip() {
     s.duplicates.templateFiles = {"a.dwg"};
     s.loader.timeoutSec = 12;
     s.compare.detectLocation = false;  // wrong location: every time
+    s.compare.matchColor = true;
+    s.compare.colorTolerance = 7;
+    s.compare.requireByLayer = true;
     s.compare.locationPenaltyErrors = 0;
     const AppSettings t = AppSettings::fromJson(s.toJson());
     QVERIFY(!t.compare.detectLocation);
+    QVERIFY(t.compare.matchColor && t.compare.requireByLayer);
+    QCOMPARE(t.compare.colorTolerance, 7.0);
     QCOMPARE(t.compare.locationPenaltyErrors, 0);
     QCOMPARE(t.compare.mode, Mode::Orthographic);
     QCOMPARE(t.compare.linTol, 0.001);
@@ -268,8 +299,8 @@ void TestMisc::settingsRoundTrip() {
     QVERIFY(d.compare.matchLinetype);
     QVERIFY(d.compare.allowRotation);
     QVERIFY(!d.compare.allowMirror);
-    QCOMPARE(d.compare.linTol, 1e-4);
-    QCOMPARE(d.compare.angTol, 1e-6);
+    QCOMPARE(d.compare.linTol, 1e-6);
+    QCOMPARE(d.compare.angTol, deg(1e-6));  // 1e-6 degrees
     QVERIFY(!d.compare.requireLayerMatch);
     QCOMPARE(d.compare.extras, ExtrasPolicy::Penalize);
     QCOMPARE(d.compare.orthoTopK, 5);
@@ -315,6 +346,30 @@ void TestMisc::displacedCopiesArePaired() {
     QCOMPARE(r.penalizedExtras, 2);
     QVERIFY(qFuzzyCompare(r.correctness, 100.0 / 7));
     QCOMPARE(r.errorSummary(), QStringLiteral("3 shifted, 1 missing, 2 extra"));
+}
+
+void TestMisc::tinyShiftShowsItsSize() {
+    // A student's line 0.00003 too low, with a tolerance of 0.000001: the message gives the
+    // amount instead of "shifted by (0.0, -0.0)".
+    auto build = [](double y) {
+        DocBuilder b;
+        b.line({0, 0}, {5, 0});
+        b.line({0, y}, {5, y});
+        b.circle({2.5, 3}, 0.5);
+        return b.canon();
+    };
+    const Drawing ref = build(1), stu = build(1 - 3e-5);
+    CompareSettings s;
+    s.mode = Mode::Absolute;
+    s.linTol = 1e-6;
+    const CompareResult r = compareDrawings(ref, stu, s, nullptr);
+    const QString all = r.errorStrings().join(" | ");
+    QCOMPARE(r.matched, 2);
+    QVERIFY2(r.errorStrings().contains(QStringLiteral("line 5.000 long at (2.5, 1.0) is shifted by (0.0, -0.00003)")),
+             qPrintable(all));
+    // At a looser tolerance (0.0001) the same drawing is exact.
+    s.linTol = 1e-4;
+    QVERIFY(compareDrawings(ref, stu, s, nullptr).pass);
 }
 
 void TestMisc::displacedLineTurnedSlightly() {

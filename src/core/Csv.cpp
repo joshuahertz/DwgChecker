@@ -89,8 +89,8 @@ static QString header(const BatchOutput& b) {
 QString resultsCsv(const BatchOutput& b) {
     QString out = header(b);
     const bool multi = b.multipleRefs();
-    out += multi ? QStringLiteral("Student,Solution drawing,File,Possible duplicate,Correctness,Errors\n")
-                 : QStringLiteral("File,Possible duplicate,Correctness,Errors\n");
+    out += multi ? QStringLiteral("Student,Solution drawing,File,Possible cheating,Correctness,Errors\n")
+                 : QStringLiteral("File,Possible cheating,Correctness,Errors\n");
     auto flagOf = [&](int i) {
         const CopyFlag f = copyFlagFor(b, i);
         return f.level == Strength::Info ? QStringLiteral("none") : QStringLiteral("%1: %2").arg(f.levelText(), f.text);

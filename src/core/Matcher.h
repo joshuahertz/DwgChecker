@@ -13,6 +13,9 @@ struct MatchCriteria {
     double angTol = 1e-6;
     bool matchLinetype = true;
     bool requireLayer = false;
+    bool matchColor = false;
+    double colorTol = 0;          // colorDifference allowed (0-100)
+    bool requireByLayer = false;  // the student's color and linetype set by layer
     bool strictCenterlines = false;
     bool checkDimensions = false;
     bool checkDimPrecision = true;  // with checkDimensions: the shown precision must agree
@@ -20,7 +23,8 @@ struct MatchCriteria {
 
 // Geometry within tolerance, ignoring linetype class and layer.
 bool geometryMatches(const Primitive& r, const Primitive& s, const MatchCriteria& c);
-// Linetype class / layer agreement, or a dimension's shown precision (as configured).
+// Linetype class / layer / color agreement, color and linetype by layer, or a dimension's
+// shown precision (as configured).
 bool attributesMatch(const Primitive& r, const Primitive& s, const MatchCriteria& c);
 // Centerlines are matched on position and direction only unless strictCenterlines.
 bool usesLooseCenterline(const Primitive& r, const MatchCriteria& c);

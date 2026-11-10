@@ -569,6 +569,156 @@ disabled outside Orthographic mode. The other settings apply to all drawings:
 tolerances, extras, linetypes, layers, wrong scale, near-miss distance,
 centerlines, reading and copy-detection options.
 
+**D56. Offsets and angles in messages show their size (2026-11-09).** A Q9
+"boxes" file had both upper slots and the upper square drawn 0.00003 too low.
+With the quiz's tolerance of 0.000001 that is a real error, but the messages
+printed every offset with 3 decimals: "is shifted by (0.0, -0.0)". Offsets
+("shifted by", "center off by", the whole-drawing location) now use
+`fmtOffset`, which adds digits (up to 8) until a part that is not 0 does not
+print as 0: "(0.0, -0.00003)". Rounding noise below that still prints as 0.0.
+Turns ("rotated by") get the same treatment against 0 (up to 6 decimals of a
+degree). An arc's wrong sweep and an angular dimension's wrong value get extra
+digits until they differ from the reference, as lengths already did with
+`fmtLen`.
+
+**D57. Setup column beside the results (user decision, 2026-11-09).** The main
+window was a stack: cards and Run in a row, Settings under them, results below.
+It is now split left and right by a draggable divider:
+- **Left:** a column with the reference card, the submissions card and a
+  full-width Run, then progress, then Settings. Settings is open by default,
+  remembers whether it was folded, and fills the rest of the column, scrolling
+  when it is longer.
+- **Right:** the Results and Duplicates tabs at the full window height.
+
+Wide screens have width to spare and are short on height, so the table now
+shows more students, and the steps read top to bottom before the results. The
+divider's position is saved with the window.
+
+The settings panel is laid out in one column (Grading, then What to check; the
+Advanced groups stacked), and form labels too long for the column wrap above
+their fields. The auto-height of the old settings strip (D50,
+`fitSettingsArea`) is gone. The cards' detail lines now wrap instead of being
+cut short with "…", and the reference card lists one solution drawing per line. Long
+drawing names in the Solution drawings table are shortened in the middle, with
+the full path as a tooltip.
+
+**D58. Settings show only what applies; names for the users (user decisions,
+2026-11-10).**
+- **Matching rules.** "Grading" and "What to check" are one box, since all of
+  it says what must match the solution and what may differ. The Advanced
+  "Matching" box is now "More matching rules".
+- **Location mode** replaces "Mode", with an (i) icon whose tooltip explains
+  Absolute, Relative and Orthographic. It is used in the Solution drawings table
+  too, where "Dimensions" is shortened to "Dims.".
+- **Hidden, not greyed out.** A setting that does not apply is hidden, not
+  greyed out with a note (this replaces D55's "Not used: …"). That covers
+  rotation and mirroring (Relative), wrong location (Absolute), the
+  Orthographic views box, Edit views…, and the dimension and hatch checks with
+  their precision and pattern options. Dimension and hatch checks need the
+  solution to have some: the solution card's reading reports what each drawing
+  contains (`SettingsPanel::setDrawingContents`). In the table, a drawing's
+  Dims. or Hatches box, or its Edit views… button, is shown only when it
+  applies, and a column with nothing left goes away. "Only for …" notes stay for
+  settings that some drawings use. Until the drawings are read, everything is
+  shown.
+- **The core agrees.** `compareDrawings` checks dimensions or hatches only when
+  the solution has some, so a hidden check left ticked cannot count a student's
+  dimensions or hatches as extras.
+- **Tolerances default to 1e-6:** the tolerance in drawing units, and the angle
+  tolerance in degrees (1.745e-8 rad), as the instructor grades.
+- **Cheating, not duplicates.** "Copy detection" is "Cheating detection"; the
+  "Poss. dup." column, the Duplicates tab, its export and the CSV column say
+  "Possible cheating". The internal names (Duplicates.cpp, DupEntry) are
+  unchanged.
+- **Open as read-only (protect the evidence)** replaces "Open a read-only copy".
+- **No "quiz".** Assignments are quizzes or homework, so the card says
+  "settings saved for this reference solution" (or "these reference solutions").
+  The registry key keeps its old name, `quizSettings`, so saved settings still
+  load.
+- **The solution card** gives one line per drawing: "Q10Problem 1_1-6 – 42
+  objects; ignoring 51 objects on turned-off or frozen layers". The layer names
+  are in the log. `Drawing::hiddenLayerObjects` carries the count.
+
+**D59. Cleaner results for several files per student (user decisions,
+2026-11-10).**
+- **Student row.** It names the student in bold and is shaded with a faint tint
+  of the highlight color (the correctness cell keeps its red-to-green color).
+  Its grey second line appears only when drawings are missing ("2 / 3
+  drawings"). Its Errors cell is empty, with no tooltip, since every file row
+  lists its own errors.
+- **File rows are one plain line:** "Drawing 1", "Drawing 2", … with several
+  solution drawings (the user chose this over the drawing's name, the
+  student's file name, or a separate Drawing column). It is "Graded file" with
+  one drawing, and "Extra file (not graded)" or "Unreadable file" otherwise. A
+  missing drawing's row says "no file".
+- **Names on hover.** The Student header's tooltip lists "Drawing 1:
+  Q10Problem 1_1-6.dwg", …, and each row's tooltip gives its drawing's and the
+  student's file names. "Closest" for an extra file uses the same numbers.
+- **Predictable numbers.** The first card sorts several solution drawings by
+  file name, with numbers compared by value (QCollator numeric mode), so
+  Drawing 2 is "Problem 2" and comes before "Problem 10". Settings are keyed by
+  file name and saved settings by the sorted set of paths, so nothing saved
+  changes. The CSV still names each drawing in full.
+
+**D60. Colors, by layer, the mode as step 2, Ignored views (user decisions,
+2026-11-10).**
+- **Line colors must match** (`CompareSettings::matchColor`), with an allowed
+  difference (`colorTolerance`, 0-100, default 0). The difference is the RGB
+  distance as a share of black to white (`colorDifference` in Color.cpp). It is
+  simple to read, an ACI color and the same true color come out equal, and a
+  near red is about 2 % while red against blue is 82 %. Colors are resolved like
+  linetypes: ByLayer takes the layer's color, ByBlock the INSERT's (white at the
+  top level). dwgread's encodings were confirmed on new corpus drawings
+  (color_ref / color_wrong / color_near / color_bylayer, made with
+  accoreconsole):
+  - **Entities:** `{index 256}` ByLayer, `{index n}` ACI, no index ByBlock, and
+    `{rgb "c2RRGGBB", flag 128}` a true color.
+  - **Layers:** `c3`+ACI, or `c2`+RGB.
+  - **Older files:** the index alone.
+
+  The layer table used to keep only the index, which is 256 for every layer in
+  R2004+ files; it now has the real ACI and RGB (this also changes copy
+  detection's layer-table signature, consistently for all files). The ACI
+  palette is computed: 24 hues, five shades, full and half saturation, plus the
+  greys. Lines merge only with lines of the same color when colors must match.
+- **Linetype and color must be set by layer** (`requireByLayer`): a student item
+  whose color or linetype is set on the object is one "not by layer" error.
+  Inside a block, ByBlock counts as by layer when the INSERT is. These, like
+  wrong colors, are attribute errors: matched geometry with the wrong
+  attributes, one error per item, labeled by the first thing wrong (linetype,
+  color, layer, by layer).
+- **Labels instead of notes.** "Wrong location (in absolute mode) counts as an
+  error" comes first, then "Allow rotation (in relative mode)" and "Allow
+  mirrored (in relative mode)". The labels say the mode, so these have no
+  "Only for …" notes. They are still hidden when no drawing uses that mode.
+- **Wrong location: Never is gone** (only Once and Every time); the core still
+  supports a penalty of 0.
+- **The location mode is step 2 of 4.** It must be chosen for each assignment.
+  A step box between the reference card and the submissions card holds the
+  Location mode drop-down (with its (i) tooltip, the mode's description and
+  Edit views…), or, with several solution drawings, the Solution drawings table.
+  The panel still builds and owns these controls (`modeStepWidget`), so saving
+  and loading are unchanged. The step is done when saved settings for these
+  reference solutions were loaded, or when a mode was picked from the drop-down
+  (each drawing's, with several). Picking one saves the settings, so the next
+  time the step is done already. Run needs steps 1-3.
+- **Ignored view.** A view named Ignored in Edit views is resolved like any
+  other, so the student's copy is claimed, but its reference items, the student
+  items matched to it and the leftovers nearest to it are set aside
+  (NotCompared): not counted, no errors, no alignment checks, never "not found".
+  It is meant for title blocks, notes and construction.
+- **Advanced boxes.** "AutoCAD and files" is now "Viewing submissions in
+  AutoCAD". The reading time limit and the ODA File Converter moved to "Reading
+  drawings".
+- **Answers given.** Release builds use the compilers' optimization (MSVC
+  /O2, clang/gcc -O3, CMake's Release defaults); the Debug configuration Qt
+  Creator builds by default has none. The GitHub workflow (build.yml) already
+  builds dwgread statically from the pinned LibreDWG on Windows (MSYS2) and
+  macOS (universal), builds the app in Release, runs the tests, and uploads
+  DwgChecker-windows (windeployqt folder with dwgread.exe) and
+  DwgChecker-macos.zip (the .app with Qt and Helpers/dwgread; signed and
+  notarized when the secrets exist).
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

@@ -3,6 +3,7 @@
 add_library(dwgcore STATIC
   Geometry.h Geometry.cpp
   Model.h Model.cpp
+  Color.h Color.cpp
   Settings.h Settings.cpp
   DwgJson.h DwgJson.cpp
   Loader.h Loader.cpp

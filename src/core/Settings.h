@@ -34,6 +34,7 @@ struct CanonSettings {
     double linTol = 1e-4;           // merging / duplicate tolerance (copied from CompareSettings)
     double angTol = 1e-6;
     bool mergeByLayer = false;      // only merge lines on the same layer (when layers must match)
+    bool mergeByColor = false;      // ... of the same color (when colors must match)
 };
 
 struct CompareSettings {
@@ -41,9 +42,12 @@ struct CompareSettings {
     bool matchLinetype = true;
     bool allowRotation = true;      // Relative mode
     bool allowMirror = false;
-    double linTol = 1e-4;           // drawing units
-    double angTol = 1e-6;           // radians
+    double linTol = 1e-6;           // drawing units
+    double angTol = 1.7453292519943295e-8;  // radians (1e-6 degrees, as Settings shows it)
     bool requireLayerMatch = false;
+    bool matchColor = false;        // each item's color must match the reference's...
+    double colorTolerance = 0;      // ...within this colorDifference (0-100; 0 = the same color)
+    bool requireByLayer = false;    // each item's color and linetype must be set by its layer
     ExtrasPolicy extras = ExtrasPolicy::Penalize;
     bool checkDimensions = false;   // compare DIMENSION measured values
     bool checkDimPrecision = true;  // ...and the precision they show (only when checkDimensions)

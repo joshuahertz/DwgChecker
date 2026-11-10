@@ -6,6 +6,11 @@
 
 #include <QWidget>
 
+#include <QSet>
+
+#include <map>
+#include <vector>
+
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
@@ -23,6 +28,13 @@ namespace dcgui {
 
 class AutoCadController;
 
+// What a solution drawing contains, as far as Settings cares: a check for dimensions or
+// hatches is shown only for a drawing that has some. Unknown (not read yet) counts as yes.
+struct DrawingContent {
+    bool dims = true;
+    bool hatches = true;
+};
+
 class SettingsPanel : public QWidget {
     Q_OBJECT
 public:
@@ -30,6 +42,15 @@ public:
     void setSettings(const dc::AppSettings& s);
     // The chosen solution drawings: with two or more, each gets its own mode and checks.
     void setSolutionDrawings(const QStringList& paths);
+    // Step 2 of the main window: the location mode (or the table of solution drawings). The
+    // panel builds it; MainWindow puts it in its step box.
+    QWidget* modeStepWidget() const { return m_modeStep; }
+    // Whether the location mode was chosen for these solution drawings: by picking it (each
+    // drawing's, with several) or because their saved settings were loaded.
+    bool modeChosen() const;
+    void setModeChosen(bool chosen);
+    // What each solution drawing contains, by AppSettings::drawingKey (once they are read).
+    void setDrawingContents(const std::map<QString, DrawingContent>& byKey);
     dc::AppSettings settings() const;
     void refreshAutoCad();
 
@@ -37,6 +58,7 @@ signals:
     void changed();
     void editViewsRequested(const QString& refPath);  // "Edit views…"; empty = the only drawing
     void sizeChanged();  // Advanced or the drawings table shown or hidden
+    void modeChoiceChanged();  // modeChosen() may have changed
 
 protected:
     bool eventFilter(QObject* o, QEvent* e) override;
@@ -52,20 +74,44 @@ private:
         QLabel* label = nullptr;
     };
     Scope addScope(QFormLayout* form, bool indent);
-    // Enables the mode- and check-specific settings, and with several solution drawings
-    // says which drawings each one applies to.
+    // Shows only the settings that apply (by mode, checks and what the drawings contain), and
+    // with several solution drawings says which drawings each one applies to.
     void updateScopes();
+    DrawingContent contentOf(const QString& key) const;
+    void updateModeNote();
     void rebuildDrawingRows();
     void applyDrawingLayout();
 
     AutoCadController* m_acad;
     QComboBox* m_mode;
-    QGroupBox* m_drawingsBox;
+    QWidget* m_drawingsBox;  // the Solution drawings table, in step 2
+    QWidget* m_modeStep;
+    QFormLayout* m_modeForm;
+    QLabel* m_modeNote;
+    bool m_modeChosen = false;
+    QSet<QString> m_chosenKeys;  // drawings whose mode was chosen (several drawings)
+    QCheckBox* m_matchColor;
+    QSpinBox* m_colorTol;
+    QWidget* m_colorTolRow;
+    QCheckBox* m_byLayer;
     QGridLayout* m_drawingsGrid;
-    QFormLayout* m_gradingForm;
-    QFormLayout* m_checksForm;
-    Scope m_rotationScope, m_locationScope, m_dimPrecScope, m_hatchPatternScope, m_orthoScope;
+    QFormLayout* m_rulesForm;  // "Matching rules"
+    QGroupBox* m_orthoBox;
+    Scope m_dimPrecScope, m_hatchPatternScope, m_orthoScope;
     QWidget* m_editViewsRow;
+    QWidget* m_dimPrecRow;
+    QWidget* m_hatchPatternRow;
+    std::map<QString, DrawingContent> m_contents;
+    // The Solution drawings table: per drawing, the controls that may not apply.
+    struct DrawingRow {
+        QString key;
+        QWidget* dims;
+        QWidget* hatches;
+        QWidget* views;
+    };
+    std::vector<DrawingRow> m_rows;
+    QWidget* m_headDims = nullptr;
+    QWidget* m_headHatches = nullptr;
     QStringList m_drawingPaths;
     std::map<QString, dc::DrawingSettings> m_perDrawing;
     QLabel* m_modeHelp;

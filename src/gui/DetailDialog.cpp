@@ -116,6 +116,7 @@ QColor DetailDialog::viewColor(int v) const {
     const StudentRun& run = m_batch->students[m_student];
     const CompareResult& r = run.result;
     const ViewSet* vs = m_batch->viewsOf(run);
+    if (vs && v < static_cast<int>(r.views.size()) && r.views[v].ignored) return kRefGray;  // not graded
     if (!vs || v >= static_cast<int>(r.views.size()) || !r.views[v].found) return kMissing;
     int missing = 0, wrong = 0;
     for (int i : vs->views[v].prims) {
@@ -165,8 +166,9 @@ void DetailDialog::buildOverlay() {
         for (int v = 0; v < static_cast<int>(vs->views.size()); ++v) {
             const auto& vr = v < static_cast<int>(r.views.size()) ? r.views[v] : ViewResult{};
             m_view->addBox(vs->views[v].bbox, viewColor(v),
-                           QStringLiteral("%1 %2").arg(vs->label(v), vr.found ? QStringLiteral("%1%").arg(vr.percent, 0, 'f', 0)
-                                                                              : tr("not found")));
+                           vr.ignored ? tr("Ignored (not graded)")
+                                      : QStringLiteral("%1 %2").arg(vs->label(v), vr.found ? QStringLiteral("%1%").arg(vr.percent, 0, 'f', 0)
+                                                                                           : tr("not found")));
         }
     m_view->zoomToAll();
 }
@@ -371,9 +373,10 @@ void DetailDialog::buildViews(QTableWidget* t) {
         for (const auto& c : r.checks)
             if (c.view == v.view && c.applicable)
                 checks << (c.passed ? (c.isArrangement ? tr("arrangement ok") : tr("aligned")) : c.text);
-        auto* res = new QTableWidgetItem(!v.found ? tr("not found") : (v.pass ? tr("pass") : tr("fail")) +
-                                                                          QStringLiteral(" %1%").arg(v.percent, 0, 'f', 1));
-        res->setBackground(v.found && v.pass ? QColor(214, 245, 214) : QColor(250, 218, 214));
+        auto* res = new QTableWidgetItem(v.ignored ? tr("ignored (not graded)")
+                                         : !v.found ? tr("not found")
+                                                    : (v.pass ? tr("pass") : tr("fail")) + QStringLiteral(" %1%").arg(v.percent, 0, 'f', 1));
+        res->setBackground(v.ignored ? QColor(230, 230, 230) : v.found && v.pass ? QColor(214, 245, 214) : QColor(250, 218, 214));
         res->setForeground(kDarkText);
         t->setItem(i, 0, new QTableWidgetItem(v.label));
         t->setItem(i, 1, res);

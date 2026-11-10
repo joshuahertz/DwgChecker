@@ -83,6 +83,11 @@ struct Primitive {
     QString layer;
     QString ltypeName;      // effective linetype after ByLayer/ByBlock
     LtClass ltClass = LtClass::Visible;
+    // Effective color after ByLayer/ByBlock: ACI number (-1 for a true color) and RGB.
+    int aci = 7;
+    quint32 rgb = 0xFFFFFF;
+    bool colorByLayer = true;  // the color comes from the layer, not set on the object
+    bool ltByLayer = true;     // likewise the linetype
     QString sourceType;     // e.g. LINE, LWPOLYLINE, INSERT>ARC
     QString sourceId;       // stable id: handle path "29C/27A#3" (hex handles, segment index)
     quint64 handle = 0;     // handle of the top-level entity it came from
@@ -128,6 +133,10 @@ struct Drawing {
     DrawingMeta meta;
     std::vector<Primitive> prims;
     std::vector<DrawingWarning> warnings;
+    // Objects on turned-off or frozen layers: left out of prims when the reading settings
+    // skip them, else included (the HiddenLayer warning says which).
+    int hiddenLayerObjects = 0;
+    bool hiddenLayerObjectsSkipped = false;
     std::vector<LayerInfo> layers;
     // Top-level entity handles and types in handle order (informational duplicate signal).
     std::vector<quint64> entityHandles;

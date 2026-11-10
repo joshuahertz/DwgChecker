@@ -1,5 +1,7 @@
 #include "Canonicalizer.h"
 
+#include "Color.h"
+
 #include "MetaExtractor.h"
 #include "SpatialGrid.h"
 
@@ -56,6 +58,10 @@ public:
         Affine3 M;            // block coordinates -> WCS
         QString insLayer;     // effective layer of the enclosing INSERT (layer "0" inheritance)
         QString insLtype;     // effective linetype of the enclosing INSERT (ByBlock)
+        int insAci = 7;                // effective color of the enclosing INSERT (ByBlock)
+        quint32 insRgb = 0xFFFFFF;
+        bool insColorByLayer = true;   // ... and whether the INSERT's color and linetype are by layer
+        bool insLtByLayer = true;
         QString idPrefix;     // "29C/" ...
         QString typePrefix;   // "INSERT>" ...
         quint64 top = 0;      // top-level entity handle
@@ -105,6 +111,8 @@ public:
         if (tilted)
             D.addWarning(WarnKind::NonZeroZ,
                          QStringLiteral("%1 arcs/circles are not parallel to the XY plane and were marked unsupported").arg(tilted));
+        D.hiddenLayerObjects = hiddenLayerCount;
+        D.hiddenLayerObjectsSkipped = hiddenLayerCount > 0 && S.skipHiddenLayers;
         if (hiddenLayerCount) {
             QStringList names(hiddenLayers.begin(), hiddenLayers.end());
             names.sort(Qt::CaseInsensitive);
@@ -160,6 +168,53 @@ private:
             return c.depth > 0 && !c.insLtype.isEmpty() ? c.insLtype : QStringLiteral("Continuous");
         return name;
     }
+    // The object's effective color, and whether it comes from its layer. ByBlock takes the
+    // enclosing INSERT's color (white at the top level, where it is not by layer).
+    struct EffColor {
+        int aci = 7;
+        quint32 rgb = 0xFFFFFF;
+        bool byLayer = true;
+    };
+    EffColor effColor(const QJsonObject& o, const QString& effLayerName, const Ctx& c) const {
+        const DwgColor col = parseDwgColor(o.value("color"));
+        EffColor e;
+        switch (col.kind) {
+        case DwgColor::Kind::ByLayer:
+            if (const auto* l = J.layerByName(effLayerName)) {
+                e.aci = l->color;
+                e.rgb = l->rgb;
+            }
+            break;
+        case DwgColor::Kind::ByBlock:
+            if (c.depth > 0) {
+                e.aci = c.insAci;
+                e.rgb = c.insRgb;
+                e.byLayer = c.insColorByLayer;
+            } else {
+                e.byLayer = false;
+            }
+            break;
+        case DwgColor::Kind::Aci:
+            e.aci = col.aci;
+            e.rgb = aciToRgb(col.aci);
+            e.byLayer = false;
+            break;
+        case DwgColor::Kind::Rgb:
+            e.aci = -1;
+            e.rgb = col.rgb;
+            e.byLayer = false;
+            break;
+        }
+        return e;
+    }
+    // Whether the object's linetype comes from its layer (ltype_flags 0 ByLayer, 1 ByBlock).
+    bool ltByLayer(const QJsonObject& o, const Ctx& c) const {
+        switch (DwgJson::integer(o, "ltype_flags", 0)) {
+        case 0: return true;
+        case 1: return c.depth > 0 && c.insLtByLayer;
+        default: return false;
+        }
+    }
     bool layerSkipped(const QString& layer) const {
         if (S.skipDefpoints && layer.compare("Defpoints", Qt::CaseInsensitive) == 0) return true;
         if (ignore.isValid() && !ignore.pattern().isEmpty() && ignore.match(layer).hasMatch()) return true;
@@ -176,6 +231,11 @@ private:
         p.layer = layer;
         p.ltypeName = ltype;
         p.ltClass = lt.classify(ltype);
+        const EffColor col = effColor(o, layer, c);
+        p.aci = col.aci;
+        p.rgb = col.rgb;
+        p.colorByLayer = col.byLayer;
+        p.ltByLayer = ltByLayer(o, c);
         p.sourceType = c.typePrefix + type;
         p.sourceId = c.idPrefix + hex(DwgJson::ownHandle(o)) + (seg >= 0 ? QStringLiteral("#%1").arg(seg) : QString());
         p.handle = c.top;
@@ -564,6 +624,11 @@ private:
                 n.M = c.M * head * Affine3::translation({k * colSp, r * rowSp, 0}) * tail;
                 n.insLayer = layer;
                 n.insLtype = ltype;
+                const EffColor col = effColor(o, layer, c);
+                n.insAci = col.aci;
+                n.insRgb = col.rgb;
+                n.insColorByLayer = col.byLayer;
+                n.insLtByLayer = ltByLayer(o, c);
                 n.idPrefix = c.idPrefix + hex(DwgJson::ownHandle(o)) +
                              (rows * cols > 1 ? QStringLiteral("[%1,%2]").arg(r).arg(k) : QString()) + "/";
                 n.typePrefix = c.typePrefix + type + ">";
@@ -594,6 +659,7 @@ struct Dsu {
 QString groupKey(const Primitive& p, const CanonSettings& s) {
     QString k = QString::number(static_cast<int>(p.ltClass));
     if (s.mergeByLayer) k += "|" + p.layer.toUpper();
+    if (s.mergeByColor) k += "|" + QString::number(p.rgb);
     return k;
 }
 
@@ -653,6 +719,7 @@ void removeStackedDuplicates(std::vector<Primitive>& prims, const CanonSettings&
         int dupOf = -1;
         grid.forNear(key, [&](int j) {
             if (dupOf < 0 && prims[j].ltClass == p.ltClass && (!s.mergeByLayer || prims[j].layer == p.layer) &&
+                (!s.mergeByColor || prims[j].rgb == p.rgb) &&
                 sameGeometry(prims[j], p, tol))
                 dupOf = j;
         });

@@ -98,6 +98,10 @@ $variants = [ordered]@{
   'dim_family'           = @{ body = '(dc-dim-family)' }
   'kitchen'              = @{ body = '(dc-build-kitchen)' }
   'kitchen_r2000'        = @{ body = '(princ)'; input = 'kitchen'; fmt = '2000' }
+  'color_ref'            = @{ body = '(dc-color-ref 1 16711680)' }
+  'color_wrong'          = @{ body = '(dc-color-ref 5 16711680)' }
+  'color_near'           = @{ body = '(dc-color-ref 1 16385285)' }
+  'color_bylayer'        = @{ body = '(dc-color-bylayer)' }
 }
 
 foreach ($name in $variants.Keys) {

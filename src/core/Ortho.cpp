@@ -23,6 +23,7 @@ QString viewNameString(ViewName n) {
     case ViewName::Bottom: return QStringLiteral("Bottom");
     case ViewName::Rear: return QStringLiteral("Rear");
     case ViewName::Other: return QStringLiteral("Other");
+    case ViewName::Ignored: return QStringLiteral("Ignored");
     }
     return {};
 }
@@ -35,7 +36,7 @@ bool parseViewName(const QString& s, ViewName* out) {
 
 const QList<ViewName>& allViewNames() {
     static const QList<ViewName> all = {ViewName::Front, ViewName::Top, ViewName::Right, ViewName::Left,
-                                        ViewName::Bottom, ViewName::Rear, ViewName::Other};
+                                        ViewName::Bottom, ViewName::Rear, ViewName::Other, ViewName::Ignored};
     return all;
 }
 
@@ -51,7 +52,7 @@ QString ViewSet::label(int idx) const {
     int same = 0, ord = 0;
     for (int i = 0; i < static_cast<int>(views.size()); ++i)
         if (views[i].name == v.name) { ++same; if (i < idx) ++ord; }
-    QString l = viewNameString(v.name) + QStringLiteral(" view");
+    QString l = v.name == ViewName::Ignored ? QStringLiteral("Ignored") : viewNameString(v.name) + QStringLiteral(" view");
     if (same > 1) l += QStringLiteral(" %1").arg(ord + 1);
     return l;
 }

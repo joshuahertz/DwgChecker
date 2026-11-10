@@ -20,7 +20,8 @@ public:
         QString name;
         quint64 ltype = 0;
         int flag0 = 0;  // 1 frozen, 2 off, 8 locked, 16 plot
-        int color = 7;
+        int color = 7;          // ACI number, or -1 for a true color
+        quint32 rgb = 0xFFFFFF; // the color as RGB
         bool frozen() const { return flag0 & 1; }
         bool off() const { return flag0 & 2; }
         bool locked() const { return flag0 & 8; }

@@ -14,7 +14,7 @@
 
 namespace dc {
 
-enum class ErrCat { Scale, Location, NearMiss, Linetype, Layer, Precision, Missing, Extra, Alignment, Arrangement, Warning };
+enum class ErrCat { Scale, Location, NearMiss, Linetype, Color, Layer, ByLayer, Precision, Missing, Extra, Alignment, Arrangement, Warning };
 enum class PrimStatus { Matched, Missing, Extra, NearMiss, WrongAttribute, NotCompared };
 
 struct ErrorItem {
@@ -31,6 +31,7 @@ struct ViewResult {
     int view = -1;
     QString label;
     bool found = false;
+    bool ignored = false;  // an Ignored view: located, not graded
     Transform2D T;
     int refCount = 0, matched = 0, extras = 0;
     double percent = 0;
@@ -85,6 +86,7 @@ MatchCriteria criteriaFrom(const CompareSettings& s);
 // Indices of the primitives that take part in matching (geometry, plus dimensions when checked).
 std::vector<int> comparableIndices(const Drawing& d, const CompareSettings& s);
 
+// Dimensions and hatches are compared only when s asks for them and the reference has some.
 // Compares at scale 1; if less than half of the reference matches and s.detectScale is on,
 // also tries uniform scale factors and keeps a scaled result that matches clearly better
 // (reported as one error worth s.scalePenaltyErrors). In Absolute mode, when the whole
