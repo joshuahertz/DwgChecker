@@ -43,6 +43,14 @@ if(NOT DWGCHECK_DWGREAD)
     endif()
   endforeach()
 endif()
+# Forward slashes, also for a path given on the command line (CI passes D:\a\...): the
+# path becomes a C++ string literal in tst_dwgread, where "\a" would be an escape.
+if(DWGCHECK_DWGREAD)
+  file(TO_CMAKE_PATH "${DWGCHECK_DWGREAD}" _dwgread_norm)
+  if(NOT _dwgread_norm STREQUAL DWGCHECK_DWGREAD)
+    set(DWGCHECK_DWGREAD "${_dwgread_norm}" CACHE FILEPATH "dwgread executable to bundle next to the app" FORCE)
+  endif()
+endif()
 # The static build from build_dwgread.sh is a single file. The official prebuilt
 # Windows release is dynamically linked, so its runtime DLLs travel with it.
 set(DWGCHECK_DWGREAD_FILES "")

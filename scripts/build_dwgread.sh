@@ -19,8 +19,13 @@ OUT="$(cd "$OUT" && pwd)"
 WORK="$OUT/work"
 mkdir -p "$WORK"
 
-# shellcheck disable=SC1091
-source <(grep -E '^LIBREDWG_[A-Z0-9_]+=' "$ROOT/third_party/libredwg.version")
+# KEY=VALUE lines. Read line by line rather than `source <(grep ...)`: macOS's /bin/bash
+# is 3.2, which sources nothing from a process substitution.
+while IFS='=' read -r key value || [[ -n "$key" ]]; do
+  case "$key" in
+    LIBREDWG_*) value="${value%$'\r'}"; printf -v "$key" '%s' "$value" ;;
+  esac
+done < "$ROOT/third_party/libredwg.version"
 : "${LIBREDWG_VERSION:?missing in libredwg.version}"
 : "${LIBREDWG_URL:?missing in libredwg.version}"
 : "${LIBREDWG_SHA256:?missing in libredwg.version}"

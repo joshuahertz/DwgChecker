@@ -759,10 +759,18 @@ the full path as a tooltip.
   configures.
 - **macOS** runs on `macos-15`; GitHub no longer runs the `macos-14` image. The
   deployment target is 12.0, the minimum for Qt 6.8 and later.
-- **A failed test step is followed by `ctest --rerun-failed -V`**, so the log
-  shows the failing test's full output. tst_dwgread failed on Windows with a
+- **A failed test step is followed by a step that runs each failed test
+  directly**, with its QtTest log written to a file and printed, plus the exit
+  code. `ctest -V` showed no output at all from tst_dwgread.
+- **An explicitly given DWGCHECK_DWGREAD is converted to forward slashes**, like
+  a found one. CI passes `D:\a\...`, and the path becomes a C++ string literal in
+  tst_dwgread, where `\a` is an escape. tst_dwgread failed on Windows with a
   dwgread built from source (patched to print doubles with 17 digits), while it
   passes locally with the downloaded prebuilt; the cause needs that output.
+- **build_dwgread.sh reads third_party/libredwg.version line by line.** It used
+  `source <(grep ...)`, which macOS's /bin/bash 3.2 runs as an empty file, so the
+  macOS dwgread job stopped at "LIBREDWG_VERSION: missing". The script must stay
+  bash 3.2 compatible.
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,

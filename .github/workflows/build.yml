@@ -100,9 +100,19 @@ jobs:
         run: cmake --build build
       - name: Tests (unit tests + tst_dwgread end to end with the bundled dwgread)
         run: ctest --test-dir build --output-on-failure
+      # Each failed test run directly, its QtTest log written to a file (and printed) with the
+      # exit code: output that ctest shows nothing of (a crash, a lost stdout) still shows here.
       - name: Details of a failed test
         if: failure()
-        run: ctest --test-dir build --rerun-failed -V
+        run: |
+          foreach ($line in Get-Content build/Testing/Temporary/LastTestsFailed.log -ErrorAction SilentlyContinue) {
+            $name = $line.Split(':')[1]
+            Write-Host "=== $name, run directly ==="
+            & "build/$name.exe" -o "build/$name-log.txt,txt"
+            $code = $LASTEXITCODE
+            Write-Host ("exit code: {0} (0x{1:X8})" -f $code, $code)
+            Get-Content "build/$name-log.txt" -ErrorAction SilentlyContinue
+          }
       - name: Dump the corpus with the bundled dwgread (for the parity job)
         shell: bash
         run: |
@@ -152,7 +162,14 @@ jobs:
         run: ctest --test-dir build --output-on-failure
       - name: Details of a failed test
         if: failure()
-        run: ctest --test-dir build --rerun-failed -V
+        run: |
+          set +e
+          for name in $(cut -d: -f2 build/Testing/Temporary/LastTestsFailed.log 2>/dev/null); do
+            echo "=== $name, run directly ==="
+            "build/$name" -o "build/$name-log.txt,txt"
+            echo "exit code: $?"
+            cat "build/$name-log.txt"
+          done
       - name: Dump the corpus with the bundled dwgread (for the parity job)
         run: |
           dwgread/dwgread --version
