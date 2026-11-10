@@ -47,6 +47,7 @@ private slots:
     void rebindAfterSettingsChange();
     void scaledDrawing();
     void ignoredView();
+    void ignoredFrameKeepsRealErrors();
 
 private:
     std::shared_ptr<Drawing> ref;
@@ -263,6 +264,66 @@ void TestOrtho::ignoredView() {
     const CompareResult n = compareDrawings(*ref, noTop, ortho(), &vs);
     QVERIFY2(n.pass, qPrintable(dumpErrors(n)));
     QVERIFY(!anyError(n, QStringLiteral("not found")));
+}
+
+namespace {
+Primitive plainLine(Vec2 a, Vec2 b, const QString& id) {
+    Primitive p;
+    p.kind = PrimKind::Line;
+    p.p0 = a;
+    p.p1 = b;
+    p.sourceType = QStringLiteral("LINE");
+    p.sourceId = id;
+    return p;
+}
+}  // namespace
+
+void TestOrtho::ignoredFrameKeepsRealErrors() {
+    // A sheet border well outside the drawing, named Ignored: its box encloses every view. The
+    // margin beats the near-miss distance (10% of the framed drawing's diagonal).
+    Drawing framed = *ref;
+    const BBox b = ref->bbox();
+    const double m = std::max(3.0, 0.5 * b.diagonal());
+    const Vec2 c0{b.x0 - m, b.y0 - m}, c1{b.x1 + m, b.y0 - m}, c2{b.x1 + m, b.y1 + m}, c3{b.x0 - m, b.y1 + m};
+    const int first = static_cast<int>(framed.prims.size());
+    framed.prims.push_back(plainLine(c0, c1, QStringLiteral("F1")));
+    framed.prims.push_back(plainLine(c1, c2, QStringLiteral("F2")));
+    framed.prims.push_back(plainLine(c2, c3, QStringLiteral("F3")));
+    framed.prims.push_back(plainLine(c3, c0, QStringLiteral("F4")));
+    ViewSet vs = views;
+    ViewDef frame;
+    frame.id = static_cast<int>(vs.views.size());
+    frame.name = ViewName::Ignored;
+    vs.views.push_back(frame);
+    const int fv = static_cast<int>(vs.views.size()) - 1;
+    vs.primView.resize(framed.prims.size(), -1);
+    for (int i = first; i < static_cast<int>(framed.prims.size()); ++i) vs.primView[i] = fv;
+    vs.rebuild(framed);
+
+    const CompareResult self = compareDrawings(framed, framed, ortho(), &vs);
+    QVERIFY2(self.pass, qPrintable(dumpErrors(self)));
+
+    // An extra line just below the Front view, inside the border: a real extra, not ignored.
+    const BBox front = vs.views[vs.indexOfName(ViewName::Front)].bbox;
+    Drawing stray = framed;
+    stray.prims.push_back(plainLine({front.x0, front.y0 - 0.05}, {front.x0 + 0.4, front.y0 - 0.05}, QStringLiteral("X1")));
+    const CompareResult near = compareDrawings(framed, stray, ortho(), &vs);
+    QCOMPARE(near.penalizedExtras, 1);
+    QVERIFY2(anyError(near, QStringLiteral("extra line")), qPrintable(dumpErrors(near)));
+
+    // Something in the border's corner, far from every view (title block notes): ignored.
+    Drawing notes = framed;
+    notes.prims.push_back(plainLine({c1.x - 0.6, c1.y + 0.2}, {c1.x - 0.2, c1.y + 0.2}, QStringLiteral("X2")));
+    const CompareResult far = compareDrawings(framed, notes, ortho(), &vs);
+    QVERIFY2(far.pass, qPrintable(dumpErrors(far)));
+
+    // A reference item without a view goes to the nearest graded view, not into the border.
+    Drawing more = framed;
+    more.prims.push_back(plainLine({front.x0, front.y0 - 0.05}, {front.x0 + 0.4, front.y0 - 0.05}, QStringLiteral("R1")));
+    ViewSet vs2 = vs;
+    vs2.primView.resize(more.prims.size(), -1);
+    vs2.rebuild(more);
+    QVERIFY(vs2.primView.back() != fv);
 }
 
 QTEST_GUILESS_MAIN(TestOrtho)

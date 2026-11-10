@@ -51,6 +51,10 @@ if(DWGCHECK_DWGREAD_FILES AND NOT APPLE)
   install(PROGRAMS ${DWGCHECK_DWGREAD_FILES} DESTINATION .)
 endif()
 
-# windeployqt / macdeployqt at install time.
-qt_generate_deploy_app_script(TARGET DwgChecker OUTPUT_SCRIPT _deploy NO_UNSUPPORTED_PLATFORM_ERROR)
+# windeployqt / macdeployqt at install time. Qt 6.5 renamed FILENAME_VARIABLE to OUTPUT_SCRIPT.
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.5)
+  qt_generate_deploy_app_script(TARGET DwgChecker OUTPUT_SCRIPT _deploy NO_UNSUPPORTED_PLATFORM_ERROR)
+else()
+  qt_generate_deploy_app_script(TARGET DwgChecker FILENAME_VARIABLE _deploy NO_UNSUPPORTED_PLATFORM_ERROR)
+endif()
 install(SCRIPT ${_deploy})

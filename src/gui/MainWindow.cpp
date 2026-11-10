@@ -175,11 +175,7 @@ void MainWindow::buildUi() {
     m_table->setAlternatingRowColors(true);
     {
         QPalette pal = m_table->palette();
-        const QColor base = pal.color(QPalette::Base), text = pal.color(QPalette::Text);
-        const double t = 0.045;
-        pal.setColor(QPalette::AlternateBase, QColor::fromRgbF(static_cast<float>(base.redF() * (1 - t) + text.redF() * t),
-                                                               static_cast<float>(base.greenF() * (1 - t) + text.greenF() * t),
-                                                               static_cast<float>(base.blueF() * (1 - t) + text.blueF() * t)));
+        pal.setColor(QPalette::AlternateBase, blendColors(pal.color(QPalette::Base), pal.color(QPalette::Text), 0.045));
         m_table->setPalette(pal);
     }
     m_resultsStack = new QStackedWidget(resultsPage);
@@ -289,10 +285,8 @@ void MainWindow::buildUi() {
         if (canonSignature(currentSettings()) != m_refCanonSig) updateRefInfo();
     });
     connect(m_settings, &SettingsPanel::editViewsRequested, this, &MainWindow::editViews);
-    connect(m_settings, &SettingsPanel::modeChoiceChanged, this, [this]() {
-        if (m_settings->modeChosen()) storeQuizSettings();  // chosen once, remembered for these drawings
-        updateSteps();
-    });
+    connect(m_settings, &SettingsPanel::modeChoiceChanged, this, &MainWindow::updateSteps);
+    connect(m_settings, &SettingsPanel::modeChosenByUser, this, &MainWindow::storeQuizSettings);  // remembered as chosen
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::run);
     connect(m_cancelBtn, &QPushButton::clicked, this, &MainWindow::cancel);
     connect(exportBtn, &QPushButton::clicked, this, &MainWindow::exportResults);
@@ -427,8 +421,9 @@ void MainWindow::referenceChanged() {
     }
     const QByteArray saved = QSettings().value(quizKey(paths)).toByteArray();
     if (!saved.isEmpty()) {
-        m_settings->setSettings(AppSettings::fromJson(QJsonDocument::fromJson(saved).object()));
-        m_settings->setModeChosen(true);  // the saved mode counts as chosen (after loading it)
+        const AppSettings s = AppSettings::fromJson(QJsonDocument::fromJson(saved).object());
+        m_settings->setSettings(s);
+        m_settings->setModeChosen(s.modeConfirmed);  // saved with them; other changes save settings too
         m_refCard->setCaptionNote(paths.size() > 1 ? tr("settings saved for these reference solutions")
                                                    : tr("settings saved for this reference solution"));
         log(tr("loaded the settings saved for %1").arg(m_refCard->paths().size() > 1 ? tr("this set of drawings")

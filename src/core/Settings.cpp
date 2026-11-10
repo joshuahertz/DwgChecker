@@ -98,7 +98,7 @@ QJsonObject AppSettings::toJson() const {
         pd.insert(name, QJsonObject{{"mode", modeName(ds.mode)}, {"checkDimensions", ds.checkDimensions},
                                     {"checkHatches", ds.checkHatches}});
     return QJsonObject{{"version", kFormatVersion}, {"canon", c}, {"compare", m}, {"perDrawing", pd}, {"duplicates", d},
-                       {"loader", l}, {"identityRegex", identityRegex}};
+                       {"loader", l}, {"identityRegex", identityRegex}, {"modeConfirmed", modeConfirmed}};
 }
 
 CanonSettings AppSettings::referenceCanon() const {
@@ -122,6 +122,7 @@ CompareSettings AppSettings::compareFor(const QString& refPath) const {
 
 AppSettings AppSettings::fromJson(const QJsonObject& o) {
     AppSettings s;
+    s.modeConfirmed = o.value("modeConfirmed").toBool(true);
     const QJsonObject c = o.value("canon").toObject();
     s.canon.usePaperSpace = c.value("usePaperSpace").toBool(s.canon.usePaperSpace);
     s.canon.skipDefpoints = c.value("skipDefpoints").toBool(s.canon.skipDefpoints);

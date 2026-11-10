@@ -170,7 +170,7 @@ QString attributeText(const Primitive& r, const Primitive& s, const MatchCriteri
     QString t = QStringLiteral("%1 %2 at %3").arg(lineDescriptor(r, true), sizeText(r), fmtPt(messageLocation(r)));
     const bool ltWrong = c.matchLinetype && r.ltClass != s.ltClass;
     const bool layerWrong = c.requireLayer && r.layer.compare(s.layer, Qt::CaseInsensitive) != 0;
-    const bool colorWrong = c.matchColor && colorDifference(r.rgb, s.rgb) > c.colorTol + 1e-9;
+    const bool colorWrong = c.matchColor && colorDifference(r.aci, r.rgb, s.aci, s.rgb) > c.colorTol + 1e-9;
     if (ltWrong) t += QStringLiteral(" drawn as %1").arg(lineDescriptor(s, true));
     if (colorWrong) t += QStringLiteral(" is %1, expected %2").arg(colorName(s.aci, s.rgb), colorName(r.aci, r.rgb));
     if (layerWrong) t += QStringLiteral(" is on layer %1, expected %2").arg(s.layer, r.layer);
@@ -410,7 +410,7 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                 if (crit.matchLinetype && R.ltClass != S.ltClass) {
                     cat = ErrCat::Linetype;
                     label = QStringLiteral("wrong linetype");
-                } else if (crit.matchColor && colorDifference(R.rgb, S.rgb) > crit.colorTol + 1e-9) {
+                } else if (crit.matchColor && colorDifference(R.aci, R.rgb, S.aci, S.rgb) > crit.colorTol + 1e-9) {
                     cat = ErrCat::Color;
                     label = QStringLiteral("wrong color");
                 } else if (crit.requireLayer && R.layer.compare(S.layer, Qt::CaseInsensitive) != 0) {
@@ -427,17 +427,30 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
     for (int j : stuIdx)
         if (r.stuStatus[j] == PrimStatus::Extra) unclaimed.push_back(j);
     if (ortho) {
+        int fallback = 0;  // with no view found: the first graded view
+        for (int k = 0; k < static_cast<int>(groups.size()); ++k)
+            if (!views->isIgnored(k)) { fallback = k; break; }
         for (int j : unclaimed) {
-            int best = -1;
-            double bestD = 1e300;
+            // The nearest view. An Ignored one (a title block, a border around the sheet, whose
+            // box often encloses every view) takes a leftover only when no graded view is
+            // within the near-miss distance and it is nearer, so real extras and near misses
+            // are never set aside with it.
+            int best = -1, bestIgn = -1;
+            double bestD = 1e300, bestIgnD = 1e300;
             const BBox sb = stu.prims[j].bbox();
             for (int k = 0; k < static_cast<int>(groups.size()); ++k) {
                 if (!r.views[k].found) continue;
                 const BBox vb = views->views[k].bbox.translated(Vec2{-groups[k].T.tx, -groups[k].T.ty});
                 const double d = vb.gap(sb);
-                if (d < bestD) { bestD = d; best = k; }
+                if (views->isIgnored(k)) {
+                    if (d < bestIgnD) { bestIgnD = d; bestIgn = k; }
+                } else if (d < bestD) {
+                    bestD = d;
+                    best = k;
+                }
             }
-            if (best < 0) best = 0;
+            if (bestIgn >= 0 && (best < 0 || (bestD > radius && bestIgnD < bestD))) best = bestIgn;
+            if (best < 0) best = fallback;
             r.stuView[j] = best;
             r.stuT[j] = groups[best].T;
         }

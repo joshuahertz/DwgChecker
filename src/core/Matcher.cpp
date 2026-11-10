@@ -72,7 +72,7 @@ bool attributesMatch(const Primitive& r, const Primitive& s, const MatchCriteria
     if (r.kind == PrimKind::Dimension) return !(c.checkDimensions && c.checkDimPrecision) || !dimPrecisionDiffers(r, s);
     if (c.matchLinetype && r.ltClass != s.ltClass) return false;
     if (c.requireLayer && r.layer.compare(s.layer, Qt::CaseInsensitive) != 0) return false;
-    if (c.matchColor && colorDifference(r.rgb, s.rgb) > c.colorTol + 1e-9) return false;
+    if (c.matchColor && colorDifference(r.aci, r.rgb, s.aci, s.rgb) > c.colorTol + 1e-9) return false;
     if (c.requireByLayer && !(s.colorByLayer && s.ltByLayer)) return false;
     return true;
 }

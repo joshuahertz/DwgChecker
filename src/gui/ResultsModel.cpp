@@ -13,6 +13,12 @@ using namespace dc;
 
 namespace dcgui {
 
+QColor blendColors(const QColor& a, const QColor& b, double t) {
+    return QColor::fromRgbF(static_cast<float>(a.redF() * (1 - t) + b.redF() * t),
+                            static_cast<float>(a.greenF() * (1 - t) + b.greenF() * t),
+                            static_cast<float>(a.blueF() * (1 - t) + b.blueF() * t));
+}
+
 namespace {
 constexpr int kPad = 4;
 constexpr int kMaxTooltipErrors = 20;
@@ -52,11 +58,7 @@ QString errorsTooltip(const StudentRun& r) {
 // it stands apart from the file rows under it (and from the alternating stripes).
 QColor studentRowColor() {
     const QPalette pal = QApplication::palette();
-    const QColor base = pal.color(QPalette::Base), hl = pal.color(QPalette::Highlight);
-    const double t = 0.12;
-    return QColor::fromRgbF(static_cast<float>(base.redF() * (1 - t) + hl.redF() * t),
-                            static_cast<float>(base.greenF() * (1 - t) + hl.greenF() * t),
-                            static_cast<float>(base.blueF() * (1 - t) + hl.blueF() * t));
+    return blendColors(pal.color(QPalette::Base), pal.color(QPalette::Highlight), 0.12);
 }
 
 QString flagTooltip(const CopyFlag& f) {

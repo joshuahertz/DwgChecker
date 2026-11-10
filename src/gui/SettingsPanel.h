@@ -57,8 +57,8 @@ public:
 signals:
     void changed();
     void editViewsRequested(const QString& refPath);  // "Edit views…"; empty = the only drawing
-    void sizeChanged();  // Advanced or the drawings table shown or hidden
     void modeChoiceChanged();  // modeChosen() may have changed
+    void modeChosenByUser();   // a location mode was picked from a drop-down
 
 protected:
     bool eventFilter(QObject* o, QEvent* e) override;
@@ -91,7 +91,7 @@ private:
     bool m_modeChosen = false;
     QSet<QString> m_chosenKeys;  // drawings whose mode was chosen (several drawings)
     QCheckBox* m_matchColor;
-    QSpinBox* m_colorTol;
+    QDoubleSpinBox* m_colorTol;
     QWidget* m_colorTolRow;
     QCheckBox* m_byLayer;
     QGridLayout* m_drawingsGrid;

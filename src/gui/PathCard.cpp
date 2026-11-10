@@ -143,8 +143,10 @@ void PathCard::setPaths(const QStringList& paths) {
     QCollator byName;
     byName.setNumericMode(true);
     byName.setCaseSensitivity(Qt::CaseInsensitive);
-    std::sort(clean.begin(), clean.end(),
-              [&](const QString& a, const QString& b) { return byName.compare(QFileInfo(a).fileName(), QFileInfo(b).fileName()) < 0; });
+    std::stable_sort(clean.begin(), clean.end(), [&](const QString& a, const QString& b) {
+        const int byFile = byName.compare(QFileInfo(a).fileName(), QFileInfo(b).fileName());
+        return byFile != 0 ? byFile < 0 : byName.compare(a, b) < 0;  // same name in two folders: by folder
+    });
     if (clean == m_paths) return;
     m_paths = clean;
     refresh();

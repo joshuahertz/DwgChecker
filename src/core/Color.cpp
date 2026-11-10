@@ -80,7 +80,7 @@ quint32 aciToRgb(int aci) {
 }
 
 QString colorName(int aci, quint32 rgb) {
-    static const char* const names[8] = {"", "red", "yellow", "green", "cyan", "blue", "magenta", "white"};
+    static const char* const names[8] = {"", "red", "yellow", "green", "cyan", "blue", "magenta", "black/white"};
     if (aci >= 1 && aci <= 7) return QStringLiteral("%1 (ACI %2)").arg(QLatin1String(names[aci])).arg(aci);
     if (aci >= 1 && aci <= 255) return QStringLiteral("ACI %1").arg(aci);
     return QStringLiteral("RGB %1,%2,%3").arg((rgb >> 16) & 0xFF).arg((rgb >> 8) & 0xFF).arg(rgb & 0xFF);
@@ -91,6 +91,13 @@ double colorDifference(quint32 a, quint32 b) {
     const double dg = double((a >> 8) & 0xFF) - double((b >> 8) & 0xFF);
     const double db = double(a & 0xFF) - double(b & 0xFF);
     return 100.0 * std::sqrt(dr * dr + dg * dg + db * db) / std::sqrt(3.0 * 255.0 * 255.0);
+}
+
+double colorDifference(int aciA, quint32 a, int aciB, quint32 b) {
+    if (aciA == 7 && aciB == 7) return 0;
+    if (aciA == 7) return std::min(colorDifference(0xFFFFFF, b), colorDifference(0x000000, b));
+    if (aciB == 7) return std::min(colorDifference(a, 0xFFFFFF), colorDifference(a, 0x000000));
+    return colorDifference(a, b);
 }
 
 }  // namespace dc

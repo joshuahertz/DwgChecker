@@ -81,7 +81,8 @@ QString locationModeTip() {
         "SettingsPanel",
         "<b>Where the student's drawing has to be</b><br><br>"
         "<b>Absolute</b>: every item at the same coordinates as in the solution. A drawing that is right but "
-        "displaced as a whole is handled by \"Wrong location counts as an error\".<br><br>"
+        "displaced as a whole is handled by \"Wrong location (in absolute mode) counts as an error\" under "
+        "Settings.<br><br>"
         "<b>Relative</b>: anywhere, and turned or flipped too if rotation or mirroring is allowed. Sizes, and where "
         "the items are relative to each other, must match.<br><br>"
         "<b>Orthographic</b>: a drawing with several views (front, top, side…). Each view is found and compared on "
@@ -160,6 +161,7 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
         m_modeChosen = true;
         updateModeNote();
         emit modeChoiceChanged();
+        emit modeChosenByUser();
     });
     m_modeForm->addRow(m_mode);
     m_modeHelp = new QLabel(this);
@@ -214,13 +216,14 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
     m_matchColor->setToolTip(tr("Each item must have the solution item's color, after ByLayer and ByBlock: an AutoCAD "
                                 "color number (ACI) or a true color."));
     fRules->addRow(m_matchColor);
-    m_colorTol = new QSpinBox(this);
+    m_colorTol = new QDoubleSpinBox(this);
     m_colorTol->setRange(0, 100);
+    m_colorTol->setDecimals(1);
     m_colorTol->setSuffix(QStringLiteral(" %"));
     m_colorTol->setToolTip(tr("How different two colors may be: their RGB distance as a share of black to white. 0 % = "
                               "the same color. A slightly different red (250,5,5 against 255,0,0) is 2 %, red against "
                               "orange (255,127,0) 29 %, red against blue 82 %."));
-    connect(m_colorTol, &QSpinBox::valueChanged, this, &SettingsPanel::changed);
+    connect(m_colorTol, &QDoubleSpinBox::valueChanged, this, &SettingsPanel::changed);
     {
         auto* w = new QWidget(this);
         auto* h = new QHBoxLayout(w);
@@ -444,7 +447,6 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
         m_advanced->setVisible(on);
         m_advancedToggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
         QSettings().setValue(kAdvancedKey, on);
-        emit sizeChanged();
     });
     connect(m_mode, &QComboBox::currentIndexChanged, this, &SettingsPanel::updateModeHelp);
     outer->addStretch();
@@ -465,8 +467,8 @@ void SettingsPanel::updateModeHelp() {
     switch (mode) {
     case Mode::Absolute: m_modeHelp->setText(tr("Every item must be at the same coordinates as in the solution.")); break;
     case Mode::Relative:
-        m_modeHelp->setText(tr("The drawing may sit anywhere (and be rotated or mirrored if allowed below); sizes and "
-                               "the positions of items relative to each other must match."));
+        m_modeHelp->setText(tr("The drawing may sit anywhere (and be rotated or mirrored if allowed under Settings); "
+                               "sizes and the positions of items relative to each other must match."));
         break;
     case Mode::Orthographic:
         m_modeHelp->setText(tr("A multi-view drawing: each view is found and compared on its own, then the views' "
@@ -500,11 +502,8 @@ void SettingsPanel::updateScopes() {
     const bool multi = m_drawingPaths.size() > 1;
     const auto mode = static_cast<Mode>(m_mode->currentIndex());
     const DrawingContent one = m_drawingPaths.isEmpty() ? DrawingContent{} : contentOf(AppSettings::drawingKey(m_drawingPaths.front()));
-    bool resized = false;
-    auto showRow = [&](QFormLayout* f, QWidget* row, bool on) {
-        if (f->isRowVisible(row) == on) return;
-        f->setRowVisible(row, on);
-        resized = true;
+    auto showRow = [](QFormLayout* f, QWidget* row, bool on) {
+        if (f->isRowVisible(row) != on) f->setRowVisible(row, on);
     };
     // The one drawing's own mode and checks; with several, the table has them.
     showRow(m_modeForm, m_mode, !multi);
@@ -543,10 +542,7 @@ void SettingsPanel::updateScopes() {
     const bool ortho = scope(
         m_orthoScope, [](const DrawingSettings& d, const DrawingContent&) { return d.mode == Mode::Orthographic; },
         mode == Mode::Orthographic, tr("Orthographic mode"));
-    if (m_orthoBox->isHidden() == ortho) {
-        m_orthoBox->setVisible(ortho);
-        resized = true;
-    }
+    m_orthoBox->setVisible(ortho);
     const bool prec = scope(
         m_dimPrecScope, [](const DrawingSettings& d, const DrawingContent& c) { return d.checkDimensions && c.dims; },
         m_dims->isChecked() && one.dims, tr("dimensions checked"));
@@ -569,7 +565,6 @@ void SettingsPanel::updateScopes() {
     }
     if (m_headDims) m_headDims->setVisible(anyDims);
     if (m_headHatches) m_headHatches->setVisible(anyHatches);
-    if (resized) emit sizeChanged();
 }
 
 bool SettingsPanel::modeChosen() const {
@@ -667,6 +662,7 @@ void SettingsPanel::rebuildDrawingRows() {
             m_chosenKeys.insert(key);
             updateModeNote();
             emit modeChoiceChanged();
+            emit modeChosenByUser();
         });
         connect(dims, &QCheckBox::toggled, this, [this, key](bool on) {
             m_perDrawing[key].checkDimensions = on;
@@ -693,7 +689,6 @@ void SettingsPanel::applyDrawingLayout() {
     m_hatchPattern->setText(multi ? tr("Hatch pattern must match") : tr("…and with the same hatch pattern"));
     updateModeHelp();  // and which settings apply
     updateModeNote();
-    emit sizeChanged();
 }
 
 // Drop-downs and number boxes take the mouse wheel only once clicked into; otherwise the
@@ -751,7 +746,7 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     m_scaleMode->setCurrentIndex(!s.compare.detectScale ? 2 : s.compare.scalePenaltyErrors <= 0 ? 0 : 1);
     m_locationMode->setCurrentIndex(s.compare.detectLocation ? 0 : 1);
     m_matchColor->setChecked(s.compare.matchColor);
-    m_colorTol->setValue(static_cast<int>(std::lround(s.compare.colorTolerance)));
+    m_colorTol->setValue(s.compare.colorTolerance);
     m_byLayer->setChecked(s.compare.requireByLayer);
     m_nearMiss->setText(QString::number(s.compare.nearMissRadius, 'g', 6));
     m_ignoreRe->setText(s.canon.layerIgnoreRegex);
@@ -803,6 +798,7 @@ AppSettings SettingsPanel::settings() const {
     s.compare.matchColor = m_matchColor->isChecked();
     s.compare.colorTolerance = m_colorTol->value();
     s.compare.requireByLayer = m_byLayer->isChecked();
+    s.modeConfirmed = modeChosen();  // saved with these solution drawings' settings
     s.compare.nearMissRadius = sciValue(m_nearMiss, 0);
     s.canon.layerIgnoreRegex = m_ignoreRe->text().trimmed();
     s.canon.usePaperSpace = m_paper->isChecked();

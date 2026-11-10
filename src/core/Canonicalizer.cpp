@@ -88,6 +88,7 @@ public:
             li.name = l.name;
             li.ltype = J.ltypeName(l.ltype);
             li.color = l.color;
+            li.rgb = l.rgb;
             li.frozen = l.frozen(); li.off = l.off(); li.locked = l.locked(); li.plot = l.plot();
             D.layers.push_back(li);
         }
@@ -207,6 +208,24 @@ private:
         }
         return e;
     }
+    // effColor and ltByLayer for one entity in one context: the same for all its primitives
+    // (a polyline's segments, a MINSERT's cells), so they are resolved once.
+    struct AttrMemo {
+        const QJsonObject* o = nullptr;
+        QString layer;
+        int depth = -1, insAci = 0;
+        quint32 insRgb = 0;
+        bool insColorByLayer = false, insLtByLayer = false;
+        EffColor color;
+        bool ltByLayer = true;
+    };
+    mutable AttrMemo memo;
+    const AttrMemo& attrsOf(const QJsonObject& o, const QString& layer, const Ctx& c) const {
+        if (memo.o != &o || memo.layer != layer || memo.depth != c.depth || memo.insAci != c.insAci ||
+            memo.insRgb != c.insRgb || memo.insColorByLayer != c.insColorByLayer || memo.insLtByLayer != c.insLtByLayer)
+            memo = {&o, layer, c.depth, c.insAci, c.insRgb, c.insColorByLayer, c.insLtByLayer, effColor(o, layer, c), ltByLayer(o, c)};
+        return memo;
+    }
     // Whether the object's linetype comes from its layer (ltype_flags 0 ByLayer, 1 ByBlock).
     bool ltByLayer(const QJsonObject& o, const Ctx& c) const {
         switch (DwgJson::integer(o, "ltype_flags", 0)) {
@@ -231,11 +250,11 @@ private:
         p.layer = layer;
         p.ltypeName = ltype;
         p.ltClass = lt.classify(ltype);
-        const EffColor col = effColor(o, layer, c);
-        p.aci = col.aci;
-        p.rgb = col.rgb;
-        p.colorByLayer = col.byLayer;
-        p.ltByLayer = ltByLayer(o, c);
+        const AttrMemo& a = attrsOf(o, layer, c);
+        p.aci = a.color.aci;
+        p.rgb = a.color.rgb;
+        p.colorByLayer = a.color.byLayer;
+        p.ltByLayer = a.ltByLayer;
         p.sourceType = c.typePrefix + type;
         p.sourceId = c.idPrefix + hex(DwgJson::ownHandle(o)) + (seg >= 0 ? QStringLiteral("#%1").arg(seg) : QString());
         p.handle = c.top;
@@ -618,17 +637,17 @@ private:
         const Affine3 head = Affine3::ocsToWcs(ext) * Affine3::translation(ins) * Affine3::rotationZ(rot);
         const Affine3 tail = Affine3::scale(sc.x, sc.y, sc.z) * Affine3::translation(blk->base * -1.0);
 
+        const AttrMemo insAttrs = attrsOf(o, layer, c);  // a copy: visiting the block reuses the memo
         for (int r = 0; r < rows; ++r)
             for (int k = 0; k < cols; ++k) {
                 Ctx n;
                 n.M = c.M * head * Affine3::translation({k * colSp, r * rowSp, 0}) * tail;
                 n.insLayer = layer;
                 n.insLtype = ltype;
-                const EffColor col = effColor(o, layer, c);
-                n.insAci = col.aci;
-                n.insRgb = col.rgb;
-                n.insColorByLayer = col.byLayer;
-                n.insLtByLayer = ltByLayer(o, c);
+                n.insAci = insAttrs.color.aci;
+                n.insRgb = insAttrs.color.rgb;
+                n.insColorByLayer = insAttrs.color.byLayer;
+                n.insLtByLayer = insAttrs.ltByLayer;
                 n.idPrefix = c.idPrefix + hex(DwgJson::ownHandle(o)) +
                              (rows * cols > 1 ? QStringLiteral("[%1,%2]").arg(r).arg(k) : QString()) + "/";
                 n.typePrefix = c.typePrefix + type + ">";

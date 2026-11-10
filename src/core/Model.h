@@ -125,7 +125,8 @@ struct DrawingWarning {
 struct LayerInfo {
     QString name;
     QString ltype;
-    int color = 7;
+    int color = 7;           // ACI number, or -1 for a true color
+    quint32 rgb = 0xFFFFFF;  // the color as RGB
     bool frozen = false, off = false, locked = false, plot = true;
 };
 

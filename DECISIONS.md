@@ -719,6 +719,51 @@ the full path as a tooltip.
   DwgChecker-macos.zip (the .app with Qt and Helpers/dwgread; signed and
   notarized when the secrets exist).
 
+**D61. Fixes from a code review (2026-11-10).**
+- **Ignored views keep real errors.** An Ignored view (often a border whose box
+  encloses every view) takes a leftover student item only when no graded view
+  is within the near-miss distance and it is nearer. Before, an extra or a near
+  miss just outside a view's box went to the border and was silently not
+  graded.
+- **No reference items into Ignored views.** Rebuilding views never assigns an
+  unassigned reference item to an Ignored view unless there is no other view.
+- **Cheating detection skips Ignored views** in its per-view bit-identical
+  check: a title block from a template is the same for everyone.
+- **Step 2 is saved explicitly.** `AppSettings::modeConfirmed` is saved with
+  each set of solution drawings. Before, saved settings counted as a chosen
+  mode, and any settings change saved them, so the step could be skipped.
+  Settings saved before this have no flag and count as chosen. Opening a
+  reference no longer re-saves its settings; only picking a mode (or changing a
+  setting) does.
+- **ACI 7 matches black or white**: it shows black on a light background, so a
+  student's true-color black is not 100% different. It is named "black/white
+  (ACI 7)".
+- **Cheating detection's layer-table signature uses the RGB**, so different true
+  colors no longer look alike.
+- **Several solution drawings** sort stably, by file name and then folder.
+- **The color tolerance keeps one decimal.**
+- **Two help texts** point to Settings for rotation and wrong location.
+- **Cleanups:**
+  - the unused `sizeChanged` signal is gone;
+  - each entity's color and linetype source is resolved once, not once per
+    polyline segment or MINSERT cell;
+  - one `blendColors` helper does the table shading;
+  - `.qtcreator/` (Qt Creator's machine-specific CMake caches) is ignored and
+    no longer tracked.
+
+**D62. CI fixes (2026-11-10).**
+- **Linux** installs Qt 6.9.3 with install-qt-action, the same as Windows and
+  macOS. It used Ubuntu's Qt 6.4, whose `qt_generate_deploy_app_script` has no
+  OUTPUT_SCRIPT (Qt 6.5 renamed FILENAME_VARIABLE). src/gui/CMakeLists.txt now
+  uses either name by Qt version, so the declared minimum of 6.4 still
+  configures.
+- **macOS** runs on `macos-15`; GitHub no longer runs the `macos-14` image. The
+  deployment target is 12.0, the minimum for Qt 6.8 and later.
+- **A failed test step is followed by `ctest --rerun-failed -V`**, so the log
+  shows the failing test's full output. tst_dwgread failed on Windows with a
+  dwgread built from source (patched to print doubles with 17 digits), while it
+  passes locally with the downloaded prebuilt; the cause needs that output.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

@@ -252,6 +252,7 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
                        !B.primView.empty()) {
                 int identical = 0, compared = 0, nontrivial = 0;
                 for (int v = 0; v < static_cast<int>(partViews->views.size()); ++v) {
+                    if (partViews->isIgnored(v)) continue;  // a title block handed out to everyone is not evidence
                     std::vector<int> ia, ib;
                     for (int i = 0; i < static_cast<int>(A.primView.size()); ++i) if (A.primView[i] == v) ia.push_back(i);
                     for (int i = 0; i < static_cast<int>(B.primView.size()); ++i) if (B.primView[i] == v) ib.push_back(i);
@@ -293,9 +294,9 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
             {
                 QStringList la, lb;
                 for (const auto& l : A.drawing->layers)
-                    if (!refLayers.contains(l.name.toUpper())) la << QStringLiteral("%1/%2/%3").arg(l.name.toUpper()).arg(l.color).arg(l.ltype.toUpper());
+                    if (!refLayers.contains(l.name.toUpper())) la << QStringLiteral("%1/%2/%3").arg(l.name.toUpper()).arg(l.rgb, 6, 16, QLatin1Char('0')).arg(l.ltype.toUpper());
                 for (const auto& l : B.drawing->layers)
-                    if (!refLayers.contains(l.name.toUpper())) lb << QStringLiteral("%1/%2/%3").arg(l.name.toUpper()).arg(l.color).arg(l.ltype.toUpper());
+                    if (!refLayers.contains(l.name.toUpper())) lb << QStringLiteral("%1/%2/%3").arg(l.name.toUpper()).arg(l.rgb, 6, 16, QLatin1Char('0')).arg(l.ltype.toUpper());
                 la.sort(); lb.sort();
                 if (!la.isEmpty() && la == lb && bothStudents)
                     add("layers", QStringLiteral("same extra layers"),

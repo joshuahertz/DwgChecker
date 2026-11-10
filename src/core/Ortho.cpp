@@ -64,7 +64,9 @@ void ViewSet::rebuild(const Drawing& ref) {
     for (int& v : primView)
         if (v >= nv) v = -1;
     // Boxes from the assigned primitives, then every unassigned primitive goes to the
-    // nearest view, so nothing is counted without belonging to a view.
+    // nearest view, so nothing is counted without belonging to a view. Not to an Ignored
+    // view (unless there is no other): its box may enclose everything, and an item put
+    // there would silently never be graded.
     for (auto& v : views) v.bbox = BBox();
     for (int i = 0; i < np; ++i)
         if (primView[i] >= 0) views[primView[i]].bbox.add(ref.prims[i].bbox());
@@ -72,14 +74,19 @@ void ViewSet::rebuild(const Drawing& ref) {
         for (int i = 0; i < np; ++i) {
             if (primView[i] >= 0) continue;
             const BBox pb = ref.prims[i].bbox();
-            int best = 0;
-            double bestD = 1e300;
+            int best = -1, bestIgn = -1;
+            double bestD = 1e300, bestIgnD = 1e300;
             for (int v = 0; v < nv; ++v) {
                 if (!views[v].bbox.valid()) continue;
                 const double d = views[v].bbox.gap(pb);
-                if (d < bestD) { bestD = d; best = v; }
+                if (views[v].name == ViewName::Ignored) {
+                    if (d < bestIgnD) { bestIgnD = d; bestIgn = v; }
+                } else if (d < bestD) {
+                    bestD = d;
+                    best = v;
+                }
             }
-            primView[i] = best;
+            primView[i] = best >= 0 ? best : bestIgn >= 0 ? bestIgn : 0;
         }
     for (auto& v : views) { v.prims.clear(); v.bbox = BBox(); }
     primIds.clear();

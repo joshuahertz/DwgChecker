@@ -133,14 +133,16 @@ hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
 - Orthographic mode: use **Edit views…** (step 2) to confirm how the reference
   splits into views. Name a view **Ignored** to leave it out of grading, such as
   a title block or notes: it is still found in each drawing, so a student's copy
-  of it is not extra, but nothing in it counts. In the detail view, each view's
+  of it is not extra, but nothing in it counts. A stray item near a graded view
+  still counts there, even inside an Ignored border. In the detail view, each view's
   box and title take its status color (grey for an Ignored view). The views are
   saved next to the reference as `ref.dwg.views.json`.
 - **Line colors must match:** each item's color, after ByLayer and ByBlock, must
   be the solution item's. "…allowing a color difference up to" accepts close
   colors: the RGB distance as a share of black to white, so 250,5,5 against
   255,0,0 is 2 %, red against orange 29 %, red against blue 82 %. An ACI color
-  and the same true color are the same color. **Linetype and color must be set
+  and the same true color are the same color, and ACI 7 (black/white) matches
+  black as well as white. **Linetype and color must be set
   by layer** makes each item take both from its layer rather than from the
   object (inside a block, ByBlock counts when the block is by layer).
 - **Layers must match:** each item must be on a layer named like the solution

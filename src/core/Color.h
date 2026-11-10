@@ -29,5 +29,8 @@ QString colorName(int aci, quint32 rgb);
 // How far apart two colors are, 0-100: the RGB distance as a share of the largest
 // one (black to white). 0 = the same color; red to blue is 82.
 double colorDifference(quint32 a, quint32 b);
+// The same for two object colors given as ACI number (-1: true color) and RGB. ACI 7
+// shows black on a light background and white on a dark one, so it matches either.
+double colorDifference(int aciA, quint32 a, int aciB, quint32 b);
 
 }  // namespace dc

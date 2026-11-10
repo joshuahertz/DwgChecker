@@ -237,6 +237,10 @@ void TestMisc::formatting() {
     QCOMPARE(aciToRgb(240), 0xFF003Fu);
     QCOMPARE(aciToRgb(250), 0x333333u);
     QCOMPARE(colorName(1, 0xFF0000), QStringLiteral("red (ACI 1)"));
+    QCOMPARE(colorName(7, 0xFFFFFF), QStringLiteral("black/white (ACI 7)"));
+    QCOMPARE(colorDifference(7, 0xFFFFFF, -1, 0x000000), 0.0);  // ACI 7 shows black on white
+    QCOMPARE(colorDifference(-1, 0xFFFFFF, 7, 0xFFFFFF), 0.0);
+    QVERIFY(colorDifference(7, 0xFFFFFF, 1, 0xFF0000) > 50);
     QCOMPARE(colorName(34, aciToRgb(34)), QStringLiteral("ACI 34"));
     QCOMPARE(colorName(-1, 0xFA0505), QStringLiteral("RGB 250,5,5"));
     QCOMPARE(colorDifference(0xFF0000, 0xFF0000), 0.0);
@@ -274,6 +278,13 @@ void TestMisc::settingsRoundTrip() {
     const AppSettings t = AppSettings::fromJson(s.toJson());
     QVERIFY(!t.compare.detectLocation);
     QVERIFY(t.compare.matchColor && t.compare.requireByLayer);
+    // Whether step 2 (the location mode) was done is saved too; older settings count as done.
+    AppSettings u;
+    u.modeConfirmed = false;
+    QVERIFY(!AppSettings::fromJson(u.toJson()).modeConfirmed);
+    QJsonObject legacy = u.toJson();
+    legacy.remove("modeConfirmed");
+    QVERIFY(AppSettings::fromJson(legacy).modeConfirmed);
     QCOMPARE(t.compare.colorTolerance, 7.0);
     QCOMPARE(t.compare.locationPenaltyErrors, 0);
     QCOMPARE(t.compare.mode, Mode::Orthographic);

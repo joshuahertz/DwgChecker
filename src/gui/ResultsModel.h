@@ -10,11 +10,15 @@
 #include "Csv.h"
 
 #include <QAbstractItemModel>
+#include <QColor>
 #include <QStyledItemDelegate>
 
 #include <memory>
 
 namespace dcgui {
+
+// a moved the share t (0-1) of the way to b, per channel: the table's subtle shades.
+QColor blendColors(const QColor& a, const QColor& b, double t);
 
 enum ResultsColumn { ColFlag = 0, ColName, ColCorrectness, ColErrors, ColAcad, ColCount };
 
