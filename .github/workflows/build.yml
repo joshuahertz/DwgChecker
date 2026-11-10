@@ -127,7 +127,7 @@ jobs:
           name: json-windows
           path: json-windows
       - name: Package
-        run: cmake --install build --prefix stage
+        run: cmake --install build --prefix "${{ github.workspace }}/stage"  # absolute: Qt's deploy step requires it
       - uses: actions/upload-artifact@v4
         with:
           name: DwgChecker-windows
@@ -184,7 +184,7 @@ jobs:
           name: json-macos
           path: json-macos
       - name: Package (macdeployqt)
-        run: cmake --install build --prefix stage
+        run: cmake --install build --prefix "${{ github.workspace }}/stage"  # absolute: Qt's deploy step requires it
       - name: Sign and notarize
         if: env.HAS_SIGNING == 'true'
         env:

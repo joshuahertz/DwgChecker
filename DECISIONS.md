@@ -764,9 +764,7 @@ the full path as a tooltip.
   code. `ctest -V` showed no output at all from tst_dwgread.
 - **An explicitly given DWGCHECK_DWGREAD is converted to forward slashes**, like
   a found one. CI passes `D:\a\...`, and the path becomes a C++ string literal in
-  tst_dwgread, where `\a` is an escape. tst_dwgread failed on Windows with a
-  dwgread built from source (patched to print doubles with 17 digits), while it
-  passes locally with the downloaded prebuilt; the cause needs that output.
+  tst_dwgread, where `\a` is an escape.
 - **build_dwgread.sh reads third_party/libredwg.version line by line.** It used
   `source <(grep ...)`, which macOS's /bin/bash 3.2 runs as an empty file, so the
   macOS dwgread job stopped at "LIBREDWG_VERSION: missing". The script must stay
@@ -780,6 +778,33 @@ the full path as a tooltip.
   whose start and end angles agree to 1e-9 is a full turn, not a sliver. Test:
   tst_canon `hatchArcStepsIgnoreLastDigit`. The backslash fix above is kept as a
   real but separate issue.
+- **`cmake --install` gets an absolute prefix** (`$GITHUB_WORKSPACE/stage`):
+  Qt's deploy step stops with "qt.conf path is not an absolute path" otherwise.
+- **On Windows the Qt runtime is deployed next to DwgChecker.exe.** Qt deploys
+  into QT_DEPLOY_BIN_DIR, which it takes from GNUInstallDirs ("bin") when Qt is
+  found, while the app and dwgread install to the prefix itself; the package
+  would have had its DLLs and qt.conf in a `bin/` the exe never looks in.
+  Setting CMAKE_INSTALL_BINDIR afterwards changes nothing, so src/gui sets
+  QT_DEPLOY_BIN_DIR to "." in an install(CODE) just before the deploy script,
+  which keeps a value already set. Checked with a local install: one folder with
+  the exe, dwgread and its DLLs, the Qt DLLs, plugins/ and a qt.conf of
+  `Prefix = .`.
+- **The Windows package carries the MSVC runtime DLLs (user decision,
+  2026-11-10).** windeployqt by default adds only `vc_redist.x64.exe`, which a
+  PC without the runtime must run before the app starts. Now
+  InstallRequiredSystemLibraries installs msvcp140*.dll, vcruntime140*.dll and
+  concrt140.dll next to the exe, from the redist folder of the compiler in use
+  (`VCToolsRedistDir`, set by vcvars and msvc-dev-cmd), and the deploy script
+  passes NO_COMPILER_RUNTIME, so there's no installer. The trade-off is that
+  app-local DLLs don't get Windows Update fixes. The UCRT is not bundled; it is
+  part of Windows 10 and later, which Qt 6 requires anyway. The bundled runtime
+  must be at least as new as the toolset that built Qt (Qt6Core.dll of 6.9.3:
+  MSVC 14.39), because the app directory comes first in the DLL search order.
+  GitHub's runner has a newer VS. This laptop's Build Tools are 14.34, so a
+  local `cmake --install` here is for checking the layout only, not for handing
+  out. A runner VS newer than its CMake (the redist folder named after the
+  toolset, e.g. VC145) would make the install stop with "file not found", not
+  ship without the runtime.
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,

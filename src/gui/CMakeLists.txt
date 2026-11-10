@@ -51,10 +51,32 @@ if(DWGCHECK_DWGREAD_FILES AND NOT APPLE)
   install(PROGRAMS ${DWGCHECK_DWGREAD_FILES} DESTINATION .)
 endif()
 
+# MSVC: the C++ runtime DLLs (msvcp140.dll, vcruntime140.dll, ...) go next to the exe, so the
+# unzipped folder runs on a PC that never installed the Visual C++ Redistributable. They
+# come from the redist folder of the compiler in use (vcvars sets VCToolsRedistDir).
+if(MSVC)
+  if(NOT MSVC_REDIST_DIR AND DEFINED ENV{VCToolsRedistDir})
+    file(TO_CMAKE_PATH "$ENV{VCToolsRedistDir}" _redist)
+    string(REGEX REPLACE "/+$" "" _redist "${_redist}")
+    set(MSVC_REDIST_DIR "${_redist}" CACHE PATH "MSVC redistributable folder")
+  endif()
+  set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+  include(InstallRequiredSystemLibraries)
+endif()
+
 # windeployqt / macdeployqt at install time. Qt 6.5 renamed FILENAME_VARIABLE to OUTPUT_SCRIPT.
+# NO_COMPILER_RUNTIME: the runtime DLLs are installed above, so windeployqt adds no
+# vc_redist.x64.exe.
 if(Qt6_VERSION VERSION_GREATER_EQUAL 6.5)
-  qt_generate_deploy_app_script(TARGET DwgChecker OUTPUT_SCRIPT _deploy NO_UNSUPPORTED_PLATFORM_ERROR)
+  qt_generate_deploy_app_script(TARGET DwgChecker OUTPUT_SCRIPT _deploy NO_UNSUPPORTED_PLATFORM_ERROR
+                                NO_COMPILER_RUNTIME)
 else()
   qt_generate_deploy_app_script(TARGET DwgChecker FILENAME_VARIABLE _deploy NO_UNSUPPORTED_PLATFORM_ERROR)
+endif()
+# Windows: the Qt DLLs, plugins/ and qt.conf go next to DwgChecker.exe, at the prefix root,
+# not into the "bin" that Qt takes from GNUInstallDirs when it is found. The deploy
+# script keeps a QT_DEPLOY_BIN_DIR that is already set, and runs in the same scope as this.
+if(WIN32)
+  install(CODE [[set(QT_DEPLOY_BIN_DIR ".")]])
 endif()
 install(SCRIPT ${_deploy})

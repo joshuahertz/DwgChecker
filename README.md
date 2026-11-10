@@ -69,8 +69,14 @@ bundled copy; there is no setting for it. Only a build made without one falls
 back to `$DWGCHECK_DWGREAD`, then `PATH`. CMake warns when a GUI build has no
 dwgread to bundle.
 
-**Packaging.** `cmake --install <build> --prefix stage` runs `windeployqt` or
-`macdeployqt`. On macOS, `packaging/macos/sign_and_notarize.sh` signs the nested
+**Packaging.** `cmake --install <build> --prefix <absolute path>/stage` runs
+`windeployqt` or `macdeployqt` (Qt's deploy step requires an absolute prefix).
+On Windows everything lands in one folder: the exe, dwgread, the Qt DLLs and
+plugins, and the Microsoft C++ runtime DLLs (`msvcp140.dll`,
+`vcruntime140.dll`, …), so the unzipped folder runs on a PC that never installed
+the Visual C++ Redistributable. The runtime comes from the compiler that built
+the app, so that Visual Studio must be at least as new as the one that built Qt
+(MSVC 14.39 for Qt 6.9.3); CI's is. On macOS, `packaging/macos/sign_and_notarize.sh` signs the nested
 dwgread first, then the bundle, with hardened runtime, and notarizes it. CI does
 all of this.
 
