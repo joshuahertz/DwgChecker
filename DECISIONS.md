@@ -804,7 +804,104 @@ the full path as a tooltip.
   local `cmake --install` here is for checking the layout only, not for handing
   out. A runner VS newer than its CMake (the redist folder named after the
   toolset, e.g. VC145) would make the install stop with "file not found", not
-  ship without the runtime.
+  ship without the runtime. The first CI package (2026-11-10) was built by the
+  runner's VS 2026 and carries runtime 14.51, the same toolset that linked the
+  exe; every DLL that DwgChecker.exe, the Qt DLLs and qwindows.dll import is in
+  the package or part of Windows.
+
+**D63. License and source notices in the packages (user decision,
+2026-11-10).** Handing the zip to colleagues already distributes dwgread (GNU
+LibreDWG, GPL-3.0-or-later, copyright FSF) and Qt (LGPL-3.0), so the packages
+carry a `licenses/` folder: next to DwgChecker.exe on Windows, in
+`Contents/Resources/licenses` inside the macOS app (installed before signing, so
+the signature seals it).
+- **NOTICES.txt** is generated at configure time from packaging/licenses: what
+  is in the package, under which license, and where each source is. It names
+  the pinned LibreDWG tarball with its URL and SHA-256, now read from
+  third_party/libredwg.version along with the version. It also names Qt's
+  source archive for the exact version, and the MSVC runtime.
+- **GPL-3.0.txt** is the repo's LICENSE; **LGPL-3.0.txt** is a verbatim copy of
+  the LGPL v3 text from Qt's own license file (`C:\Qt\Licenses\LICENSE`).
+- **For a dwgread built by build_dwgread.sh** (CI), `libredwg-source/` holds
+  libredwg.version, the patches and the build script, laid out like the source
+  tree so `bash scripts/build_dwgread.sh` runs from there. Together with the
+  tarball that is the complete Corresponding Source under GPLv3 section 6. The
+  patch descriptions in dwgread-source.txt.in must be updated when the patches
+  change. The script is installed without its execute bit, so the signed bundle
+  has no executable in Resources.
+- **For the official prebuilt dwgread** (local builds, found by its DLLs, now
+  DWGCHECK_DWGREAD_PREBUILT), the notice says so and names the release. It does
+  not include licenses for the release's libiconv and PCRE2 DLLs, since such
+  packages aren't handed out.
+- **Qt's own third-party components** (pcre2, harfbuzz, libpng and others) are
+  covered only by a link to Qt's list of their licenses, not with their texts.
+- **CI's dwgread has no libiconv or PCRE2 in it:** it imports only
+  KERNEL32/msvcrt, and none of libiconv's charset names are in the file. What it
+  carries besides LibreDWG is MinGW-w64 startup code and the GCC runtime, which
+  the GCC Runtime Library Exception covers without a notice.
+- **No copyright line for DWG Checker itself (user decision).** Its code was
+  written by Claude, and US copyright needs a human author, so instead of a
+  claim NOTICES.txt and the About box carry the credit "DWG Checker was designed
+  by Joshua Hertz [j.hertz@northeastern.edu]; its code was written with Claude
+  (Anthropic)."
+- **Help > About** says the app is free software under GPLv3 with no warranty,
+  names Qt and LibreDWG, and links to the licenses folder when it exists. Help >
+  **About Qt** is Qt's standard box.
+- **The Windows package no longer has the D3D and DXC shader compilers or the
+  software OpenGL** (`--no-system-d3d-compiler --no-system-dxc-compiler
+  --no-opengl-sw`, about 40 MB): the app draws with QPainter on a raster
+  QGraphicsView, and each would have needed its own notice (DXC: NCSA; Mesa:
+  MIT). The option is passed on Qt 6.9 and later, where it was checked.
+- **App stores:** the Mac App Store is ruled out while dwgread is bundled,
+  because Apple's terms add restrictions the GPL forbids and the FSF holds
+  LibreDWG's copyright; it had GNU Go removed from that store in 2010. The
+  Microsoft Store allows GPL apps with the publisher's own license terms, if it
+  is wanted later.
+
+**D64. A Microsoft Store package (user decision, 2026-11-10).** CI builds
+`DwgChecker.msix` (artifact DwgChecker-msix) from the same installed files as
+the zip, with packaging/windows/make_msix.ps1. It is unsigned; Partner Center
+signs it after upload.
+- **Identity:** `13710gruepr.DWGChecker`, publisher
+  `CN=06F1A065-BAE3-4E3B-878B-6C4471EB60C4`, display name "gruepr", from Partner
+  Center's Product identity page, in packaging/windows/AppxManifest.xml.in.
+  They aren't secret: every installed package shows them. The DisplayName "DWG
+  Checker" must be the name reserved in Partner Center.
+- **Version:** CMake writes `major.minor.patch.0` from `project(VERSION)` into
+  build/msix/AppxManifest.xml; the Store owns the fourth part. Every Store
+  update needs a higher version, so bump `project()` VERSION before uploading.
+- **A full-trust desktop app** (`runFullTrust`), x64, Windows 10 1903 or later.
+- **Write virtualization is off** (`desktop6:FileSystemWriteVirtualization` and
+  `RegistryWriteVirtualization` disabled, restricted capability
+  `unvirtualizedResources`, hence 1903). By default a packaged app's new files
+  in AppData, including %TEMP%, and its HKCU writes go to a per-package store
+  that other programs don't see. "Open in AutoCAD" hands a running AutoCAD (via
+  COM) a copy in %TEMP%\DwgChecker-evidence, which it couldn't open. An AutoCAD
+  that the app starts runs inside the package, and its own new settings and
+  files would have vanished into DWG Checker's store. With virtualization off,
+  writes go where they go for the zip version, so the two share settings, and
+  nothing is removed on uninstall. Both restricted capabilities need a short
+  justification in the Store submission.
+- **Not handled:** an AutoCAD started by the app still runs with DWG Checker's
+  package identity (no breakaway from the package). That's untested; it is the
+  first thing to try in a Store-installed copy.
+- **Store images:** make_icon.ps1 now draws the icon at any size and offset (its
+  app icons are byte-identical to before) and also writes packaging/windows/Assets:
+  StoreLogo and Square44x44Logo at scale-100/200 and the Start tile at
+  scale-100/200, with the icon at two thirds of the tile's width. The taskbar
+  sizes (targetsize-16/24/32/48/256, plated and unplated) are the app icon's own
+  drawings, with the heavier strokes of the small sizes.
+- **resources.pri** maps the manifest's logo names to those files. makepri
+  indexes a folder holding only the manifest and Assets, so DLLs and translations
+  aren't resources. The default config's `<packaging>` section, which splits
+  scales into resources.scale-200.pri for bundles, is removed: a single package
+  reads only resources.pri.
+- **Checked locally (Windows SDK 10.0.26100):** makeappx packs the installed
+  files and validates the manifest; a dump of resources.pri lists every logo
+  candidate. The package has not been installed or put through the Windows App
+  Certification Kit. Sideloading it would need a self-signed certificate trusted
+  on this managed laptop, so the first install should come from a
+  private-audience Store submission.
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,

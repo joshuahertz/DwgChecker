@@ -1,0 +1,15 @@
+dwgread.exe and the DLLs next to it (libredwg-0.dll, libiconv-2.dll,
+libpcre2-*.dll) are unmodified files from the official Windows release of GNU
+LibreDWG @DWGCHECK_LIBREDWG_VERSION@:
+  https://github.com/LibreDWG/libredwg/releases/tag/@DWGCHECK_LIBREDWG_VERSION@
+
+LibreDWG is Copyright (C) Free Software Foundation, Inc., licensed under the GNU
+General Public License, version 3 or (at your option) any later version
+(GPL-3.0.txt). Its source code is the release
+  @DWGCHECK_LIBREDWG_URL@
+  SHA-256 @DWGCHECK_LIBREDWG_SHA256@
+DWG Checker runs dwgread as a separate program to read DWG files.
+
+libiconv (GNU LGPL) and PCRE2 (BSD) come with that release; their license texts
+are not included here. This is a local build: the packages that CI builds use a
+dwgread built from source, without these DLLs.

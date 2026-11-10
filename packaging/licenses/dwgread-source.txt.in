@@ -1,0 +1,23 @@
+dwgread (dwgread.exe next to DwgChecker.exe on Windows, Contents/Helpers/dwgread
+inside the macOS app) is the dwgread program of GNU LibreDWG @DWGCHECK_LIBREDWG_VERSION@, Copyright (C)
+Free Software Foundation, Inc. It is licensed under the GNU General Public
+License, version 3 or (at your option) any later version (GPL-3.0.txt). DWG
+Checker runs it as a separate program to read DWG files.
+
+Its complete source code is:
+
+  1. The LibreDWG @DWGCHECK_LIBREDWG_VERSION@ release:
+       @DWGCHECK_LIBREDWG_URL@
+       SHA-256 @DWGCHECK_LIBREDWG_SHA256@
+
+  2. Two changes to it, in libredwg-source/third_party/patches/:
+       0001  the JSON output also gives the column and row counts of MINSERT
+             (arrayed block) objects
+       0002  the JSON output prints numbers with all their digits (%.17g instead
+             of %.14f), so they read back exactly
+
+  3. The build script, libredwg-source/scripts/build_dwgread.sh, with the
+     configure options used. Run from the libredwg-source folder
+     (bash scripts/build_dwgread.sh), it downloads the release, checks its
+     SHA-256, applies the patches and builds dwgread: in an MSYS2 MINGW64 shell
+     on Windows, natively on macOS and Linux.

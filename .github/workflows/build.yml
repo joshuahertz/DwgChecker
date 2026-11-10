@@ -132,6 +132,14 @@ jobs:
         with:
           name: DwgChecker-windows
           path: stage
+      # Microsoft Store package: the same files plus the manifest, the Store images and their
+      # resources.pri, packed with the Windows SDK's makeappx. Unsigned: the Store signs it.
+      - name: Store package (MSIX)
+        run: ./packaging/windows/make_msix.ps1 -Stage stage -Manifest build/msix/AppxManifest.xml -Out DwgChecker.msix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DwgChecker-msix
+          path: DwgChecker.msix
 
   # ---------------------------------------------------------------------------
   # macOS: universal build, tests, macdeployqt, sign + notarize (when secrets exist).

@@ -1,13 +1,16 @@
 <#
 .SYNOPSIS
-  Draws the DWG Checker app icon (src/gui/resources/icons/app_<size>.png) with GDI+.
+  Draws the DWG Checker app icon with GDI+: src/gui/resources/icons/app_<size>.png, and the
+  Microsoft Store package images in packaging/windows/Assets (the same icon, at the sizes
+  and with the padding that the package manifest's logos need).
   A blue tile with a white CAD plate (rounded corner, hole, center marks) and a green
   check badge. Small sizes are drawn with heavier strokes and no center marks.
   Then run make_ico.py to pack the PNGs into src/gui/resources/app.ico.
 #>
-param([string]$OutDir = (Join-Path $PSScriptRoot '..\..\src\gui\resources\icons'))
+param([string]$OutDir = (Join-Path $PSScriptRoot '..\..\src\gui\resources\icons'),
+      [string]$StoreDir = (Join-Path $PSScriptRoot '..\windows\Assets'))
 Add-Type -AssemblyName System.Drawing
-New-Item -ItemType Directory -Force $OutDir | Out-Null
+New-Item -ItemType Directory -Force $OutDir, $StoreDir | Out-Null
 
 function RoundRect([float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
@@ -20,13 +23,15 @@ function RoundRect([float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
     return $p
 }
 
-foreach ($size in 16, 24, 32, 48, 64, 128, 256) {
-    $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+# A transparent $width x $height image with the icon drawn $size pixels wide at ($x, $y).
+function New-IconImage([int]$width, [int]$height, [int]$size, [float]$x, [float]$y) {
+    $bmp = New-Object System.Drawing.Bitmap $width, $height, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $g.Clear([System.Drawing.Color]::Transparent)
     $s = $size / 256.0
+    $g.TranslateTransform($x, $y)
     $g.ScaleTransform($s, $s)
     $boost = if ($size -le 24) { 1.9 } elseif ($size -le 32) { 1.5 } elseif ($size -le 48) { 1.2 } else { 1.0 }
 
@@ -66,8 +71,36 @@ foreach ($size in 16, 24, 32, 48, 64, 128, 256) {
     $g.DrawLines($check, [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(166, 194), [System.Drawing.PointF]::new(186, 214), [System.Drawing.PointF]::new(221, 172)))
 
     $g.Dispose()
-    $out = Join-Path $OutDir ("app_{0}.png" -f $size)
+    return $bmp
+}
+
+function Save-Image($bmp, [string]$out) {
     $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
     Write-Host "wrote $out"
+}
+
+# The app's own icon sizes (window icon, app.ico).
+foreach ($size in 16, 24, 32, 48, 64, 128, 256) {
+    Save-Image (New-IconImage $size $size $size 0 0) (Join-Path $OutDir ("app_{0}.png" -f $size))
+}
+
+# Store package images. The qualifiers in the file names are what the package's resources.pri
+# (made by packaging/windows/make_msix.ps1) picks a size by: scale-100/200 for 100% and 200%
+# display scaling, targetsize-N for the taskbar and Start list (altform-unplated: drawn without
+# a colored plate behind it). The medium Start tile (Square150x150Logo) has the icon at two
+# thirds of its width, centered, as Windows' tile guidelines suggest.
+function Save-Padded([string]$name, [int]$canvas, [int]$size) {
+    $off = [Math]::Floor(($canvas - $size) / 2)
+    Save-Image (New-IconImage $canvas $canvas $size $off $off) (Join-Path $StoreDir $name)
+}
+foreach ($scale in 100, 200) {
+    $f = $scale / 100
+    Save-Padded ("StoreLogo.scale-{0}.png" -f $scale) (50 * $f) (50 * $f)
+    Save-Padded ("Square44x44Logo.scale-{0}.png" -f $scale) (44 * $f) (44 * $f)
+    Save-Padded ("Square150x150Logo.scale-{0}.png" -f $scale) (150 * $f) (100 * $f)
+}
+foreach ($size in 16, 24, 32, 48, 256) {
+    Save-Padded ("Square44x44Logo.targetsize-{0}.png" -f $size) $size $size
+    Save-Padded ("Square44x44Logo.targetsize-{0}_altform-unplated.png" -f $size) $size $size
 }

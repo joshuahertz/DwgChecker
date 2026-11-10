@@ -1,0 +1,46 @@
+DWG Checker: licenses and source code
+=====================================
+
+DWG Checker @PROJECT_VERSION@, with Qt @Qt6_VERSION@ and GNU LibreDWG @DWGCHECK_LIBREDWG_VERSION@.
+
+This folder holds the licenses of the software in this package and says where
+to get its source code.
+
+  NOTICES.txt       this file
+  GPL-3.0.txt       GNU General Public License, version 3
+  LGPL-3.0.txt      GNU Lesser General Public License, version 3
+@DWGCHECK_NOTICE_SOURCE_LINE@
+
+DWG Checker
+-----------
+DWG Checker was designed by Joshua Hertz [j.hertz@northeastern.edu]; its code
+was written with Claude (Anthropic).
+
+DWG Checker is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 3 (GPL-3.0.txt). It comes
+with ABSOLUTELY NO WARRANTY, to the extent permitted by law.
+
+
+dwgread (GNU LibreDWG)
+----------------------
+@DWGCHECK_NOTICE_DWGREAD@
+
+Qt
+--
+DWG Checker uses the Qt libraries (the Qt6*.dll files and the plugins folder on
+Windows, the Qt frameworks and plugins inside the macOS app), Copyright (C) The
+Qt Company Ltd. and other contributors, under the GNU Lesser General Public
+License, version 3 (LGPL-3.0.txt, which adds to GPL-3.0.txt). They are separate
+library files, linked dynamically, and can be replaced with other builds of
+Qt @Qt6_VERSION@.
+
+Qt's source code: https://download.qt.io/archive/qt/@DWGCHECK_QT_MAJOR_MINOR@/@Qt6_VERSION@/
+
+Qt contains third-party components under their own licenses. Qt lists them,
+with their license texts, at https://doc.qt.io/qt-6/licenses-used-in-qt.html
+
+
+Microsoft Visual C++ runtime (Windows only)
+-------------------------------------------
+msvcp140*.dll, vcruntime140*.dll and concrt140.dll are the Microsoft Visual C++
+runtime, redistributed under the Microsoft Visual Studio license terms.

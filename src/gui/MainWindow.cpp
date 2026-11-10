@@ -16,6 +16,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDialog>
+#include <QDir>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -45,6 +46,7 @@
 #include <QInputDialog>
 #include <QSet>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -262,13 +264,29 @@ void MainWindow::buildUi() {
     });
     help->addSeparator();
     help->addAction(tr("About"), this, [this]() {
+        // The licenses folder of an installed package (see packaging/licenses); a build folder has none.
+#ifdef Q_OS_MACOS
+        const QString licenses = QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/../Resources/licenses")).absolutePath();
+#else
+        const QString licenses = QCoreApplication::applicationDirPath() + QStringLiteral("/licenses");
+#endif
+        const QString where = QFileInfo(licenses).isDir()
+            ? tr("<a href=\"%1\">the licenses folder</a> that comes with the app")
+                  .arg(QUrl::fromLocalFile(licenses).toString(QUrl::FullyEncoded).toHtmlEscaped())
+            : tr("the licenses folder of an installed copy");
         QMessageBox::about(this, tr("About DWG Checker"),
                            tr("<b>DWG Checker %1</b><br>Grades CAD assignments against a reference drawing and shows evidence of "
-                              "shared files.<br><br>Parser: %2<br>LibreDWG pinned version: %3<br>Qt %4")
+                              "shared files.<br><br>DWG Checker was designed by Joshua Hertz [j.hertz@northeastern.edu]; "
+                              "its code was written with Claude (Anthropic).<br><br>"
+                              "Parser: %2<br>LibreDWG pinned version: %3<br>Qt %4<br><br>"
+                              "Free software under the GNU General Public License version 3, with no warranty. It uses Qt "
+                              "(GNU LGPL version 3) and dwgread from GNU LibreDWG (GNU GPL version 3 or later). Their "
+                              "licenses and where to get the source code are in %5.")
                                .arg(QStringLiteral(DWGCHECK_VERSION),
                                     m_runLoader ? m_runLoader->parserVersion().toHtmlEscaped() : tr("see Log"),
-                                    QStringLiteral(DWGCHECK_LIBREDWG_VERSION), QString::fromLatin1(qVersion())));
+                                    QStringLiteral(DWGCHECK_LIBREDWG_VERSION), QString::fromLatin1(qVersion()), where));
     });
+    help->addAction(tr("About Qt"), qApp, &QApplication::aboutQt);
 
     // ---- Wiring ----
     connect(m_refCard, &PathCard::pathsChanged, this, &MainWindow::referenceChanged);

@@ -76,7 +76,17 @@ plugins, and the Microsoft C++ runtime DLLs (`msvcp140.dll`,
 `vcruntime140.dll`, …), so the unzipped folder runs on a PC that never installed
 the Visual C++ Redistributable. The runtime comes from the compiler that built
 the app, so that Visual Studio must be at least as new as the one that built Qt
-(MSVC 14.39 for Qt 6.9.3); CI's is. On macOS, `packaging/macos/sign_and_notarize.sh` signs the nested
+(MSVC 14.39 for Qt 6.9.3); CI's is. Every package has a `licenses/` folder
+(Windows: next to the exe; macOS: `Contents/Resources/licenses`) with the GPL and
+LGPL texts and a NOTICES.txt that says where the source of dwgread and Qt is;
+for a source-built dwgread it also holds its patches and build script
+(packaging/licenses, DECISIONS D63). **Microsoft Store:** CI also builds
+`DwgChecker.msix` (artifact DwgChecker-msix) with
+`packaging/windows/make_msix.ps1`: the installed files plus the manifest that
+CMake generates from `packaging/windows/AppxManifest.xml.in` and the Store
+images (drawn by `packaging/icon/make_icon.ps1`). It is unsigned and uploaded in
+Partner Center, which signs it. Each Store update needs a higher `project()`
+VERSION (DECISIONS D64). On macOS, `packaging/macos/sign_and_notarize.sh` signs the nested
 dwgread first, then the bundle, with hardened runtime, and notarizes it. CI does
 all of this.
 

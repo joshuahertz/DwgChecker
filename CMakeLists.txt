@@ -22,9 +22,15 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS ${_qt_components})
 # Also puts every executable (the app and the tests) in the top of the build folder.
 qt_standard_project_setup()
 
-# The pinned LibreDWG version lives in exactly one place.
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libredwg.version" _ldwg REGEX "^LIBREDWG_VERSION=")
-string(REGEX REPLACE "^LIBREDWG_VERSION=" "" DWGCHECK_LIBREDWG_VERSION "${_ldwg}")
+# The pinned LibreDWG version lives in exactly one place. Its KEY=VALUE lines become
+# DWGCHECK_LIBREDWG_VERSION, _URL and _SHA256 (the last two for the package's notices).
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libredwg.version" _ldwg REGEX "^LIBREDWG_[A-Z0-9]+=")
+foreach(_l IN LISTS _ldwg)
+  if(_l MATCHES "^LIBREDWG_([A-Z0-9]+)=(.*)$")
+    string(STRIP "${CMAKE_MATCH_2}" _v)
+    set(DWGCHECK_LIBREDWG_${CMAKE_MATCH_1} "${_v}")
+  endif()
+endforeach()
 
 # ---- dwgread to bundle --------------------------------------------------------
 # Explicit DWGCHECK_DWGREAD, else $ENV{DWGCHECK_DWGREAD}, else the output of
@@ -54,12 +60,16 @@ endif()
 # The static build from build_dwgread.sh is a single file. The official prebuilt
 # Windows release is dynamically linked, so its runtime DLLs travel with it.
 set(DWGCHECK_DWGREAD_FILES "")
+set(DWGCHECK_DWGREAD_PREBUILT FALSE)  # the official release (with DLLs), not build_dwgread.sh's
 if(DWGCHECK_DWGREAD)
   get_filename_component(_dwgread_dir "${DWGCHECK_DWGREAD}" DIRECTORY)
   file(GLOB _dwgread_dlls "${_dwgread_dir}/libredwg*.dll" "${_dwgread_dir}/libiconv*.dll"
                           "${_dwgread_dir}/libpcre2*.dll" "${_dwgread_dir}/libwinpthread*.dll"
                           "${_dwgread_dir}/libgcc_s*.dll")
   set(DWGCHECK_DWGREAD_FILES "${DWGCHECK_DWGREAD}" ${_dwgread_dlls})
+  if(_dwgread_dlls)
+    set(DWGCHECK_DWGREAD_PREBUILT TRUE)
+  endif()
   message(STATUS "Bundling dwgread: ${DWGCHECK_DWGREAD}")
 else()
   set(_no_dwgread_level STATUS)
