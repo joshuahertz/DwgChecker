@@ -19,6 +19,7 @@ dwgcheck_add_test(tst_duplicates)
 dwgcheck_add_test(tst_misc)
 dwgcheck_add_test(tst_hatch)
 dwgcheck_add_test(tst_dims)
+dwgcheck_add_test(tst_batch)
 
 # End to end with the real parser (skips itself when no dwgread is configured).
 dwgcheck_add_test(tst_dwgread)

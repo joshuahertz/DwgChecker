@@ -21,7 +21,7 @@ QString correctnessText(const StudentRun& r);
 
 QString csvEscape(const QString& s);
 // Columns: File, Copy flag, Correctness, Errors (joined by "; ").
-QString resultsCsv(const BatchOutput& b, const QString& refPath);
-QString duplicatesCsv(const BatchOutput& b, const QString& refPath);
+QString resultsCsv(const BatchOutput& b);
+QString duplicatesCsv(const BatchOutput& b);
 
 }  // namespace dc

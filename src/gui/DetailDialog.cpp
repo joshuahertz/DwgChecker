@@ -23,7 +23,9 @@ using namespace dc;
 namespace dcgui {
 
 namespace {
-const QColor kRefGray(175, 175, 175), kMatched(30, 150, 50), kMissing(210, 30, 30), kExtra(240, 140, 0), kViewBox(70, 120, 200);
+// Overlay: matched green, missing red, present but wrong (shifted, wrong size...) yellow, extra purple.
+const QColor kRefGray(175, 175, 175), kMatched(30, 150, 50), kMissing(210, 30, 30), kShifted(225, 175, 0), kExtra(150, 70, 200);
+const QColor kDarkText(20, 20, 20);  // on the light status colors
 }
 
 DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student, QWidget* parent)
@@ -37,15 +39,22 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
     QString summary = tr("<b>%1</b> — %2 — %3  (%4 of %5 matched, %6 penalized extras)")
                           .arg(run.identity.name.toHtmlEscaped(), correctnessText(run), r.errorSummary().toHtmlEscaped())
                           .arg(r.matched).arg(r.refCount).arg(r.penalizedExtras);
+    const QString refName = QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName().toHtmlEscaped();
+    if (!run.matched())
+        summary += tr(" — <b>extra file, not graded</b>: shown against the closest solution drawing, %1").arg(refName);
+    else if (m_batch->multipleRefs())
+        summary += tr(" — solution drawing: <b>%1</b>").arg(refName);
     if (r.scaled) summary += tr(" — <b>scaled</b>: compared after dividing by %1").arg(QString::number(r.scaleFactor, 'g', 6));
+    if (r.moved) summary += tr(" — <b>moved back</b> by dx %1, dy %2 before grading").arg(fmtCoord(r.dx), fmtCoord(r.dy));
     if (r.mode == Mode::Relative)
         summary += tr(" — transform: dx %1, dy %2, θ %3%4")
                        .arg(fmtCoord(r.dx), fmtCoord(r.dy), fmtDeg(r.theta), r.mirrored ? tr(", mirrored") : QString());
     auto* head = new QLabel(summary, this);
     lay->addWidget(head);
     auto* legend = new QLabel(tr("<span style='color:#afafaf'>■</span> reference &nbsp; <span style='color:#1e9632'>■</span> matched "
-                                 "&nbsp; <span style='color:#d21e1e'>■</span> missing / wrong &nbsp; "
-                                 "<span style='color:#f08c00'>■</span> extra &nbsp; (wheel: zoom, drag: pan)"),
+                                 "&nbsp; <span style='color:#d21e1e'>■</span> missing (where it should be) &nbsp; "
+                                 "<span style='color:#e1af00'>■</span> present but wrong: shifted, wrong size… &nbsp; "
+                                 "<span style='color:#9646c8'>■</span> extra &nbsp; (wheel: zoom, drag: pan)"),
                               this);
     lay->addWidget(legend);
 
@@ -59,15 +68,15 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
     m_errors->setWordWrap(true);
     for (const auto& e : r.errors) m_errors->addItem(e.text);
     tabs->addTab(m_errors, tr("Discrepancies (%1)").arg(r.errors.size()));
-    auto* meta = new QTableWidget(tabs);
-    buildMetadata(meta);
-    tabs->addTab(meta, tr("Metadata"));
-    tabs->addTab(buildPrimitivesPage(tabs), tr("Primitives"));
-    if (r.mode == Mode::Orthographic && m_batch->hasViews) {
+    if (r.mode == Mode::Orthographic && m_batch->viewsOf(run)) {  // only for a drawing graded in Orthographic mode
         auto* views = new QTableWidget(tabs);
         buildViews(views);
         tabs->addTab(views, tr("Views"));
     }
+    auto* meta = new QTableWidget(tabs);
+    buildMetadata(meta);
+    tabs->addTab(meta, tr("Metadata"));
+    tabs->addTab(buildPrimitivesPage(tabs), tr("Primitives"));
     split->addWidget(tabs);
     // Opens as a 50/50 split of drawing and lists, and keeps that ratio when resized.
     // Equal sizes are scaled to the real width once the dialog is laid out.
@@ -101,9 +110,31 @@ void DetailDialog::selectError(int k) {
     m_errors->scrollToItem(m_errors->item(k));
 }
 
+// A view's box and title take its status color: not found or something missing red,
+// something wrong (or a failed alignment check) yellow, only extras purple, else green.
+QColor DetailDialog::viewColor(int v) const {
+    const StudentRun& run = m_batch->students[m_student];
+    const CompareResult& r = run.result;
+    const ViewSet* vs = m_batch->viewsOf(run);
+    if (!vs || v >= static_cast<int>(r.views.size()) || !r.views[v].found) return kMissing;
+    int missing = 0, wrong = 0;
+    for (int i : vs->views[v].prims) {
+        if (i < 0 || i >= static_cast<int>(r.refStatus.size())) continue;
+        missing += r.refStatus[i] == PrimStatus::Missing;
+        wrong += r.refStatus[i] == PrimStatus::NearMiss || r.refStatus[i] == PrimStatus::WrongAttribute;
+    }
+    bool check = false;
+    for (const auto& e : r.errors)
+        if ((e.cat == ErrCat::Alignment || e.cat == ErrCat::Arrangement) && e.view == v && e.failing) check = true;
+    if (missing > 0) return kMissing;
+    if (wrong > 0 || check) return kShifted;
+    if (r.views[v].extras > 0) return kExtra;
+    return kMatched;
+}
+
 void DetailDialog::buildOverlay() {
     const StudentRun& run = m_batch->students[m_student];
-    const Drawing& ref = *m_batch->ref;
+    const Drawing& ref = m_batch->refDrawing(run);
     const CompareResult& r = run.result;
     m_view->clearDrawing();
     // Reference underneath in gray; missing/wrong reference primitives in red on top.
@@ -118,20 +149,24 @@ void DetailDialog::buildOverlay() {
     }
     if (run.drawing) {
         const Drawing& stu = *run.drawing;
+        // Wrong location counted once: the whole drawing is in the wrong place, so what matches
+        // after moving it back is still "present but wrong" (yellow), not green.
+        const QColor matched = r.wrongLocation() ? kShifted : kMatched;
         for (int j = 0; j < static_cast<int>(stu.prims.size()); ++j) {
             const PrimStatus st = r.stuStatus[j];
-            QColor c = kMatched;
-            if (st == PrimStatus::Extra || st == PrimStatus::NearMiss || st == PrimStatus::WrongAttribute) c = kExtra;
+            QColor c = matched;
+            if (st == PrimStatus::Extra) c = kExtra;
+            else if (st == PrimStatus::NearMiss || st == PrimStatus::WrongAttribute) c = kShifted;
             else if (st == PrimStatus::NotCompared) c = QColor(120, 120, 200);
             if (auto* it = m_view->addPrimitive(stu.prims[j], c, 1.4, r.stuT[j])) it->setZValue(st == PrimStatus::Matched ? 1 : 3);
         }
     }
-    if (r.mode == Mode::Orthographic && m_batch->hasViews)
-        for (int v = 0; v < static_cast<int>(m_batch->views.views.size()); ++v) {
+    if (const ViewSet* vs = m_batch->viewsOf(run); r.mode == Mode::Orthographic && vs)
+        for (int v = 0; v < static_cast<int>(vs->views.size()); ++v) {
             const auto& vr = v < static_cast<int>(r.views.size()) ? r.views[v] : ViewResult{};
-            m_view->addBox(m_batch->views.views[v].bbox, kViewBox,
-                           QStringLiteral("%1 %2").arg(m_batch->views.label(v), vr.found ? QStringLiteral("%1%").arg(vr.percent, 0, 'f', 0)
-                                                                                         : tr("not found")));
+            m_view->addBox(vs->views[v].bbox, viewColor(v),
+                           QStringLiteral("%1 %2").arg(vs->label(v), vr.found ? QStringLiteral("%1%").arg(vr.percent, 0, 'f', 0)
+                                                                              : tr("not found")));
         }
     m_view->zoomToAll();
 }
@@ -142,11 +177,11 @@ BBox DetailDialog::errorBox(int k) const {
     BBox b;
     if (k < 0 || k >= static_cast<int>(r.errors.size())) return b;
     const ErrorItem& e = r.errors[k];
-    for (int i : e.refPrims) b.add(m_batch->ref->prims[i].bbox());
+    for (int i : e.refPrims) b.add(m_batch->refDrawing(run).prims[i].bbox());
     if (run.drawing)
         for (int j : e.stuPrims)
             if (j >= 0 && j < static_cast<int>(run.drawing->prims.size())) b.add(transformed(run.drawing->prims[j], r.stuT[j]).bbox());
-    if (!b.valid() && e.view >= 0 && m_batch->hasViews) b = m_batch->views.views[e.view].bbox;
+    if (const ViewSet* vs = m_batch->viewsOf(run); !b.valid() && e.view >= 0 && vs) b = vs->views[e.view].bbox;
     return b;
 }
 
@@ -158,7 +193,7 @@ void DetailDialog::zoomToError(int k) {
     const BBox b = errorBox(k);
     if (!b.valid()) { m_view->zoomToAll(); return; }
     // Keep some context: at least 15% of the reference size around the error.
-    const double minSize = 0.15 * m_batch->ref->bbox().diagonal();
+    const double minSize = 0.15 * m_batch->refDrawing(m_batch->students[m_student]).bbox().diagonal();
     BBox z = b;
     const Vec2 c = b.center();
     if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
@@ -181,10 +216,10 @@ QString statusText(PrimStatus s) {
 QColor statusColor(PrimStatus s) {
     switch (s) {
     case PrimStatus::Matched: return QColor(214, 245, 214);
-    case PrimStatus::Missing:
+    case PrimStatus::Missing: return QColor(250, 218, 214);
     case PrimStatus::NearMiss:
-    case PrimStatus::WrongAttribute: return QColor(250, 218, 214);
-    case PrimStatus::Extra: return QColor(255, 232, 190);
+    case PrimStatus::WrongAttribute: return QColor(255, 243, 190);
+    case PrimStatus::Extra: return QColor(234, 220, 250);
     case PrimStatus::NotCompared: return QColor(240, 240, 240);
     }
     return {};
@@ -197,7 +232,9 @@ QWidget* DetailDialog::buildPrimitivesPage(QWidget* parent) {
     auto* top = new QHBoxLayout;
     m_primSource = new QComboBox(page);
     m_primSource->addItem(tr("Student drawing"));
-    m_primSource->addItem(tr("Reference drawing"));
+    m_primSource->addItem(m_batch->multipleRefs()
+                              ? tr("Solution drawing (%1)").arg(QFileInfo(m_batch->refPaths.value(m_batch->refOf(m_batch->students[m_student]))).fileName())
+                              : tr("Reference drawing"));
     top->addWidget(new QLabel(tr("Show:"), page));
     top->addWidget(m_primSource);
     top->addStretch();
@@ -206,7 +243,7 @@ QWidget* DetailDialog::buildPrimitivesPage(QWidget* parent) {
                                "Click a row to zoom to it."),
                             page);
     hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color: #666"));
+    hint->setForegroundRole(QPalette::PlaceholderText);
     lay->addWidget(hint);
     m_prims = new QTableWidget(page);
     m_prims->setColumnCount(7);
@@ -230,7 +267,7 @@ QWidget* DetailDialog::buildPrimitivesPage(QWidget* parent) {
 void DetailDialog::fillPrimitives() {
     const StudentRun& run = m_batch->students[m_student];
     const bool student = m_primSource->currentIndex() == 0;
-    const Drawing* d = student ? run.drawing.get() : m_batch->ref.get();
+    const Drawing* d = student ? run.drawing.get() : &m_batch->refDrawing(run);
     const QSignalBlocker block(m_prims);
     m_prims->setRowCount(0);
     if (!d) return;
@@ -246,7 +283,10 @@ void DetailDialog::fillPrimitives() {
         const QStringList cells = {QString::number(i + 1), kindName(p.kind), describeGeometry(p), p.layer, lt, statusText(st), src};
         for (int c = 0; c < cells.size(); ++c) {
             auto* item = new QTableWidgetItem(cells[c]);
-            if (c == 5) item->setBackground(statusColor(st));
+            if (c == 5) {
+                item->setBackground(statusColor(st));
+                item->setForeground(kDarkText);  // light background: dark text, also in dark mode
+            }
             item->setToolTip(cells[c]);
             m_prims->setItem(i, c, item);
         }
@@ -260,12 +300,12 @@ void DetailDialog::fillPrimitives() {
 void DetailDialog::zoomToPrimitive(int row) {
     const StudentRun& run = m_batch->students[m_student];
     const bool student = m_primSource->currentIndex() == 0;
-    const Drawing* d = student ? run.drawing.get() : m_batch->ref.get();
+    const Drawing* d = student ? run.drawing.get() : &m_batch->refDrawing(run);
     if (!d || row < 0 || row >= static_cast<int>(d->prims.size())) return;
     // The overlay is in the reference frame: move student primitives there first.
     const Primitive p = student ? transformed(d->prims[row], run.result.stuT[row]) : d->prims[row];
     BBox z = p.bbox();
-    const double minSize = 0.15 * m_batch->ref->bbox().diagonal();
+    const double minSize = 0.15 * m_batch->refDrawing(run).bbox().diagonal();
     const Vec2 c = z.center();
     if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
     if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
@@ -273,8 +313,8 @@ void DetailDialog::zoomToPrimitive(int row) {
 }
 
 void DetailDialog::buildMetadata(QTableWidget* t) {
-    const DrawingMeta& a = m_batch->ref->meta;
     const StudentRun& run = m_batch->students[m_student];
+    const DrawingMeta& a = m_batch->refDrawing(run).meta;
     const DrawingMeta b = run.drawing ? run.drawing->meta : DrawingMeta{};
     struct Row { QString name, ra, sb; bool identity; };
     auto secs = [](double s) { return s < 0 ? QStringLiteral("-") : QStringLiteral("%1:%2").arg(int(s) / 60).arg(int(s) % 60, 2, 10, QChar('0')); };
@@ -309,6 +349,8 @@ void DetailDialog::buildMetadata(QTableWidget* t) {
         if (rows[i].identity && !rows[i].ra.isEmpty() && rows[i].ra == rows[i].sb) {
             ia->setBackground(QColor(255, 225, 190));
             ib->setBackground(QColor(255, 225, 190));
+            ia->setForeground(kDarkText);
+            ib->setForeground(kDarkText);
             ib->setToolTip(tr("Identical to the reference"));
         }
         t->setItem(i, 0, ia);
@@ -332,6 +374,7 @@ void DetailDialog::buildViews(QTableWidget* t) {
         auto* res = new QTableWidgetItem(!v.found ? tr("not found") : (v.pass ? tr("pass") : tr("fail")) +
                                                                           QStringLiteral(" %1%").arg(v.percent, 0, 'f', 1));
         res->setBackground(v.found && v.pass ? QColor(214, 245, 214) : QColor(250, 218, 214));
+        res->setForeground(kDarkText);
         t->setItem(i, 0, new QTableWidgetItem(v.label));
         t->setItem(i, 1, res);
         t->setItem(i, 2, new QTableWidgetItem(QStringLiteral("%1 / %2").arg(v.matched).arg(v.refCount)));

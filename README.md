@@ -76,20 +76,55 @@ all of this.
 
 ## Using it
 
-**GUI.** Pick the reference and the submissions folder (Canvas bulk downloads
-work as-is), check Settings, and click Run. Settings shows the everyday choices
-(mode, tolerance, what to check); **Advanced settings** holds the rest, including
-template/starter DWGs for copy detection. Then:
-- Results tab: each row shows the student, an **Open in AutoCAD** link (a
-  read-only copy by default), the copy flag, the correctness and a summary of
-  the errors such as "2 shifted, 1 missing, 1 extra". Click anywhere in a row
-  for the detail view, or the link to open the file in AutoCAD.
-- Detail view: the overlay, the full discrepancy list (click an error to zoom to
-  it), metadata side by side, and a **Primitives** tab. That tab lists everything the checker extracted from the
+**GUI.** The app opens with nothing chosen and walks through three numbered
+steps: (1) click the first card to choose the reference (solution) drawing, (2)
+click the second card to choose the submissions folder, (3) click **Run**. The
+next step is outlined, finished steps get a check, and Run is enabled once both
+are chosen. You can also drop the file or folder on a card, or pick one from its
+**Recent** button. The reference card shows what was read
+("inches · 4 objects · 5 dimensions"), and the submissions card shows how many
+drawings it found (Canvas bulk downloads work as-is). Settings are remembered for
+each reference, so choosing a quiz brings back its settings. Check Settings and
+click **Run**. Settings shows the everyday choices (mode, tolerance, what to
+check); **Advanced settings** holds the rest, including template/starter DWGs for
+copy detection. Then:
+- **Several drawings per assignment:** choose all the solution drawings on the
+  first card (select several in the dialog, or drop several). Each student's
+  files (grouped by the name and Canvas user id in the file name) are matched one
+  to one to the solution drawings, choosing the assignment with the best total
+  fit, wherever the files were drawn (an Absolute-mode drawing in the wrong place
+  still finds its drawing, with a warning that gives the offset). A drawing with
+  no file counts 0%, a file left over (more files than drawings) is listed as an
+  extra and not graded, and the student's score is the mean over the drawings. Settings then shows a **Solution drawings** table with
+  each drawing's mode, dimension and hatch checks (and **Edit views…** for an
+  Orthographic one); the other settings apply to all drawings. A setting that
+  only some drawings use, because of their mode or checks, names them underneath,
+  e.g. "Only for Q10Problem 1_1-6 (Absolute mode)". These are rotation and
+  mirroring, wrong location, the Orthographic views group, and dimension
+  precision and hatch pattern.
+- Results tab, one row per student, sorted A to Z after each run: a **Poss.
+  dup.** icon (possible duplicate: red = strong evidence, amber = weaker; hover
+  for the details), the student, the correctness, a summary of the errors such
+  as "2 shifted, 1 missing, 1 extra", and an **Open in AutoCAD** link (a
+  read-only copy by default). A student with several files has a subrow per
+  solution drawing (and per extra file); click the student to fold them. Click a
+  file's row for the detail view, or the link to open the file in AutoCAD.
+- **Help > Show log** (Ctrl+L) lists the parser version, AutoCAD found, and why
+  any file could not be read.
+- Detail view: the overlay (matched green, missing red, present but wrong, such
+  as shifted or the wrong size, yellow, extra purple), the full discrepancy list
+  (click an error to zoom to it), metadata side by side, and a **Primitives** tab. That tab lists everything the checker extracted from the
   student's or the reference's file, with layer, linetype, match status and
   source entity, which helps when a file grades unexpectedly.
-- Orthographic mode: use **Edit views…** (shown only in that mode) to confirm
-  how the reference splits into views. The views are saved next to it as `ref.dwg.views.json`.
+- Orthographic mode: use **Edit views…** in Settings, under Mode, to confirm how
+  the reference splits into views. In the detail view, each view's box and title
+  take its status color. The views are saved next to it as `ref.dwg.views.json`.
+- Objects on turned-off or frozen layers in the solution (a sketching grid, a
+  construction layer) are not part of the answer by default, and the solution
+  card says how many were left out. To require them, untick **Ignore objects on
+  turned-off or frozen layers in the solution** (Advanced settings > Reading
+  drawings). In student drawings they still count, with a warning, unless you
+  tick the matching option for student drawings.
 - Hatching is ignored unless you tick **Check hatches** in Settings. It then
   checks that every hatched region of the reference is hatched, however the
   student made the hatch. **…and with the same hatch pattern** (on by default)
@@ -104,9 +139,19 @@ template/starter DWGs for copy detection. Then:
   ("is shifted by …", plus "and rotated by …" when it is also turned by up to 5°),
   however far it was moved, not missing plus extra.
 - A drawing at the wrong scale (millimeters instead of inches, or simply 2×) is
-  detected when most of it would otherwise fail. It is graded after undoing the
-  scale, with one "wrong scale" error that counts as N errors (Settings, default
-  1), so it doesn't lose every item. The drawing never passes.
+  detected when most of it would otherwise fail. "Wrong scale counts as an error"
+  (Settings) is **Once** by default: graded after undoing the scale, with one
+  error for the scale. **Never** undoes the scale without that error; **Every
+  time** does not rescale, so every object is wrong. A rescaled drawing never
+  passes.
+- In Absolute mode, a drawing that is right but displaced as a whole (most of it
+  matches once moved) is graded by "Wrong location counts as an error"
+  (Settings, under the scale setting). **Once** (default) grades it after moving
+  it back, with one error for the location; the detail view then draws the whole
+  drawing yellow. **Never** moves it back without that
+  error. **Every time** grades every item where it was drawn, with a warning
+  that gives the offset. Only translation counts as location: a rotated drawing
+  is still wrong in Absolute mode.
 - File → Save/Load settings as JSON keeps a set of settings per assignment.
   Pre-dumped `.json` files can stand in for `.dwg` files anywhere.
 

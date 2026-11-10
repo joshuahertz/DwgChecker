@@ -120,7 +120,7 @@ void TestDwgRead::batchEndToEnd() {
     f.close();
 
     BatchInput in;
-    in.refPath = corpus("ref");
+    in.refPaths = {corpus("ref")};
     in.studentPaths = {corpus("ref_rotated37"), corpus("ref_missing"), corpus("ref_bytecopy"), broken};
     in.settings.loader = loaderSettings();
     in.settings.compare.mode = Mode::Relative;
@@ -136,7 +136,7 @@ void TestDwgRead::batchEndToEnd() {
     const CopyFlag flag = copyFlagFor(out, 2);                     // byte copy of the reference
     QCOMPARE(flag.level, Strength::Strong);
     QVERIFY(out.parser.startsWith(QStringLiteral("dwgread ")));
-    QVERIFY(resultsCsv(out, in.refPath).contains(out.parser));     // parser version in every CSV export
+    QVERIFY(resultsCsv(out).contains(out.parser));     // parser version in every CSV export
 }
 
 QTEST_GUILESS_MAIN(TestDwgRead)

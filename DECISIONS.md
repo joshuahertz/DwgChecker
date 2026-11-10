@@ -100,6 +100,7 @@ already in WCS.
 are on frozen/off layers (included)"). The spec does not say to drop them, and
 dropping silently could hide work. A setting skips them. Layer flags:
 `flag0 & 1` frozen, `& 2` off (verified with dedicated layers in kitchen.dwg).
+This rule now covers student drawings only; D51 drops them from the solution.
 
 **D16. Spline-fit POLYLINE_2D/3D, SPLINE, ELLIPSE, XLINE/RAY, REGION and solids
 are Unsupported.** SOLID, POINT, VIEWPORT, LEADER/MLEADER and TOLERANCE are
@@ -279,10 +280,11 @@ the origin. So:
 - Medium: at least 80% match and at least 5, with round coordinates.
 - Info: 3 or more.
 
-In Absolute mode, where placement is specified, at most Medium, and only with
-non-round coordinates. Orthographic mode compares per view and reports
-"k of n views bit-identical". `ref_copypaste` vs `ref` is therefore Medium
-(round coordinates); a synthetic copy at 13.48291034 is Strong.
+In Absolute mode the signal is not used at all (user decision, 2026-11-06): the
+placement is given, so every correct drawing has the reference's coordinates and
+so does every other correct submission. Orthographic mode compares per view and
+reports "k of n views bit-identical". In Relative mode `ref_copypaste` vs `ref`
+is Medium (round coordinates); a synthetic copy at 13.48291034 is Strong.
 
 **D29. Weights**:
 
@@ -380,6 +382,192 @@ Settings shows the basic choices, and everything else is under a collapsed
 the main window. The angle tolerance is shown in degrees. "Edit views…" appears
 only in Orthographic mode, and rotation and mirroring can only be set in
 Relative mode, the only mode that uses them.
+
+**D45. More main-window changes (user decisions, 2026-11-06).** Columns run Copy
+flag, Student, Correctness, Errors, AutoCAD. The copy flag is a warning icon,
+red for strong evidence and amber for weaker, and its tooltip carries the text and
+every signal. Each finished batch is sorted A to Z by student. Rows alternate
+subtly: the base color is moved 4.5% toward the text color, which works in light
+and dark themes. The log is a separate window (Help > Show log, Ctrl+L); the
+status line points to it when files could not be read. The app icon is drawn by
+`packaging/icon/make_icon.ps1` and packed into `src/gui/resources/app.ico` by
+`make_ico.py`. The Windows .exe and the window icon use it; a macOS `.icns` is
+not made yet.
+
+**D46. Reference and submissions as cards, settings per quiz (user decision,
+2026-11-06).** The two full-path text boxes are now cards. Each shows the name in
+bold and a gray detail line, with the full path as its tooltip. The reference
+card's line comes from reading the drawing in the background ("inches · 4
+objects · 5 dimensions", or the reason it could not be read). The submissions
+card counts the drawings at once, not after Run. **Change…** browses; its arrow
+lists the 8 most recent entries, and files or folders can be dropped on a card.
+Run is a large button, and Cancel shows only while a batch runs. Settings are
+remembered per reference in the app's own settings (keyed by the reference's
+full path, not as files next to it). Every settings change and every run stores
+them, and choosing that reference again loads them. A reference without saved
+settings keeps the current ones and says "new quiz: check the settings".
+
+**D47. A guided three-step start (user decision, 2026-11-09).** The app opens with
+no reference and no folder chosen; only the recent lists are remembered. The
+cards are step 1 and step 2, each with a number badge that turns into a check when
+done, and the next step is outlined in the highlight color. A click anywhere on a
+card opens its dialog; a small "Recent" button (shown when there are entries)
+lists recent choices. Run is step 3: its badge turns blue and it is enabled only
+when the reference was chosen (and could be read) and the folder holds at least
+one drawing. Its tooltip names what is missing. Until the first run, the Results
+area shows the three steps with the next one in bold. The cards are locked while
+a batch runs.
+
+**D48. Several solution drawings per assignment (user decision, 2026-11-09).** The
+first card takes one or more solution drawings. Student files are grouped by
+student (name and Canvas user id from the file name, else the file name), and
+every file is compared with every solution drawing. Each student's files are then
+matched to the drawings: score, plus 5 points when the file name matches the
+solution's, each drawing and each file used once. (First greedily, best score
+first, with a 10%-of-best rule; D53 replaced that with one assignment for the best
+total.) A drawing without a file counts 0%; a file left over is an extra, shown
+but not graded. The student's score is the mean over the solution drawings. With
+one solution drawing the same rule picks a student's best file and lists the
+rest as extras.
+
+Copy detection gives each file its part and its student. A student's own files
+are never compared with each other. Geometry is compared only within one part
+(templates with every part), while metadata (fingerprints, saved-by, …) is
+compared across parts too. Class-wide frequencies count students, not files.
+
+The results are a tree, one row per student. A student with one file keeps a
+single row. Otherwise there is a subrow per solution drawing (the matched file,
+or "no file submitted") and one per extra file, and clicking the student row
+folds them. The CSV keeps one row per file for a single solution drawing. With
+several, it has a row per student and drawing, a row for each extra file, and an
+"(all drawings)" row with the mean. Views (Orthographic) are per solution
+drawing; "Edit views…" asks which one. Settings are remembered per set of
+solution drawings. `tst_batch` covers grouping, matching, extras, missing
+drawings, copy detection per part and the CSV.
+
+**D49. Feedback round (user decisions, 2026-11-09).**
+- The copy-flag column is "Poss. dup." (possible duplicate).
+- "Edit views…" is in Settings under Mode, enabled only in Orthographic mode.
+- Overlay colors: matched green, missing red, present but wrong (shifted, wrong
+  size, …) yellow, extra purple. A shifted item thus shows red where it belongs
+  and yellow where it was drawn.
+- In Orthographic mode each view's box and title take its status color: not
+  found or something missing red, something wrong (or a failed alignment check)
+  yellow, only extras purple, else green.
+- Drop-downs and number boxes in Settings ignore the mouse wheel until clicked
+  into, so scrolling the panel never changes a value.
+- "Wrong scale counts as an error" is Never / Once / Every time. These map to
+  detection with penalty 0, detection with penalty 1, and no detection. The
+  old free penalty count (D39) is no longer offered in the GUI.
+
+**D50. Per-drawing mode and checks (user decision, 2026-11-09).** With several
+solution drawings, each has its own mode, "check dimensions" and "check hatches"
+(`AppSettings::perDrawing`, keyed by file name in lower case, saved with the quiz).
+A drawing without dimensions would otherwise count every student dimension as an
+extra. Every other setting is shared. A drawing seen for the first time starts
+from the current choices. In Settings the "Solution drawings" table replaces the
+single Mode and the two main checks; the precision and pattern sub-options apply
+wherever those checks are on. Views are resolved only for the Orthographic
+drawings, and copy detection uses each part's own mode. Also in this round:
+- The Views tab follows Discrepancies, and only for a drawing graded in
+  Orthographic mode.
+- The Settings area takes the panel's height every time it changes (Advanced or
+  the drawings table shown or hidden), so collapsing leaves no blank space.
+- "Centerlines must have the same length as in the reference" (strict
+  centerlines; off, a centerline only has to lie on the reference centerline and
+  overlap it).
+
+**D51. Turned-off and frozen layers in the solution are ignored by default (user
+decision, 2026-11-09).** Two Q10 solution drawings kept a 0.5 sketching grid (49
+and 45 lines) on a turned-off layer, and every student was marked as missing it.
+What the instructor turned off is not part of the answer. The setting
+`CanonSettings::ignoreHiddenLayersInReference` (default on, Advanced > Reading
+drawings, "Ignore objects on turned-off or frozen layers in the solution")
+loads every solution drawing with `AppSettings::referenceCanon()`, which skips
+those layers. That covers grading, the solution card and the view editor. The
+solution card and the log say what was left out, e.g. "49 objects on
+turned-off or frozen layers (Layer2) were ignored". Student drawings keep D15:
+a layer a student turned off still counts, with a warning, because turning a
+layer off changes only the display. Saved quiz settings without the key get
+the new default, so no format version bump was needed.
+
+**D52. Files find their drawing wherever they were drawn (2026-11-09).** Q10
+Problem 1 is graded in Absolute mode on purpose. Two students drew that wrench
+perfectly but displaced, so it scored 0% and 2.4% there. One file was then left
+over as an extra, because its 5.6% coincidental fit to Problem 2 made 0% look
+like "not this drawing" (D48's 10%-of-best rule). The other was rightly graded
+in place, but nothing said why it failed. Matching a file to a drawing is a question about
+shape, not placement. In Absolute mode, `compareDrawings` therefore also
+compares the drawing in Relative mode when not everything matched. If moving
+the whole drawing back matches most of the reference, the result keeps that
+correctness as `placementFreeCorrectness` and gets one warning, e.g. "the whole
+drawing is shifted by (12.0, 9.5) from the reference; moved back, 42 of 42
+reference items would match". "Most" uses the same bar as the wrong-scale check
+(D39): at least half and at least 3 items, and more than 2 beyond the in-place
+match. `assignFiles` weighs each file and drawing by `fit()`, the larger of the
+two (D53). The grade was unchanged here, still where the drawing was drawn; D54
+then made the location error a setting, with that behavior as "Every time". A lower bar was tried and rejected: after free placement a few
+items always line up by chance, which in the test fixtures gave a second copy of
+part A a 12.5% "fit" to part B.
+
+**D53. Files are matched to drawings one to one for the best total (user
+decision, 2026-11-09).** The instructor's rule: a student's files and the
+solution drawings are matched one to one, choosing the assignment with the best
+total fit over all of them, not each drawing's best file regardless of the
+others. `assignOneToOne` (the Hungarian method on fit plus the name bonus)
+replaces the greedy pass and its 10%-of-best rule. As many files as possible get
+a drawing: with as many files as drawings every file is graded, so the last file
+takes the last drawing however poorly it fits (in the Q10 case the displaced
+wrench takes Problem 1 by elimination even without D52). Only with more files
+than drawings are some left over as extras, those the total misses least; with
+fewer files, the drawings left free count 0%. A consequence the old rule
+avoided: a student who submits part A twice and no part B has the second copy
+graded as part B, where it scores next to nothing.
+
+**D54. Wrong location counts as an error: Never / Once / Every time (user
+decision, 2026-11-09).** This is the Absolute-mode counterpart of "Wrong scale
+counts as an error" (D39, D49), so a constant displacement can count as one
+error. When the whole drawing is right but displaced, it is graded after moving
+it back. "Displaced" uses D52's bar: by translation only, most of the reference
+matches. **Once** (the default) adds one "wrong location" error ("the whole
+drawing is shifted by (12.0, 9.5) from the reference; after moving it back, 42 of
+42 reference items match, and the errors below are measured there"), which
+counts in the correctness and fails the drawing. **Never** moves it back with
+only a warning, so it can pass. **Every time** grades it where it was drawn,
+with D52's warning. `CompareSettings::detectLocation` and
+`locationPenaltyErrors` mirror `detectScale` and `scalePenaltyErrors`. The
+drop-down sits under the scale one and is enabled only when a drawing is graded
+in Absolute mode. Location means translation: rotation and mirroring stay
+errors in Absolute mode, so the check never rotates (it also feeds D52's fit,
+which therefore ignores rotation too). A result graded after moving keeps
+`moved` and the offset in dx/dy, shown in the detail window's header. With
+**Once**, the detail window draws everything the student drew in yellow
+("present but wrong"), even what matches after moving it back, so the overlay
+shows that the whole drawing is misplaced while the text lists one error
+(`CompareResult::wrongLocation()`). With **Never** matched items stay green. Copy
+detection still sees the file as submitted (`absoluteMatched`). The default
+changes Absolute-mode grades for displaced drawings: before, every item counted
+as shifted.
+
+**D55. Shared settings say which drawings they apply to (user decision,
+2026-11-09).** With several solution drawings, most settings apply to every
+drawing, but some only to drawings with a given mode or check:
+- rotation and mirroring: Relative mode;
+- wrong location: Absolute mode;
+- the Orthographic views group (positions per view, gap between views,
+  alignment tolerance, the two view checks): Orthographic mode;
+- dimension precision and hatch pattern: drawings with dimensions or hatches
+  checked.
+
+When only some drawings qualify, a grey note under the setting names them, e.g.
+"Only for Q10Problem 1_1-6 (Absolute mode)". When none qualify, the setting is
+disabled with "Not used: no drawing is graded in Absolute mode". When all qualify, there
+is no note. `SettingsPanel::updateScopes` does this on every change to a mode or
+check. With one drawing the notes stay hidden and the single Mode and checks
+enable these settings; the Orthographic group, always enabled before, is now
+disabled outside Orthographic mode. The other settings apply to all drawings:
+tolerances, extras, linetypes, layers, wrong scale, near-miss distance,
+centerlines, reading and copy-detection options.
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,

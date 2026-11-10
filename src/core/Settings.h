@@ -6,6 +6,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <map>
+
 namespace dc {
 
 enum class Mode { Absolute, Relative, Orthographic };
@@ -20,7 +22,10 @@ struct CanonSettings {
     bool usePaperSpace = false;     // rule 1: model space only by default
     bool skipDefpoints = true;      // rule 1
     QString layerIgnoreRegex;       // rule 9 (empty = none), e.g. "^(CONST|CONSTRUCTION)"
-    bool skipHiddenLayers = false;  // drop entities on frozen/off layers (default: keep, with a warning)
+    bool skipHiddenLayers = false;  // student drawings: drop entities on frozen/off layers (default: keep, with a warning)
+    // The solution drawing(s): drop entities on frozen/off layers. What the instructor turned
+    // off (a sketching grid, a dimension layer) is not part of the answer.
+    bool ignoreHiddenLayersInReference = true;
     // rule 10: linetype name patterns (wildcards, case-insensitive)
     QStringList hiddenPatterns{QStringLiteral("HIDDEN*"), QStringLiteral("DASHED*")};
     QStringList centerPatterns{QStringLiteral("CENTER*")};
@@ -48,6 +53,10 @@ struct CompareSettings {
     double nearMissRadius = 0;      // 0 = auto: 10% of the reference diagonal
     bool detectScale = true;        // when little matches, try uniform scale factors (mm vs inches...)
     int scalePenaltyErrors = 1;     // a wrongly scaled drawing counts as this many errors
+    // Absolute mode: a drawing that is right but displaced as a whole is graded after moving
+    // it back (off: every item is graded where it was drawn), as this many errors.
+    bool detectLocation = true;
+    int locationPenaltyErrors = 1;
     // Orthographic
     int orthoTopK = 5;
     double orthoGapFraction = 0.02; // segmentation gap, fraction of drawing diagonal
@@ -68,9 +77,19 @@ struct LoaderSettings {
     QString odaConverterPath;             // optional fallback (ODA File Converter)
 };
 
+// An assignment with several solution drawings: what may differ per drawing.
+struct DrawingSettings {
+    Mode mode = Mode::Relative;
+    bool checkDimensions = false;
+    bool checkHatches = false;
+};
+
 struct AppSettings {
     CanonSettings canon;
     CompareSettings compare;
+    // Several solution drawings: per drawing, by file name in lower case ("part a.dwg").
+    // Used only when an assignment has more than one solution drawing.
+    std::map<QString, DrawingSettings> perDrawing;
     DuplicateSettings duplicates;
     LoaderSettings loader;
     QString identityRegex = defaultIdentityRegex();
@@ -82,6 +101,12 @@ struct AppSettings {
     static QString defaultIdentityRegex();
     // Copies the shared tolerances into canon (call before canonicalizing).
     CanonSettings effectiveCanon() const;
+    // effectiveCanon() for a solution drawing: frozen/off layers dropped when
+    // ignoreHiddenLayersInReference is on.
+    CanonSettings referenceCanon() const;
+    static QString drawingKey(const QString& refPath);  // the perDrawing key of a solution drawing
+    // `compare` with the drawing's mode and checks applied (when listed in perDrawing).
+    CompareSettings compareFor(const QString& refPath) const;
 
     QJsonObject toJson() const;
     static AppSettings fromJson(const QJsonObject& o);

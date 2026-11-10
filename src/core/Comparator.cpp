@@ -33,6 +33,10 @@ std::vector<int> comparableIndices(const Drawing& d, const CompareSettings& s) {
     return out;
 }
 
+bool CompareResult::wrongLocation() const {
+    return moved && std::any_of(errors.begin(), errors.end(), [](const ErrorItem& e) { return e.cat == ErrCat::Location; });
+}
+
 QStringList CompareResult::errorStrings() const {
     QStringList l;
     for (const auto& e : errors) l << e.text;
@@ -622,7 +626,8 @@ std::vector<double> scaleCandidates(const Drawing& ref, const Drawing& stu) {
     return c;
 }
 
-CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
+static CompareResult compareAtBestScale(const Drawing& ref, const Drawing& stu, const CompareSettings& s,
+                                        const ViewSet* views) {
     CompareResult base = compareCore(ref, stu, s, views);
     if (!s.detectScale || base.refCount == 0 || base.matched >= 0.5 * base.refCount) return base;
     int geoRef = 0, geoStu = 0;
@@ -672,6 +677,59 @@ CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const Comp
     r.correctness = denom > 0 ? 100.0 * r.matched / denom : 0.0;
     r.pass = false;
     return r;
+}
+
+CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
+    CompareResult r = compareAtBestScale(ref, stu, s, views);
+    if (s.mode != Mode::Absolute || r.refCount == 0 || r.matched >= r.refCount) return r;
+    // Absolute mode: is the whole drawing right but displaced? Compare once more wherever it
+    // is, by translation only (location is where the drawing sits, not how it is turned). This
+    // also tells Batch which solution drawing a file is, wherever it was drawn.
+    CompareSettings rs = s;
+    rs.mode = Mode::Relative;
+    rs.allowRotation = false;
+    rs.allowMirror = false;
+    CompareResult rel = compareAtBestScale(ref, stu, rs, nullptr);
+    // Only a clear fit counts, by the bar the wrong-scale check uses: most of the reference
+    // matches once moved. A few items always match somewhere by chance.
+    const int needed = std::max(3, static_cast<int>(std::ceil(0.5 * r.refCount)));
+    if (!rel.aligned || rel.T.isIdentity() || rel.matched < needed || rel.matched <= r.matched + 2) return r;
+    const Vec2 c = ref.bbox().center();
+    const QString where = QStringLiteral("the whole drawing is shifted by %1 from the reference")
+                              .arg(fmtPt(rel.T.inverse().apply(c) - c));  // where the reference's middle was drawn
+    auto afterScale = [](std::vector<ErrorItem>& errs) {  // the scale error, when there is one, explains more
+        auto at = errs.begin();
+        if (at != errs.end() && at->cat == ErrCat::Scale) ++at;
+        return at;
+    };
+    if (!s.detectLocation) {  // wrong location counts every time: graded where it was drawn
+        r.placementFreeCorrectness = rel.correctness;
+        const QString text = QStringLiteral("warning: %1; moved back, %2 of %3 reference items would match (wrong "
+                                            "location counts every time, so each item is graded where it was drawn)")
+                                 .arg(where).arg(rel.matched).arg(rel.refCount);
+        r.errors.insert(afterScale(r.errors), ErrorItem{ErrCat::Warning, text, -1, {}, {}, false, QString()});
+        return r;
+    }
+    const int penalty = std::max(0, s.locationPenaltyErrors);
+    rel.mode = Mode::Absolute;
+    rel.moved = true;
+    rel.absoluteMatched = r.absoluteMatched;
+    rel.placementFreeCorrectness = rel.correctness;  // before the location error: how well the file fits
+    if (penalty > 0) {
+        const QString text = QStringLiteral("%1; after moving it back, %2 of %3 reference items match, and the errors "
+                                            "below are measured there")
+                                 .arg(where).arg(rel.matched).arg(rel.refCount);
+        rel.errors.insert(afterScale(rel.errors), ErrorItem{ErrCat::Location, text, -1, {}, {}, true,
+                                                            QStringLiteral("wrong location")});
+        rel.pass = false;
+    } else {
+        const QString text = QStringLiteral("warning: %1; graded after moving it back (wrong location is not counted as "
+                                            "an error)").arg(where);
+        rel.errors.insert(afterScale(rel.errors), ErrorItem{ErrCat::Warning, text, -1, {}, {}, false, QString()});
+    }
+    const int denom = rel.refCount + rel.penalizedExtras + (rel.scaled ? std::max(0, s.scalePenaltyErrors) : 0) + penalty;
+    rel.correctness = denom > 0 ? 100.0 * rel.matched / denom : 0.0;
+    return rel;
 }
 
 }  // namespace dc

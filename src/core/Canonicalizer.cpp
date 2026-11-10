@@ -5,6 +5,7 @@
 
 #include <QFileInfo>
 #include <QMap>
+#include <QSet>
 
 #include <algorithm>
 #include <numeric>
@@ -90,6 +91,7 @@ public:
     // Counters turned into warnings by finish().
     QMap<QString, int> unsupported;
     int nonUniform = 0, tilted = 0, zCount = 0, hiddenLayerCount = 0, xrefs = 0, tooDeep = 0, minsertNoCounts = 0;
+    QSet<QString> hiddenLayers;
     double zMax = 0;
 
     void finish() {
@@ -103,11 +105,17 @@ public:
         if (tilted)
             D.addWarning(WarnKind::NonZeroZ,
                          QStringLiteral("%1 arcs/circles are not parallel to the XY plane and were marked unsupported").arg(tilted));
-        if (hiddenLayerCount)
+        if (hiddenLayerCount) {
+            QStringList names(hiddenLayers.begin(), hiddenLayers.end());
+            names.sort(Qt::CaseInsensitive);
+            const QString which = names.size() > 4 ? names.mid(0, 4).join(QStringLiteral(", ")) + QStringLiteral(", …")
+                                                   : names.join(QStringLiteral(", "));
             D.addWarning(WarnKind::HiddenLayer,
                          S.skipHiddenLayers
-                             ? QStringLiteral("%1 entities on frozen/off layers were skipped").arg(hiddenLayerCount)
-                             : QStringLiteral("%1 entities are on frozen/off layers (included)").arg(hiddenLayerCount));
+                             ? QStringLiteral("%1 objects on turned-off or frozen layers (%2) were ignored").arg(hiddenLayerCount).arg(which)
+                             : QStringLiteral("%1 objects are on turned-off or frozen layers (%2) and were included")
+                                   .arg(hiddenLayerCount).arg(which));
+        }
         if (xrefs) D.addWarning(WarnKind::Xref, QStringLiteral("%1 external references were not loaded").arg(xrefs));
         if (tooDeep) D.addWarning(WarnKind::Other, QStringLiteral("%1 block references nested too deeply (recursive block?)").arg(tooDeep));
         if (minsertNoCounts)
@@ -297,6 +305,7 @@ private:
         if (layerSkipped(layer)) return;
         if (layerHidden(layer)) {
             ++hiddenLayerCount;
+            hiddenLayers.insert(layer);
             if (S.skipHiddenLayers) return;
         }
         const QString ltype = effLtype(o, layer, c);

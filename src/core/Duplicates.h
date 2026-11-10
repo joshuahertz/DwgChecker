@@ -35,6 +35,11 @@ struct DupEntry {
     double correctness = -1;  // students only
     // Orthographic mode: per student primitive, the reference view it was assigned to.
     std::vector<int> primView;
+    // Several solution drawings: the one this file belongs to (-1 = none / any). Geometry
+    // is compared only within a group; file metadata across groups too.
+    int group = 0;
+    // The student a file belongs to; one student's own files are never compared with each other.
+    QString owner;
 };
 
 struct PairResult {
@@ -61,7 +66,10 @@ struct BitExactStats {
 BitExactStats bitExact(const Drawing& a, const Drawing& b, const std::vector<int>* onlyA = nullptr,
                        const std::vector<int>* onlyB = nullptr);
 
+// `views`: the reference views (Orthographic); `viewsByGroup` / `modeByGroup`, when given,
+// per group (solution drawing) instead.
 DupReport detectDuplicates(const std::vector<DupEntry>& entries, const DuplicateSettings& s, Mode mode,
-                           const ViewSet* views);
+                           const ViewSet* views, const std::vector<const ViewSet*>& viewsByGroup = {},
+                           const std::vector<Mode>& modeByGroup = {});
 
 }  // namespace dc

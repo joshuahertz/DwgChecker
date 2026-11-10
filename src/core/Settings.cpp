@@ -1,5 +1,7 @@
 #include "Settings.h"
 
+#include <QFileInfo>
+
 #include <QJsonArray>
 
 #include <algorithm>
@@ -63,6 +65,7 @@ QJsonObject AppSettings::toJson() const {
     QJsonObject c{
         {"usePaperSpace", canon.usePaperSpace}, {"skipDefpoints", canon.skipDefpoints},
         {"layerIgnoreRegex", canon.layerIgnoreRegex}, {"skipHiddenLayers", canon.skipHiddenLayers},
+        {"ignoreHiddenLayersInReference", canon.ignoreHiddenLayersInReference},
         {"hiddenPatterns", toArr(canon.hiddenPatterns)}, {"centerPatterns", toArr(canon.centerPatterns)},
         {"phantomPatterns", toArr(canon.phantomPatterns)}, {"visiblePatterns", toArr(canon.visiblePatterns)}};
     QJsonObject m{
@@ -75,6 +78,7 @@ QJsonObject AppSettings::toJson() const {
         {"strictCenterlines", compare.strictCenterlines},
         {"checkHatches", compare.checkHatches}, {"checkHatchPattern", compare.checkHatchPattern},
         {"detectScale", compare.detectScale}, {"scalePenaltyErrors", compare.scalePenaltyErrors},
+        {"detectLocation", compare.detectLocation}, {"locationPenaltyErrors", compare.locationPenaltyErrors},
         {"nearMissRadius", compare.nearMissRadius}, {"orthoTopK", compare.orthoTopK},
         {"orthoGapFraction", compare.orthoGapFraction}, {"alignTol", compare.alignTol},
         {"alignmentSeverity", severityName(compare.alignmentSeverity)},
@@ -86,8 +90,31 @@ QJsonObject AppSettings::toJson() const {
     QJsonObject l{
         {"timeoutSec", loader.timeoutSec},
         {"odaConverterPath", loader.odaConverterPath}};
-    return QJsonObject{{"version", kFormatVersion}, {"canon", c}, {"compare", m}, {"duplicates", d}, {"loader", l},
-                       {"identityRegex", identityRegex}};
+    QJsonObject pd;
+    for (const auto& [name, ds] : perDrawing)
+        pd.insert(name, QJsonObject{{"mode", modeName(ds.mode)}, {"checkDimensions", ds.checkDimensions},
+                                    {"checkHatches", ds.checkHatches}});
+    return QJsonObject{{"version", kFormatVersion}, {"canon", c}, {"compare", m}, {"perDrawing", pd}, {"duplicates", d},
+                       {"loader", l}, {"identityRegex", identityRegex}};
+}
+
+CanonSettings AppSettings::referenceCanon() const {
+    CanonSettings c = effectiveCanon();
+    if (c.ignoreHiddenLayersInReference) c.skipHiddenLayers = true;
+    return c;
+}
+
+QString AppSettings::drawingKey(const QString& refPath) { return QFileInfo(refPath).fileName().toLower(); }
+
+CompareSettings AppSettings::compareFor(const QString& refPath) const {
+    CompareSettings c = compare;
+    const auto it = perDrawing.find(drawingKey(refPath));
+    if (it != perDrawing.end()) {
+        c.mode = it->second.mode;
+        c.checkDimensions = it->second.checkDimensions;
+        c.checkHatches = it->second.checkHatches;
+    }
+    return c;
 }
 
 AppSettings AppSettings::fromJson(const QJsonObject& o) {
@@ -97,6 +124,7 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
     s.canon.skipDefpoints = c.value("skipDefpoints").toBool(s.canon.skipDefpoints);
     s.canon.layerIgnoreRegex = c.value("layerIgnoreRegex").toString(s.canon.layerIgnoreRegex);
     s.canon.skipHiddenLayers = c.value("skipHiddenLayers").toBool(s.canon.skipHiddenLayers);
+    s.canon.ignoreHiddenLayersInReference = c.value("ignoreHiddenLayersInReference").toBool(s.canon.ignoreHiddenLayersInReference);
     s.canon.hiddenPatterns = fromArr(c.value("hiddenPatterns"), s.canon.hiddenPatterns);
     s.canon.centerPatterns = fromArr(c.value("centerPatterns"), s.canon.centerPatterns);
     s.canon.phantomPatterns = fromArr(c.value("phantomPatterns"), s.canon.phantomPatterns);
@@ -118,12 +146,25 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
     s.compare.checkHatchPattern = m.value("checkHatchPattern").toBool(s.compare.checkHatchPattern);
     s.compare.detectScale = m.value("detectScale").toBool(s.compare.detectScale);
     s.compare.scalePenaltyErrors = std::max(0, m.value("scalePenaltyErrors").toInt(s.compare.scalePenaltyErrors));
+    s.compare.detectLocation = m.value("detectLocation").toBool(s.compare.detectLocation);
+    s.compare.locationPenaltyErrors = std::max(0, m.value("locationPenaltyErrors").toInt(s.compare.locationPenaltyErrors));
     s.compare.nearMissRadius = m.value("nearMissRadius").toDouble(s.compare.nearMissRadius);
     s.compare.orthoTopK = m.value("orthoTopK").toInt(s.compare.orthoTopK);
     s.compare.orthoGapFraction = m.value("orthoGapFraction").toDouble(s.compare.orthoGapFraction);
     s.compare.alignTol = m.value("alignTol").toDouble(s.compare.alignTol);
     s.compare.alignmentSeverity = parseSeverity(m.value("alignmentSeverity").toString(), s.compare.alignmentSeverity);
     s.compare.arrangementSeverity = parseSeverity(m.value("arrangementSeverity").toString(), s.compare.arrangementSeverity);
+
+    const QJsonObject pd = o.value("perDrawing").toObject();
+    for (auto it = pd.begin(); it != pd.end(); ++it) {
+        const QJsonObject e = it.value().toObject();
+        DrawingSettings ds;
+        ds.mode = s.compare.mode;
+        parseMode(e.value("mode").toString(), &ds.mode);
+        ds.checkDimensions = e.value("checkDimensions").toBool(s.compare.checkDimensions);
+        ds.checkHatches = e.value("checkHatches").toBool(s.compare.checkHatches);
+        s.perDrawing[it.key().toLower()] = ds;
+    }
 
     const QJsonObject d = o.value("duplicates").toObject();
     s.duplicates.templateFiles = fromArr(d.value("templateFiles"), s.duplicates.templateFiles);

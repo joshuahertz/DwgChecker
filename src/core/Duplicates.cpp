@@ -117,16 +117,19 @@ BitExactStats bitExact(const Drawing& a, const Drawing& b, const std::vector<int
     return st;
 }
 
-DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettings& s, Mode mode, const ViewSet* views) {
+DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettings& s, Mode mode, const ViewSet* views,
+                           const std::vector<const ViewSet*>& viewsByGroup, const std::vector<Mode>& modeByGroup) {
     DupReport rep;
     const int n = static_cast<int>(E.size());
     rep.fileNotes.resize(n);
 
-    // Class-wide frequencies, to recognize template / shared-account values.
-    int students = 0;
-    QHash<QString, int> fpCount, timeCount, savedByCount, authorCount, origCount;
-    QSet<QString> templateFp, templateTimes;
-    for (const auto& e : E) {
+    // Class-wide frequencies, to recognize template / shared-account values. Counted in
+    // students, not files: one student's several files share a lot with each other.
+    using Owners = QHash<QString, QSet<QString>>;
+    Owners fpCount, timeCount, savedByCount, authorCount, origCount;
+    QSet<QString> owners, templateFp, templateTimes;
+    for (int i = 0; i < n; ++i) {
+        const DupEntry& e = E[i];
         if (!e.drawing) continue;
         const DrawingMeta& m = e.drawing->meta;
         if (e.role == EntryRole::Template) {
@@ -135,24 +138,26 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
             continue;
         }
         if (e.role != EntryRole::Student) continue;
-        ++students;
-        if (!m.fingerprintGuid.isEmpty()) fpCount[m.fingerprintGuid]++;
-        if (!timeKey(m).isEmpty()) timeCount[timeKey(m)]++;
-        if (!m.lastSavedBy.isEmpty()) savedByCount[m.lastSavedBy.toLower()]++;
-        if (!m.author.isEmpty()) authorCount[m.author.toLower()]++;
-        if (!e.identity.orig.isEmpty()) origCount[e.identity.orig.toLower()]++;
+        const QString who = e.owner.isEmpty() ? QStringLiteral("#%1").arg(i) : e.owner;
+        owners.insert(who);
+        if (!m.fingerprintGuid.isEmpty()) fpCount[m.fingerprintGuid].insert(who);
+        if (!timeKey(m).isEmpty()) timeCount[timeKey(m)].insert(who);
+        if (!m.lastSavedBy.isEmpty()) savedByCount[m.lastSavedBy.toLower()].insert(who);
+        if (!m.author.isEmpty()) authorCount[m.author.toLower()].insert(who);
+        if (!e.identity.orig.isEmpty()) origCount[e.identity.orig.toLower()].insert(who);
     }
+    const int students = static_cast<int>(owners.size());
     const double limit = std::max(2.0, s.templateShareFraction * students);
-    auto common = [&](const QHash<QString, int>& h, const QString& key) { return h.value(key) > limit; };
+    auto common = [&](const Owners& h, const QString& key) { return h.value(key).size() > limit; };
     for (auto it = fpCount.begin(); it != fpCount.end(); ++it)
-        if (it.value() > limit && !templateFp.contains(it.key()))
+        if (it.value().size() > limit && !templateFp.contains(it.key()))
             rep.notes << QStringLiteral("Probable template: FINGERPRINTGUID %1 is shared by %2 of %3 students; "
                                         "pairs sharing only this fingerprint are not flagged")
-                             .arg(it.key()).arg(it.value()).arg(students);
+                             .arg(it.key()).arg(it.value().size()).arg(students);
     for (auto it = savedByCount.begin(); it != savedByCount.end(); ++it)
-        if (it.value() > limit)
+        if (it.value().size() > limit)
             rep.notes << QStringLiteral("LastSavedBy \"%1\" is shared by %2 of %3 students (shared lab account?); not flagged")
-                             .arg(it.key()).arg(it.value()).arg(students);
+                             .arg(it.key()).arg(it.value().size()).arg(students);
 
     // Reference layer names: layers beyond these are "non-required".
     QSet<QString> refLayers{QStringLiteral("0"), QStringLiteral("DEFPOINTS")};
@@ -166,6 +171,14 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
             const DupEntry& B = E[b];
             if (!A.drawing || !B.drawing) continue;
             if (A.role != EntryRole::Student && B.role != EntryRole::Student) continue;
+            // One student's own files (several parts of one assignment) are not compared.
+            if (A.role == EntryRole::Student && B.role == EntryRole::Student && !A.owner.isEmpty() && A.owner == B.owner) continue;
+            // Geometry only within one part of the assignment (templates go with every part).
+            const bool samePart = A.group == B.group || A.role == EntryRole::Template || B.role == EntryRole::Template;
+            const int part = A.role == EntryRole::Template ? B.group : A.group;
+            const ViewSet* partViews =
+                part >= 0 && part < static_cast<int>(viewsByGroup.size()) && viewsByGroup[part] ? viewsByGroup[part] : views;
+            const Mode partMode = part >= 0 && part < static_cast<int>(modeByGroup.size()) ? modeByGroup[part] : mode;
             const DrawingMeta& ma = A.drawing->meta;
             const DrawingMeta& mb = B.drawing->meta;
             const bool withRef = A.role == EntryRole::Reference || B.role == EntryRole::Reference;
@@ -231,11 +244,14 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
                 otherName(A, B);
                 otherName(B, A);
             }
-            // 6. Bit-exact absolute geometry.
-            if (mode == Mode::Orthographic && views && !views->views.empty() && bothStudents && !A.primView.empty() &&
-                !B.primView.empty()) {
+            // 6. Bit-exact absolute geometry. Never in Absolute mode: the placement is given there,
+            //    so every correct drawing has the reference's exact coordinates (user decision).
+            if (partMode == Mode::Absolute || !samePart) {
+                // no signal
+            } else if (partMode == Mode::Orthographic && partViews && !partViews->views.empty() && bothStudents && !A.primView.empty() &&
+                       !B.primView.empty()) {
                 int identical = 0, compared = 0, nontrivial = 0;
-                for (int v = 0; v < static_cast<int>(views->views.size()); ++v) {
+                for (int v = 0; v < static_cast<int>(partViews->views.size()); ++v) {
                     std::vector<int> ia, ib;
                     for (int i = 0; i < static_cast<int>(A.primView.size()); ++i) if (A.primView[i] == v) ia.push_back(i);
                     for (int i = 0; i < static_cast<int>(B.primView.size()); ++i) if (B.primView[i] == v) ib.push_back(i);
@@ -260,13 +276,11 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
                     Strength str = Strength::Info;
                     if (frac >= 0.5 && st.nontrivial >= 3) str = Strength::Strong;
                     else if (frac >= 0.8 && st.exact >= 5) str = Strength::Medium;
-                    if (mode == Mode::Absolute) str = st.nontrivial >= 3 && frac >= 0.5 ? Strength::Medium : Strength::Info;
                     const double w = str == Strength::Strong ? 60 : str == Strength::Medium ? 35 : 5;
                     add("bitexact", QStringLiteral("%1 of %2 primitives bit-identical").arg(st.exact).arg(st.smaller),
                         QStringLiteral("%1 of %2 primitives match at full double precision without moving the drawing (%3 with "
-                                       "non-round coordinates)%4")
-                            .arg(st.exact).arg(st.smaller).arg(st.nontrivial)
-                            .arg(mode == Mode::Absolute ? QStringLiteral("; weak evidence when placement is specified") : QString()),
+                                       "non-round coordinates)")
+                            .arg(st.exact).arg(st.smaller).arg(st.nontrivial),
                         str, w);
                 }
             }

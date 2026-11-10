@@ -240,7 +240,11 @@ void TestMisc::settingsRoundTrip() {
     s.canon.hiddenPatterns = {"HID*"};
     s.duplicates.templateFiles = {"a.dwg"};
     s.loader.timeoutSec = 12;
+    s.compare.detectLocation = false;  // wrong location: every time
+    s.compare.locationPenaltyErrors = 0;
     const AppSettings t = AppSettings::fromJson(s.toJson());
+    QVERIFY(!t.compare.detectLocation);
+    QCOMPARE(t.compare.locationPenaltyErrors, 0);
     QCOMPARE(t.compare.mode, Mode::Orthographic);
     QCOMPARE(t.compare.linTol, 0.001);
     QVERIFY(t.compare.allowMirror);
@@ -259,6 +263,8 @@ void TestMisc::settingsRoundTrip() {
     // Defaults from the spec.
     const AppSettings d;
     QCOMPARE(d.compare.mode, Mode::Relative);
+    QVERIFY(d.compare.detectLocation);  // wrong location counts once
+    QCOMPARE(d.compare.locationPenaltyErrors, 1);
     QVERIFY(d.compare.matchLinetype);
     QVERIFY(d.compare.allowRotation);
     QVERIFY(!d.compare.allowMirror);

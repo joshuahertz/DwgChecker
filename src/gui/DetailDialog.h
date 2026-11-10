@@ -4,6 +4,7 @@
 
 #include "Batch.h"
 
+#include <QColor>
 #include <QDialog>
 
 #include <memory>
@@ -27,6 +28,7 @@ public:
 
 private:
     void buildOverlay();
+    QColor viewColor(int view) const;  // the view's status color (Orthographic)
     void buildMetadata(QTableWidget* t);
     void buildViews(QTableWidget* t);
     QWidget* buildPrimitivesPage(QWidget* parent);

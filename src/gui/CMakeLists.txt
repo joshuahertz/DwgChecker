@@ -1,15 +1,26 @@
+# App icon: drawn by packaging/icon/make_icon.ps1, packed by make_ico.py. The .rc
+# puts it on DwgChecker.exe (Explorer, taskbar); the PNGs are the window icon.
+set(_app_icon_sources "")
+if(WIN32)
+  set(_app_icon_sources resources/app.rc)
+endif()
 qt_add_executable(DwgChecker WIN32 MACOSX_BUNDLE
+  ${_app_icon_sources}
   main.cpp
   MainWindow.h MainWindow.cpp
   SettingsPanel.h SettingsPanel.cpp
   ResultsModel.h ResultsModel.cpp
   DuplicatesTab.h DuplicatesTab.cpp
+  PathCard.h PathCard.cpp
   DetailDialog.h DetailDialog.cpp
   DrawingView.h DrawingView.cpp
   ViewEditorDialog.h ViewEditorDialog.cpp
   AutoCadController.h AutoCadController.cpp
 )
 target_link_libraries(DwgChecker PRIVATE dwgcore dwgplatform Qt6::Widgets Qt6::Concurrent)
+qt_add_resources(DwgChecker "app_icons" PREFIX "/" BASE resources FILES
+  resources/icons/app_16.png resources/icons/app_24.png resources/icons/app_32.png resources/icons/app_48.png
+  resources/icons/app_64.png resources/icons/app_128.png resources/icons/app_256.png)
 
 set_target_properties(DwgChecker PROPERTIES
   MACOSX_BUNDLE_GUI_IDENTIFIER org.dwgchecker.DwgChecker

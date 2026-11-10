@@ -67,7 +67,7 @@ private slots:
     void sharedFingerprintIsProbableTemplate();
     void lastSavedByMatchesOtherStudent();
     void bitExactNonRoundIsStrong();
-    void absoluteModeWeakensBitExact();
+    void absoluteModeIgnoresBitExact();
     void clusters();
     void smallEditingTimeNote();
 };
@@ -161,12 +161,15 @@ void TestDuplicates::bitExactNonRoundIsStrong() {
     QCOMPARE(bitExact(*e[0].drawing, *e[1].drawing).nontrivial, 6);
 }
 
-void TestDuplicates::absoluteModeWeakensBitExact() {
+void TestDuplicates::absoluteModeIgnoresBitExact() {
+    // Placement is given in Absolute mode, so identical coordinates are expected: no signal
+    // at all, even for non-round coordinates that would be strong evidence in Relative mode.
     std::vector<DupEntry> e{student("a", synth("{A}", "", 2.0)), student("b", synth("{B}", "", 2.0)),
-                            student("c", synth("{C}", "", 5.0))};
-    const DupReport r = detectDuplicates(e, DuplicateSettings{}, Mode::Absolute, nullptr);
-    const PairResult* ab = pairOf(r, 0, 1);
-    QVERIFY(!ab || ab->level < Strength::Weak);  // round coordinates where placement is specified
+                            student("c", synth("{C}", "", 13.48291034)), student("d", synth("{D}", "", 13.48291034))};
+    const DupReport abs = detectDuplicates(e, DuplicateSettings{}, Mode::Absolute, nullptr);
+    for (const auto& p : abs.pairs) QVERIFY(!has(&p, "bitexact"));
+    const DupReport rel = detectDuplicates(e, DuplicateSettings{}, Mode::Relative, nullptr);
+    QVERIFY(has(pairOf(rel, 2, 3), "bitexact"));
 }
 
 void TestDuplicates::clusters() {

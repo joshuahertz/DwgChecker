@@ -51,7 +51,7 @@ private slots:
     void r2000EqualsReference();
     // M3 Absolute
     void absoluteSelf();
-    void absoluteTranslatedFails();
+    void absoluteTranslatedWrongLocation();
     // M4 Relative
     void relativeTranslated();
     void relativeRotated37();
@@ -238,12 +238,48 @@ void TestCorpus::absoluteSelf() {
     QVERIFY(r.errors.empty());
 }
 
-void TestCorpus::absoluteTranslatedFails() {
+void TestCorpus::absoluteTranslatedWrongLocation() {
+    // The reference moved by (5.25, 3.125), graded in Absolute mode.
     auto d = loadFixture("ref_translated");
     QVERIFY(d);
-    const CompareResult r = compareDrawings(*ref, *d, absolute(), nullptr);
+    // Once (the default): graded after moving it back, with one error for the location.
+    CompareSettings s = absolute();
+    QVERIFY(s.detectLocation && s.locationPenaltyErrors == 1);
+    CompareResult r = compareDrawings(*ref, *d, s, nullptr);
+    QVERIFY(r.moved);
+    QCOMPARE(r.mode, Mode::Absolute);
+    QCOMPARE(r.matched, 10);
+    QVERIFY(!r.pass);
+    QVERIFY(qFuzzyCompare(r.correctness, 100.0 * 10 / 11));
+    QVERIFY(std::fabs(r.dx + 5.25) < 1e-9 && std::fabs(r.dy + 3.125) < 1e-9);  // student -> reference
+    QCOMPARE(r.errors.front().cat, ErrCat::Location);
+    QVERIFY(r.wrongLocation());  // the detail window draws the whole drawing yellow
+    QVERIFY2(anyError(r, QStringLiteral("the whole drawing is shifted by (5.25, 3.125) from the reference; after moving it "
+                                        "back, 10 of 10 reference items match")),
+             qPrintable(dumpErrors(r)));
+    QVERIFY2(r.errorSummary().startsWith(QStringLiteral("1 wrong location")), qPrintable(r.errorSummary()));
+    QCOMPARE(r.fit(), 100.0);  // the file still fits this drawing perfectly (Batch)
+    QCOMPARE(r.absoluteMatched, 0);  // copy detection sees the file as submitted
+
+    // Never: moved back with no error, so it passes.
+    s.locationPenaltyErrors = 0;
+    r = compareDrawings(*ref, *d, s, nullptr);
+    QVERIFY(r.moved);
+    QVERIFY(!r.wrongLocation());  // not an error: matched items stay green
+    QVERIFY2(r.pass, qPrintable(dumpErrors(r)));
+    QCOMPARE(r.correctness, 100.0);
+    QVERIFY2(anyError(r, QStringLiteral("graded after moving it back (wrong location is not counted as an error)")),
+             qPrintable(dumpErrors(r)));
+
+    // Every time: graded where it was drawn, with a warning that says it is only displaced.
+    s.detectLocation = false;
+    r = compareDrawings(*ref, *d, s, nullptr);
+    QVERIFY(!r.moved);
+    QVERIFY(!r.wrongLocation());
     QVERIFY(!r.pass);
     QCOMPARE(r.matched, 0);
+    QCOMPARE(r.placementFreeCorrectness, 100.0);
+    QVERIFY2(anyError(r, QStringLiteral("moved back, 10 of 10 reference items would match")), qPrintable(dumpErrors(r)));
 }
 
 void TestCorpus::relativeTranslated() {

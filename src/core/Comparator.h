@@ -9,11 +9,12 @@
 
 #include <QStringList>
 
+#include <algorithm>
 #include <vector>
 
 namespace dc {
 
-enum class ErrCat { Scale, NearMiss, Linetype, Layer, Precision, Missing, Extra, Alignment, Arrangement, Warning };
+enum class ErrCat { Scale, Location, NearMiss, Linetype, Layer, Precision, Missing, Extra, Alignment, Arrangement, Warning };
 enum class PrimStatus { Matched, Missing, Extra, NearMiss, WrongAttribute, NotCompared };
 
 struct ErrorItem {
@@ -60,7 +61,19 @@ struct CompareResult {
     // Wrong scale: the student drawing matched only after multiplying it by 1/scaleFactor.
     bool scaled = false;
     double scaleFactor = 1;  // student size / reference size (25.4: millimeters for an inch reference)
+    // Absolute mode, wrong location: graded after moving the whole drawing back by (dx, dy).
+    bool moved = false;
+    // Absolute mode: the correctness once the whole drawing is moved back, before any error
+    // for the location, when that matches most of the reference; else -1 (and always in
+    // other modes).
+    double placementFreeCorrectness = -1;
 
+    // How well the file fits this drawing regardless of where it was drawn: says which
+    // solution drawing a file is an attempt at.
+    double fit() const { return std::max(correctness, placementFreeCorrectness); }
+    // Graded after moving the whole drawing back, with that counted as an error ("Once"):
+    // every item the student drew is in the wrong place, even those that match.
+    bool wrongLocation() const;
     QStringList errorStrings() const;
     // Counts by label, in the order the errors are listed: "2 shifted, 1 missing; 1 warning".
     QString errorSummary() const;
@@ -74,7 +87,9 @@ std::vector<int> comparableIndices(const Drawing& d, const CompareSettings& s);
 
 // Compares at scale 1; if less than half of the reference matches and s.detectScale is on,
 // also tries uniform scale factors and keeps a scaled result that matches clearly better
-// (reported as one error worth s.scalePenaltyErrors).
+// (reported as one error worth s.scalePenaltyErrors). In Absolute mode, when the whole
+// drawing is right but displaced, it is graded after moving it back with one error worth
+// s.locationPenaltyErrors (or, with s.detectLocation off, where it was drawn, with a warning).
 CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views);
 
 // Scale factors (student size / reference size) worth trying: the INSUNITS ratio,
