@@ -1,5 +1,8 @@
 #include "DrawingView.h"
 
+#include "DimText.h"
+#include "Format.h"
+
 #include <QGraphicsEllipseItem>
 #include <QGraphicsLineItem>
 #include <QGraphicsPathItem>
@@ -33,6 +36,11 @@ QColor drawingColor(const Primitive& p, bool darkBackground) {
     return QColor(static_cast<QRgb>(p.rgb));  // 0xRRGGBB, opaque
 }
 
+double asDrawnZ(const Primitive& p) {
+    const bool label = p.kind == PrimKind::Text || p.kind == PrimKind::Dimension;
+    return (label ? 1e9 : 0.0) + p.drawOrder;
+}
+
 DrawingView::DrawingView(QWidget* parent) : QGraphicsView(parent) {
     setScene(new QGraphicsScene(this));
     setRenderHint(QPainter::Antialiasing);
@@ -44,7 +52,9 @@ DrawingView::DrawingView(QWidget* parent) : QGraphicsView(parent) {
 }
 
 namespace {
-constexpr double kAllMargin = 0.03;  // zoom to all: 3% of the larger side around the drawing
+// Zoom to all: 5% of the larger side around the drawing, room for the view labels that sit
+// above the top views' boxes (about 18 px).
+constexpr double kAllMargin = 0.05;
 }
 
 QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& color, double width, const Transform2D& t) {
@@ -90,7 +100,14 @@ QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& col
     }
     case PrimKind::Text:
     case PrimKind::Dimension: {
-        auto* ti = scene()->addSimpleText(p.kind == PrimKind::Text ? p.text.left(24) : QString::number(p.measurement, 'f', 3));
+        // A dimension reads as its own drawing shows it: its style's precision and the
+        // Ø / R prefix ("Ø0.750", "2.50", "90°"); the plain value when the style is unknown.
+        QString label = p.text.left(24);
+        if (p.kind == PrimKind::Dimension) {
+            label = dimShownText(p);
+            if (label.isEmpty()) label = isAngularDimType(p.dimType) ? fmtDeg(p.measurement) : fmtLen(p.measurement);
+        }
+        auto* ti = scene()->addSimpleText(label);
         ti->setBrush(color);
         ti->setPos(toScene(p.center));
         ti->setFlag(QGraphicsItem::ItemIgnoresTransformations);
@@ -114,17 +131,28 @@ QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& col
 
 void DrawingView::addBox(const BBox& b, const QColor& color, const QString& label) {
     if (!b.valid()) return;
-    m_extent.add(b);
+    // A visible gap between the box and the items in it: 1% of what is drawn, under half of the
+    // 2% gap that separates views when they are found, so that neighbouring boxes stay apart.
+    const double pad = 0.01 * std::max(m_extent.diagonal(), b.diagonal());
+    BBox box = b;
+    box.x0 -= pad;
+    box.y0 -= pad;
+    box.x1 += pad;
+    box.y1 += pad;
+    m_extent.add(box);
     QPen pen(color, 1, Qt::DashLine);
     pen.setCosmetic(true);
-    const QRectF r(toScene({b.x0, b.y1}), toScene({b.x1, b.y0}));
+    const QRectF r(toScene({box.x0, box.y1}), toScene({box.x1, box.y0}));
     auto* rect = scene()->addRect(r.normalized(), pen);
     rect->setZValue(-1);
     if (!label.isEmpty()) {
+        // Outside the box, above its top-left corner. The label keeps its size at any zoom, so
+        // it is lifted by its own height in pixels.
         auto* t = scene()->addSimpleText(label);
         t->setBrush(color);
-        t->setPos(toScene({b.x0, b.y1}));
+        t->setPos(toScene({box.x0, box.y1}));
         t->setFlag(QGraphicsItem::ItemIgnoresTransformations);
+        t->setTransform(QTransform::fromTranslate(0, -t->boundingRect().height() - 2));
     }
 }
 
@@ -143,12 +171,12 @@ void DrawingView::fit(const BBox& b, double margin) {
 }
 
 void DrawingView::zoomTo(const BBox& b, double margin) {
-    m_autoFit = false;
+    m_target = {true, false, b, margin};
     fit(b, margin);
 }
 
 void DrawingView::zoomToAll() {
-    m_autoFit = true;
+    m_target = {true, true, BBox(), kAllMargin};
     fit(m_extent, kAllMargin);
 }
 
@@ -160,11 +188,11 @@ void DrawingView::clearDrawing() {
 
 void DrawingView::resizeEvent(QResizeEvent* e) {
     QGraphicsView::resizeEvent(e);
-    if (m_autoFit) fit(m_extent, kAllMargin);
+    if (m_target.active) fit(m_target.all ? m_extent : m_target.box, m_target.margin);
 }
 
 void DrawingView::wheelEvent(QWheelEvent* e) {
-    m_autoFit = false;
+    m_target.active = false;
     const double f = std::pow(1.0015, e->angleDelta().y());
     scale(f, f);
 }
@@ -196,7 +224,7 @@ void DrawingView::mouseMoveEvent(QMouseEvent* e) {
     if (m_panning) {
         const QPoint d = e->pos() - m_lastPan;
         m_lastPan = e->pos();
-        if (!d.isNull()) m_autoFit = false;
+        if (!d.isNull()) m_target.active = false;
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - d.x());
         verticalScrollBar()->setValue(verticalScrollBar()->value() - d.y());
         e->accept();

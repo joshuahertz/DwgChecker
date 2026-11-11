@@ -18,6 +18,7 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -445,6 +446,8 @@ RefSummary describeReferences(const QStringList& paths, const AppSettings& s,
 }  // namespace
 
 void MainWindow::referenceChanged() {
+    QElapsedTimer busy;  // the window's own work here, for the log (the reading is in the background)
+    busy.start();
     const QStringList paths = m_refCard->paths();
     addRecent(kRecentRefs, m_refCard, PathCard::encode(paths));
     // Previews of the previous choice ("Drawing 2" may now be another file) close.
@@ -479,6 +482,9 @@ void MainWindow::referenceChanged() {
     }
     updateRefInfo();
     updateDirInfo();
+    log(tr("chose %1: %2 ms in the window, then reading in the background")
+            .arg(countText(static_cast<int>(paths.size()), tr("solution drawing"), tr("solution drawings")))
+            .arg(busy.elapsed()));
 }
 
 void MainWindow::folderChanged() {
@@ -498,15 +504,22 @@ void MainWindow::updateRefInfo() {
             return;
         }
     // Reading takes a few seconds per drawing (dwgread): a progress bar on the card, which
-    // moves for one drawing and counts several, and the busy cursor over the window, which
-    // stays usable meanwhile.
+    // moves for one drawing and counts several, and the busy cursor (arrow and spinner; the
+    // window stays usable). It is the application's cursor: one set on the window doesn't show
+    // over the card, which has its own pointing hand, and the mouse is usually there.
     const int read = ++m_refRead;
     m_refReading = true;
     m_refDrawings.clear();  // read again with the current reading rules
     m_refSummaries.clear();
     m_refCard->setDetail(paths.size() > 1 ? tr("reading %1 drawings…").arg(paths.size()) : tr("reading…"));
     m_refCard->showProgress(0, static_cast<int>(paths.size()));
-    setCursor(Qt::BusyCursor);
+    if (!m_busyCursor) {
+        QApplication::setOverrideCursor(Qt::BusyCursor);
+        m_busyCursor = true;
+    }
+    m_refCard->repaint();  // shown now, even if the window is kept busy a moment longer
+    QElapsedTimer readTime;
+    readTime.start();
     AppSettings s = currentSettings();
     m_refCanonSig = canonSignature(s);
     s.loader.dwgreadPath = platform::findDwgRead();
@@ -523,10 +536,12 @@ void MainWindow::updateRefInfo() {
             Qt::QueuedConnection);
     };
     auto* w = new QFutureWatcher<RefSummary>(this);
-    connect(w, &QFutureWatcherBase::finished, this, [this, w, read]() {
+    connect(w, &QFutureWatcherBase::finished, this, [this, w, read, readTime, n = paths.size()]() {
         const RefSummary res = w->result();
         w->deleteLater();
         if (read != m_refRead) return;  // a newer choice is being read, or the choice was cleared
+        log(tr("read %1 in %2 s").arg(countText(static_cast<int>(n), tr("solution drawing"), tr("solution drawings")))
+                .arg(readTime.elapsed() / 1000.0, 0, 'f', 1));
         const QString pending = m_pendingPreview;  // a drawing clicked while reading
         endRefRead();
         m_refReadable = res.ok ? 1 : -1;
@@ -545,7 +560,10 @@ void MainWindow::endRefRead() {
     m_refReading = false;
     m_pendingPreview.clear();
     m_refCard->hideProgress();
-    unsetCursor();
+    if (m_busyCursor) {
+        QApplication::restoreOverrideCursor();
+        m_busyCursor = false;
+    }
 }
 
 void MainWindow::previewDrawing(const QString& refPath) {

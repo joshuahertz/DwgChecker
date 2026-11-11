@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSettings>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidget>
@@ -51,17 +52,28 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
                        .arg(fmtCoord(r.dx), fmtCoord(r.dy), fmtDeg(r.theta), r.mirrored ? tr(", mirrored") : QString());
     auto* head = new QLabel(summary, this);
     lay->addWidget(head);
-    auto* legend = new QLabel(tr("<span style='color:#afafaf'>■</span> reference &nbsp; <span style='color:#1e9632'>■</span> matched "
-                                 "&nbsp; <span style='color:#d21e1e'>■</span> missing (where it should be) &nbsp; "
-                                 "<span style='color:#e1af00'>■</span> present but wrong: shifted, wrong size… &nbsp; "
-                                 "<span style='color:#9646c8'>■</span> extra &nbsp; (wheel: zoom, drag: pan)"),
-                              this);
-    lay->addWidget(legend);
+    m_legend = new QLabel(this);
+    m_legend->setWordWrap(true);
+    lay->addWidget(m_legend);
 
     auto* split = new QSplitter(Qt::Horizontal, this);
     lay->addWidget(split, 1);
-    m_view = new DrawingView(split);
-    split->addWidget(m_view);
+    // The drawing three ways: the student's moved onto the solution and colored by result,
+    // the student's file as submitted, and the reference solution as drawn.
+    m_viewTabs = new QTabWidget(split);
+    m_view = new DrawingView(m_viewTabs);
+    m_raw = new DrawingView(m_viewTabs);
+    m_refView = new DrawingView(m_viewTabs);
+    m_viewTabs->addTab(m_view, tr("Overlay"));
+    m_viewTabs->addTab(m_raw, tr("Student's file"));
+    m_viewTabs->addTab(m_refView, tr("Reference solution"));
+    m_viewTabs->setTabToolTip(0, tr("The student's drawing placed on the solution (each view moved, rescaled if needed), "
+                                    "colored by result"));
+    m_viewTabs->setTabToolTip(1, tr("%1, as submitted: nothing moved, rescaled or rearranged")
+                                     .arg(QFileInfo(run.path).fileName()));
+    const QString refFile = QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName();
+    m_viewTabs->setTabToolTip(2, refFile.isEmpty() ? tr("The solution, as drawn") : tr("%1, as drawn").arg(refFile));
+    split->addWidget(m_viewTabs);
 
     auto* tabs = new QTabWidget(split);
     m_errors = new QListWidget(tabs);
@@ -86,18 +98,35 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
 
     auto* buttons = new QHBoxLayout;
     auto* all = new QPushButton(tr("Zoom to all"), this);
+    m_rawDark = new QCheckBox(tr("Dark background, as in AutoCAD"), this);
+    m_rawDark->setToolTip(tr("Black-and-white items (ACI 7) show white on the dark background and black on the white one"));
+    m_rawDark->setChecked(QSettings().value(QStringLiteral("preview/darkBackground"), true).toBool());  // as the previews
     auto* close = new QPushButton(tr("Close"), this);
     buttons->addWidget(all);
+    buttons->addWidget(m_rawDark);
     buttons->addStretch();
     buttons->addWidget(close);
     lay->addLayout(buttons);
-    connect(all, &QPushButton::clicked, m_view, &DrawingView::zoomToAll);
+    connect(all, &QPushButton::clicked, this, [this]() {  // all three tabs
+        m_view->zoomToAll();
+        m_raw->zoomToAll();
+        m_refView->zoomToAll();
+    });
+    connect(m_rawDark, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings().setValue(QStringLiteral("preview/darkBackground"), on);
+        buildRaw();
+    });
+    connect(m_viewTabs, &QTabWidget::currentChanged, this, &DetailDialog::updateLegend);
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
     connect(m_errors, &QListWidget::currentRowChanged, this, &DetailDialog::zoomToError);
     // Clicking the row that is already current (e.g. the error the window was opened for) zooms too.
     connect(m_errors, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) { zoomToError(m_errors->row(it)); });
 
     buildOverlay();  // ends with zoom to all
+    buildRaw();
+    m_raw->zoomToAll();
+    m_refView->zoomToAll();
+    updateLegend();
     // The drawing takes the initial focus: a list that receives keyboard focus with no
     // current row makes its first row current, which would zoom to the first error.
     m_view->setFocus(Qt::OtherFocusReason);
@@ -138,9 +167,15 @@ void DetailDialog::buildOverlay() {
     const Drawing& ref = m_batch->refDrawing(run);
     const CompareResult& r = run.result;
     m_view->clearDrawing();
+    // Dimensions only where they are graded (the solution has them, the check is on, and they
+    // are not in an Ignored view); one that isn't graded would only be a number in the way.
+    auto ungradedDim = [](const Primitive& p, PrimStatus st) {
+        return p.kind == PrimKind::Dimension && st == PrimStatus::NotCompared;
+    };
     // Reference underneath in gray; missing/wrong reference primitives in red on top.
     for (int i = 0; i < static_cast<int>(ref.prims.size()); ++i) {
         const PrimStatus st = r.refStatus[i];
+        if (ungradedDim(ref.prims[i], st)) continue;
         if (st == PrimStatus::Missing || st == PrimStatus::NearMiss || st == PrimStatus::WrongAttribute)
         {
             if (auto* it = m_view->addPrimitive(ref.prims[i], kMissing, 2.0)) it->setZValue(2);
@@ -155,6 +190,7 @@ void DetailDialog::buildOverlay() {
         const QColor matched = r.wrongLocation() ? kShifted : kMatched;
         for (int j = 0; j < static_cast<int>(stu.prims.size()); ++j) {
             const PrimStatus st = r.stuStatus[j];
+            if (ungradedDim(stu.prims[j], st)) continue;
             QColor c = matched;
             if (st == PrimStatus::Extra) c = kExtra;
             else if (st == PrimStatus::NearMiss || st == PrimStatus::WrongAttribute) c = kShifted;
@@ -171,6 +207,108 @@ void DetailDialog::buildOverlay() {
                                                                                            : tr("not found")));
         }
     m_view->zoomToAll();
+}
+
+void DetailDialog::buildRaw() {
+    const StudentRun& run = m_batch->students[m_student];
+    const bool dark = m_rawDark->isChecked();
+    // Everything in the file, dimensions and Ignored views included (the overlay shows only
+    // what is graded), each item in its own color; the views keep their zoom and pan.
+    auto draw = [dark](DrawingView* view, const Drawing* d) {
+        view->clearDrawing();
+        view->setBackgroundBrush(dark ? kModelSpaceDark : kModelSpaceLight);
+        if (!d) return;
+        for (const Primitive& p : d->prims)  // stacked in AutoCAD's draw order, as in the preview
+            if (QGraphicsItem* it = view->addPrimitive(p, drawingColor(p, dark), 1.5)) it->setZValue(asDrawnZ(p));
+    };
+    draw(m_raw, run.drawing.get());
+    draw(m_refView, &m_batch->refDrawing(run));
+}
+
+void DetailDialog::updateLegend() {
+    const StudentRun& run = m_batch->students[m_student];
+    const QWidget* shown = m_viewTabs->currentWidget();
+    m_rawDark->setVisible(shown != m_view);
+    QString text;
+    if (shown == m_raw)
+        text = tr("<b>The student's file</b> (%1) as submitted: its own coordinates, scale and layout, everything in it "
+                  "including dimensions, each item in its own color and linetype (hover over one for its layer). "
+                  "Clicking an error or a primitive zooms here too. (wheel: zoom, drag: pan)")
+                   .arg(QFileInfo(run.path).fileName().toHtmlEscaped());
+    else if (shown == m_refView)
+        text = tr("<b>The reference solution</b> (%1) as drawn: everything in it, including dimensions and anything in "
+                  "Ignored views, each item in its own color and linetype (hover over one for its layer). Clicking an "
+                  "error or a primitive zooms here too. (wheel: zoom, drag: pan)")
+                   .arg(QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName().toHtmlEscaped());
+    else
+        text = tr("<span style='color:#afafaf'>■</span> reference &nbsp; <span style='color:#1e9632'>■</span> matched "
+                  "&nbsp; <span style='color:#d21e1e'>■</span> missing (where it should be) &nbsp; "
+                  "<span style='color:#e1af00'>■</span> present but wrong: shifted, wrong size… &nbsp; "
+                  "<span style='color:#9646c8'>■</span> extra &nbsp; (wheel: zoom, drag: pan)");
+    m_legend->setText(text);
+}
+
+void DetailDialog::zoomRef(const BBox& b) {
+    if (b.valid()) m_refView->zoomTo(b, 0.2);
+    else m_refView->zoomToAll();
+}
+
+std::optional<Transform2D> DetailDialog::refToStudent(int view) const {
+    const StudentRun& run = m_batch->students[m_student];
+    const CompareResult& r = run.result;
+    const bool ortho = r.mode == Mode::Orthographic && m_batch->viewsOf(run);
+    // Each student item's transform takes it into the reference frame (view, scale, a wrong
+    // location moved back). Prefer one paired with a reference item of that view.
+    for (int pass = 0; pass < 2; ++pass)
+        for (int j = 0; j < static_cast<int>(r.stuT.size()); ++j) {
+            if (ortho && (j >= static_cast<int>(r.stuView.size()) || r.stuView[j] != view)) continue;
+            if (pass == 0 && (j >= static_cast<int>(r.stuPartner.size()) || r.stuPartner[j] < 0)) continue;
+            return r.stuT[j].inverse();
+        }
+    return std::nullopt;
+}
+
+BBox DetailDialog::rawBoxOfRef(int i) const {
+    const StudentRun& run = m_batch->students[m_student];
+    const CompareResult& r = run.result;
+    BBox out;
+    if (!run.drawing || i < 0) return out;
+    if (i < static_cast<int>(r.refPartner.size()) && r.refPartner[i] >= 0 &&
+        r.refPartner[i] < static_cast<int>(run.drawing->prims.size()))
+        return run.drawing->prims[r.refPartner[i]].bbox();
+    const Drawing& ref = m_batch->refDrawing(run);
+    if (i >= static_cast<int>(ref.prims.size())) return out;
+    const ViewSet* vs = m_batch->viewsOf(run);
+    const int view = r.mode == Mode::Orthographic && vs && i < static_cast<int>(vs->primView.size()) ? vs->primView[i] : -1;
+    const std::optional<Transform2D> T = refToStudent(view);
+    if (!T) return out;
+    const BBox b = ref.prims[i].bbox();
+    for (const Vec2 c : {Vec2{b.x0, b.y0}, Vec2{b.x1, b.y0}, Vec2{b.x0, b.y1}, Vec2{b.x1, b.y1}}) out.add(T->apply(c));
+    return out;
+}
+
+BBox DetailDialog::rawErrorBox(int k) const {
+    const StudentRun& run = m_batch->students[m_student];
+    const CompareResult& r = run.result;
+    BBox b;
+    if (!run.drawing || k < 0 || k >= static_cast<int>(r.errors.size())) return b;
+    const ErrorItem& e = r.errors[k];
+    for (int j : e.stuPrims)
+        if (j >= 0 && j < static_cast<int>(run.drawing->prims.size())) b.add(run.drawing->prims[j].bbox());
+    for (int i : e.refPrims) b.add(rawBoxOfRef(i));
+    return b;
+}
+
+void DetailDialog::zoomRaw(const BBox& b) {
+    const StudentRun& run = m_batch->students[m_student];
+    if (!b.valid() || !run.drawing) { m_raw->zoomToAll(); return; }
+    // Some context, as in the overlay: at least 15% of the file's own size around it.
+    const double minSize = 0.15 * run.drawing->bbox().diagonal();
+    BBox z = b;
+    const Vec2 c = b.center();
+    if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
+    if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
+    m_raw->zoomTo(z, 0.2);
 }
 
 BBox DetailDialog::errorBox(int k) const {
@@ -192,8 +330,13 @@ void DetailDialog::zoomToError(int k) {
         const QSignalBlocker block(m_errors);
         m_errors->setCurrentRow(k);
     }
+    zoomRaw(rawErrorBox(k));  // the other tabs too, shown or not
     const BBox b = errorBox(k);
-    if (!b.valid()) { m_view->zoomToAll(); return; }
+    if (!b.valid()) {
+        m_view->zoomToAll();
+        zoomRef(BBox());
+        return;
+    }
     // Keep some context: at least 15% of the reference size around the error.
     const double minSize = 0.15 * m_batch->refDrawing(m_batch->students[m_student]).bbox().diagonal();
     BBox z = b;
@@ -201,6 +344,7 @@ void DetailDialog::zoomToError(int k) {
     if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
     if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
     m_view->zoomTo(z, 0.2);
+    zoomRef(z);  // the solution is in the overlay's frame: the same place
 }
 
 namespace {
@@ -304,6 +448,9 @@ void DetailDialog::zoomToPrimitive(int row) {
     const bool student = m_primSource->currentIndex() == 0;
     const Drawing* d = student ? run.drawing.get() : &m_batch->refDrawing(run);
     if (!d || row < 0 || row >= static_cast<int>(d->prims.size())) return;
+    // The raw tab: a student item where it is, a reference item where it is (or should be)
+    // in the student's file.
+    zoomRaw(student ? d->prims[row].bbox() : rawBoxOfRef(row));
     // The overlay is in the reference frame: move student primitives there first.
     const Primitive p = student ? transformed(d->prims[row], run.result.stuT[row]) : d->prims[row];
     BBox z = p.bbox();
@@ -312,6 +459,7 @@ void DetailDialog::zoomToPrimitive(int row) {
     if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
     if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
     m_view->zoomTo(z, 0.2);
+    zoomRef(z);
 }
 
 void DetailDialog::buildMetadata(QTableWidget* t) {

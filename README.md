@@ -92,7 +92,8 @@ all of this.
 
 ## Using it
 
-**GUI.** The steps and Settings sit in a column on the left, and the results
+**GUI.** A splash screen shows while the app starts (at least a second; a click
+closes it). The steps and Settings sit in a column on the left, and the results
 fill the right side (drag the divider between them to resize). The app opens
 with nothing chosen and walks through four numbered steps: (1) click the first
 card to choose the reference (solution) drawing; (2) check the **location
@@ -151,11 +152,24 @@ hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
   the Student header or a row for the drawing's and the file's names. A student with several files has a subrow per
   solution drawing (and per extra file); click the student to fold them. Click a
   file's row for the detail view, or the link to open the file in AutoCAD.
-- **Help > Show log** (Ctrl+L) lists the parser version, AutoCAD found, and why
-  any file could not be read.
-- Detail view: the overlay (matched green, missing red, present but wrong, such
-  as shifted or the wrong size, yellow, extra purple), the full discrepancy list
-  (click an error to zoom to it), metadata side by side, and a **Primitives** tab. That tab lists everything the checker extracted from the
+- **Help > Show log** (Ctrl+L) lists the parser version, AutoCAD found, why
+  any file could not be read, and how long choosing and reading the solution
+  drawings took.
+- Detail view: the drawing in three tabs: **Overlay**, **Student's file** and
+  **Reference solution**. **Overlay** places the student's drawing
+  on the solution (matched green, missing red, present but wrong, such as shifted
+  or the wrong size, yellow, extra purple). Dimensions appear in the overlay only
+  where they are graded, each reading as its drawing shows it (precision, Ø / R
+  prefix). Orthographic views are outlined with a little room around their items,
+  with their name and score above the box. **Student's file** shows the file as
+  submitted: its own coordinates, scale and layout (Orthographic views not
+  moved, a wrong scale not undone). **Reference solution** shows the solution as
+  drawn. Both show everything in the file, dimensions and Ignored views
+  included, each item in its own color and linetype, stacked in AutoCAD's draw
+  order (DRAWORDER), on AutoCAD's dark background or white. Clicking an error or a primitive zooms all three tabs: in
+  the student's file to the student's item, or to where a missing one should be,
+  and in the solution to the same place as the overlay. Then the full discrepancy list (click an error to zoom to it), metadata side
+  by side, and a **Primitives** tab. That tab lists everything the checker extracted from the
   student's or the reference's file, with layer, linetype, match status and
   source entity, which helps when a file grades unexpectedly.
 - Orthographic mode: use **Edit views…** (step 2) to confirm how the reference

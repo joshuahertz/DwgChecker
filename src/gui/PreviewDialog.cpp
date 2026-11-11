@@ -65,11 +65,8 @@ void DrawingPreviewDialog::build() {
     const bool dark = m_dark->isChecked();
     m_view->clearDrawing();  // the view's zoom and pan stay
     m_view->setBackgroundBrush(dark ? kModelSpaceDark : kModelSpaceLight);
-    for (const Primitive& p : m_drawing->prims) {
-        // Fills under lines, text and dimension values on top, as AutoCAD usually draws them.
-        const int z = p.kind == PrimKind::Hatch ? 0 : p.kind == PrimKind::Text || p.kind == PrimKind::Dimension ? 2 : 1;
-        if (QGraphicsItem* it = m_view->addPrimitive(p, drawingColor(p, dark), 1.5)) it->setZValue(z);
-    }
+    for (const Primitive& p : m_drawing->prims)  // stacked in AutoCAD's draw order
+        if (QGraphicsItem* it = m_view->addPrimitive(p, drawingColor(p, dark), 1.5)) it->setZValue(asDrawnZ(p));
 }
 
 }  // namespace dcgui

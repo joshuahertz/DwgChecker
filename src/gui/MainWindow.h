@@ -85,6 +85,7 @@ private:
     QByteArray m_refCanonSig;  // reading rules the solution card was last described with
     int m_refRead = 0;      // counts reads of the solution drawings; only the latest updates the card
     bool m_refReading = false;
+    bool m_busyCursor = false;  // the application's busy cursor is set (one level, while reading)
     // The solution drawings as last read for the card, by path (the reading rules of
     // m_refCanonSig), with each one's summary; for the preview and Edit views.
     std::map<QString, dc::DrawingPtr> m_refDrawings;

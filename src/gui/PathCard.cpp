@@ -117,9 +117,8 @@ PathCard::PathCard(Kind kind, int step, const QString& caption, const QString& e
     m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // never widens the card
     grid->addWidget(m_detail, 2, 1);
     m_progress = new QProgressBar(this);
-    m_progress->setTextVisible(false);
-    m_progress->setMaximumHeight(6);
-    m_progress->setVisible(false);  // a hidden row takes no space
+    m_progress->setTextVisible(false);  // the style's own height: a 6 px bar under gray text went unnoticed
+    m_progress->setVisible(false);      // a hidden row takes no space
     grid->addWidget(m_progress, 3, 1);
     grid->setColumnStretch(1, 1);
 

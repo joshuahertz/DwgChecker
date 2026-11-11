@@ -58,9 +58,17 @@ public:
     QString ltypeName(quint64 handle) const;
     const Block* block(quint64 handle) const;
 
-    // Top-level entities in model space / paper space, drawing order.
+    // Top-level entities in model space / paper space, in file (database) order.
     const std::vector<quint64>& modelSpace() const { return m_model; }
     const std::vector<quint64>& paperSpace() const { return m_paper; }
+    // The block records of model and paper space (0 when the file has none).
+    quint64 modelSpaceBlock() const { return m_modelBlock; }
+    quint64 paperSpaceBlock() const { return m_paperBlock; }
+    // `ents` (one block's entities, or model / paper space's, in file order) in AutoCAD's
+    // draw order: by their sort handle in that block's SORTENTSTABLE (what DRAWORDER and
+    // hatching "behind the boundary" write), an entity it doesn't list by its own handle.
+    // Without a table, the file order.
+    std::vector<quint64> drawOrder(const std::vector<quint64>& ents, quint64 blockHandle) const;
     // Vertices of a POLYLINE_2D/3D (R2004+: "vertex" array; R2000: owner scan).
     std::vector<quint64> polylineVertices(const QJsonObject& pline) const;
 
@@ -84,6 +92,8 @@ private:
     QHash<quint64, QString> m_ltypes;
     QHash<quint64, Block> m_blocks;
     std::vector<quint64> m_model, m_paper;
+    quint64 m_modelBlock = 0, m_paperBlock = 0;
+    QHash<quint64, QHash<quint64, quint64>> m_sortKeys;  // block record -> entity -> sort handle
     QHash<quint64, std::vector<quint64>> m_ownedBy;  // owner handle -> owned entity handles (file order)
 };
 

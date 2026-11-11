@@ -1021,6 +1021,122 @@ its dimensions, named Ignored, and the Ignored view was first in the view list.
 - **Results graded before this fix** for drawings with such an Ignored copy
   were wrong (about 0 % for those files) and should be run again.
 
+**D70. The detail view's drawing in two tabs (user request, 2026-11-11).**
+**Overlay** is the existing view: the student's drawing placed on the solution
+(per view in Orthographic mode, rescaled when a wrong scale was found, moved back
+when the location was wrong) and colored by result. **Raw file** shows the
+student's file as submitted, which the overlay can't: where the student put
+each view, at the scale they drew.
+- **The raw tab** draws run.drawing's primitives untransformed, in their own
+  colors (drawingColor, D66), with the previews' dark/white background setting
+  ("preview/darkBackground"). The checkbox shows only while that tab is current,
+  and the legend line above the drawing changes with the tab.
+- **Clicking an error or a primitive zooms both tabs.** In the raw tab, a student
+  item zooms to where it is. A reference item zooms to its partner, else to
+  where it belongs in the student's file: its box mapped by the inverse of the
+  transform its view was graded with. That transform is taken from a student item
+  graded in the view, preferring a paired one, and includes the scale undo and a
+  wrong location moved back. A view that wasn't found zooms the raw tab to all.
+  The minimum context is 15% of the file's own size, as the overlay uses the
+  solution's. "Zoom to all" fits both tabs.
+- **DrawingView keeps the last zoom it was asked for** (all, or a box) and redoes
+  it on resize until the user zooms or pans. A view zoomed while hidden in a tab
+  then shows that zoom at its real size when the tab is opened, not a fit
+  computed at a placeholder size. Before this only "zoom to all" was kept this
+  way.
+
+**D71. Dimensions and view boxes in the drawing views (user decisions,
+2026-11-11).**
+- **A dimension reads as its drawing shows it** (dimShownText: the style's
+  precision, zero suppression and the Ø / R prefix, "90°" for angles), instead of
+  the measured value with 3 decimals, which looked like a stray measurement. The
+  plain value (fmtLen / fmtDeg) is the fallback when the style is unknown. This
+  applies wherever drawings are shown: the overlay, the Raw file tab, the
+  previews and the view editor. A student's dimension shows the student's
+  precision, so a precision error can be seen against the solution's.
+- **The overlay leaves out dimensions that aren't graded:** those with status
+  NotCompared, on both sides. That covers dimensions when the check is off for
+  the drawing, or when the solution has none (D58), and those in an Ignored view.
+  The Raw file tab and the previews still show every dimension in the file.
+- **View boxes have a gap around their items:** 1% of what is drawn, under half
+  the 2% gap that separates views when they are found, so neighbouring boxes
+  stay apart. Their label ("Front view 100%") sits just above the box's top-left
+  corner, outside it, lifted by its own height in pixels since it keeps its size
+  at any zoom. Zoom to all keeps a 5% margin (was 3%) so a top view's label isn't
+  cut off.
+
+**D72. The reading indicator made visible (bug report, 2026-11-11).** The user
+saw no progress bar or busy cursor after choosing solution drawings (D65), only
+a pause. Nothing on the window's thread blocks on that path: the drawings are
+read in the background, and the rest is settings, a registry read and a
+one-level folder listing. The indicator was easy to miss, though:
+- **The busy cursor** was set on the main window, but the reference card has its
+  own pointing-hand cursor, and right after choosing the files the mouse is
+  usually over that card, where a child's cursor wins. It is now the
+  application's override cursor (BusyCursor, set and restored once per read),
+  which shows over every widget.
+- **The bar** was limited to 6 px under the card's gray detail line. It now has
+  the style's own height, and the card is repainted at once when reading starts.
+- **The log** (Help > Show log) now says how long the window's own work took
+  when the drawings were chosen, and how long the background read took. If the
+  first is small and a pause is still felt before the bar shows, the time is
+  spent in the Windows file dialog before it returns the files (for example
+  with files on Google Drive), which the app doesn't control.
+
+**D73. A third drawing tab: the reference solution (user request, 2026-11-11).**
+The detail view's tabs are **Overlay**, **Student's file** (D70's "Raw file",
+renamed so it's clear which file it is) and **Reference solution**. All the
+comparisons can then be made in one window. Each as-is tab's tooltip and the
+line above the drawing name its file.
+- **Both as-is tabs draw everything in the file,** dimensions included even when
+  they aren't graded, and in the solution its Ignored views. Only the overlay
+  leaves out ungraded dimensions (D71). The solution is the drawing as graded,
+  so objects on turned-off or frozen layers stay out when the
+  ignore-hidden-layers setting is on, as in AutoCAD's own display.
+- **The solution is in the overlay's frame** (the reference's coordinates), so a
+  click on an error or a primitive zooms it to the same box as the overlay, and
+  "Zoom to all" fits all three tabs. The dark/white background checkbox (shared
+  with the previews) covers both as-is tabs and shows while either is current.
+
+**D74. Files shown as they are follow AutoCAD's draw order (bug report,
+2026-11-11).** In a solution's Reference solution tab, a hidden line was drawn
+over a layer-0 line that AutoCAD shows on top. The as-is views (both file tabs
+of the detail view and the Show drawing previews) stacked items in file order,
+but AutoCAD draws by the SORTENTSTABLE that DRAWORDER and hatching "behind the
+boundary" write. Every solution drawing of this term's Cornerstone and GE1110
+quests has one, and in most of them it puts many of the entities in a different
+order. Student files often have one too (6 of 15 in a Q3 batch).
+- **DwgJson reads each SORTENTSTABLE** (dwgread's `ents` and `sort_ents`, paired
+  by position, for its `block_owner`) and the model and paper space block
+  records. drawOrder() sorts a block's entities by sort handle, using an
+  entity's own handle when the table doesn't list it, which is AutoCAD's rule.
+  Without a table it keeps the file order. A real file confirmed the pairing:
+  DRAWORDER "send to back" on one entity gave every other entity the next one's
+  handle, and the moved entity the first one's.
+- **Display only:** each Primitive carries `drawOrder`, its top-level entity's
+  place in that order (a merged primitive takes its topmost piece's). The
+  primitives stay in file order, so matching, grading, view sidecar files and
+  the fixtures are unchanged.
+- **The as-is views stack by it** (asDrawnZ), with text and dimension values,
+  which are only labels there, kept on top. Pieces of one entity stack in the
+  order they are read. The overlay keeps its stacking by result.
+- **Not done:** a draw-order table inside a block definition (the order of a
+  block's own entities) isn't applied.
+- **Test:** tst_canon `drawOrderFollowsSortentsTable` (send to back, and the file
+  order without a table).
+
+**D75. A splash screen at start (user request, 2026-11-11).** It covers the
+start-up pause: the window is built, the saved state loaded, and dwgread run
+once for its version (probeParser, synchronous).
+- **The card** (main.cpp) is drawn in code at the screen's pixel ratio, so it is
+  sharp at any scaling: the 256 px app icon, "DWG Checker", what it does, the
+  version, and the credit line of D63, in a thin frame of the icon's blue, with
+  "Starting…" kept inside the card's margin (a QSplashScreen subclass, since the
+  default draws the message against the window's edge).
+- **Timing:** it stays on top for at least a second, so it doesn't just flash,
+  then closes once the main window is showing (QSplashScreen::finish). A click
+  closes it at once.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

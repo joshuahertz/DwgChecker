@@ -164,6 +164,15 @@ public:
     }
     void setPaperSpace(bool on) { m_paper = on; }
     QJsonObject& header() { return m_header; }
+    // The *Model_Space block record, for objects that point at it (a SORTENTSTABLE's owner).
+    quint64 modelSpaceRecord() {
+        if (!m_modelSpace)
+            m_modelSpace = addObject("BLOCK_HEADER", {{"name", "*Model_Space"}, {"base_pt", pt(0, 0, 0)},
+                                                      {"entities", QJsonArray{}}, {"anonymous", 0}, {"blkisxref", 0}});
+        return m_modelSpace;
+    }
+    // Any non-entity object ("SORTENTSTABLE", ...); returns its handle.
+    quint64 object(const QString& type, QJsonObject o) { return addObject(type, o); }
 
     QJsonObject root() const {
         return QJsonObject{{"created_by", "test"}, {"FILEHEADER", QJsonObject{{"version", "AC1032"}}}, {"HEADER", m_header},
@@ -197,6 +206,7 @@ private:
     std::vector<std::pair<QString, quint64>> m_ltypes, m_layers;
     bool m_blockOpen = false, m_paper = false;
     quint64 m_blockHandle = 0;
+    quint64 m_modelSpace = 0;
     QString m_blockName;
     Vec3 m_blockBase;
     std::vector<quint64> m_blockEntities;

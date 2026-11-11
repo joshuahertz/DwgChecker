@@ -88,6 +88,9 @@ struct Primitive {
     quint32 rgb = 0xFFFFFF;
     bool colorByLayer = true;  // the color comes from the layer, not set on the object
     bool ltByLayer = true;     // likewise the linetype
+    // Its top-level entity's place in AutoCAD's draw order (DRAWORDER / SORTENTSTABLE), for
+    // showing the file as AutoCAD does. Display only: the primitives stay in file order.
+    int drawOrder = 0;
     QString sourceType;     // e.g. LINE, LWPOLYLINE, INSERT>ARC
     QString sourceId;       // stable id: handle path "29C/27A#3" (hex handles, segment index)
     quint64 handle = 0;     // handle of the top-level entity it came from

@@ -66,13 +66,20 @@ public:
         QString typePrefix;   // "INSERT>" ...
         quint64 top = 0;      // top-level entity handle
         int depth = 0;
+        int drawOrder = 0;    // the top-level entity's place in AutoCAD's draw order
     };
 
     void run() {
         const auto& top = S.usePaperSpace ? J.paperSpace() : J.modelSpace();
+        // AutoCAD's draw order (DRAWORDER), for showing the file as AutoCAD does. The entities
+        // are still read in file order, so the primitives and the grading don't depend on it.
+        const std::vector<quint64> drawn = J.drawOrder(top, S.usePaperSpace ? J.paperSpaceBlock() : J.modelSpaceBlock());
+        QHash<quint64, int> rank;
+        for (int k = 0; k < static_cast<int>(drawn.size()); ++k) rank.insert(drawn[k], k);
         for (quint64 h : top) {
             Ctx c;
             c.top = h;
+            c.drawOrder = rank.value(h);
             visit(h, c);
         }
         // Top-level handle pattern (informational duplicate signal): model space only.
@@ -250,6 +257,7 @@ private:
         p.layer = layer;
         p.ltypeName = ltype;
         p.ltClass = lt.classify(ltype);
+        p.drawOrder = c.drawOrder;
         const AttrMemo& a = attrsOf(o, layer, c);
         p.aci = a.color.aci;
         p.rgb = a.color.rgb;
@@ -751,6 +759,7 @@ void removeStackedDuplicates(std::vector<Primitive>& prims, const CanonSettings&
             rm[i] = 1;
             prims[dupOf].stacked += 1 + p.stacked;
             prims[dupOf].mergedFrom << p.sourceId;
+            prims[dupOf].drawOrder = std::max(prims[dupOf].drawOrder, p.drawOrder);  // drawn as its topmost piece
         } else {
             grid.insert(key, i);
         }
@@ -805,7 +814,7 @@ void mergeCollinearLines(std::vector<Primitive>& prims, const CanonSettings& s) 
             // Keep the exact coordinates of the extreme original endpoints.
             Vec2 lo = bp.p0, hi = bp.p1;
             double tlo = dot(lo, d), thi = dot(hi, d);
-            int stacked = 0;
+            int stacked = 0, drawOrder = 0;
             QStringList merged;
             for (int i : comp) {
                 const Primitive& q = prims[g[i]];
@@ -815,6 +824,7 @@ void mergeCollinearLines(std::vector<Primitive>& prims, const CanonSettings& s) 
                     if (t > thi) { thi = t; hi = e; }
                 }
                 stacked += q.stacked;
+                drawOrder = std::max(drawOrder, q.drawOrder);
                 if (i != base) { merged << q.sourceId << q.mergedFrom; rm[g[i]] = 1; }
             }
             Primitive& out = prims[g[base]];
@@ -822,6 +832,7 @@ void mergeCollinearLines(std::vector<Primitive>& prims, const CanonSettings& s) 
             out.p1 = hi;
             out.stacked = stacked;
             out.mergedFrom << merged;
+            out.drawOrder = drawOrder;  // drawn as its topmost piece
         }
     }
     compact(prims, rm);
@@ -861,6 +872,7 @@ void mergeCocircularArcs(std::vector<Primitive>& prims, const CanonSettings& s) 
                     if (i == circle) continue;
                     prims[g[circle]].stacked += 1 + prims[g[i]].stacked;
                     prims[g[circle]].mergedFrom << prims[g[i]].sourceId;
+                    prims[g[circle]].drawOrder = std::max(prims[g[circle]].drawOrder, prims[g[i]].drawOrder);
                     rm[g[i]] = 1;
                 }
                 continue;
@@ -893,6 +905,7 @@ void mergeCocircularArcs(std::vector<Primitive>& prims, const CanonSettings& s) 
                 for (size_t k = 1; k < comp.size(); ++k) {
                     base.mergedFrom << prims[g[comp[k]]].sourceId;
                     base.stacked += prims[g[comp[k]]].stacked;
+                    base.drawOrder = std::max(base.drawOrder, prims[g[comp[k]]].drawOrder);
                     rm[g[comp[k]]] = 1;
                 }
                 continue;
@@ -915,6 +928,7 @@ void mergeCocircularArcs(std::vector<Primitive>& prims, const CanonSettings& s) 
                     for (size_t q = k + 1; q <= m; ++q) {
                         out.mergedFrom << prims[g[iv[q].i]].sourceId;
                         out.stacked += prims[g[iv[q].i]].stacked;
+                        out.drawOrder = std::max(out.drawOrder, prims[g[iv[q].i]].drawOrder);
                         rm[g[iv[q].i]] = 1;
                     }
                     out.a1 = newA1;

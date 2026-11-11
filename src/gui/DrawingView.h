@@ -22,10 +22,11 @@ public:
                                 const dc::Transform2D& t = dc::Transform2D::identity());
     void addBox(const dc::BBox& b, const QColor& color, const QString& label = QString());
 
-    // Fits the given box (reference coordinates) with a margin.
+    // Fits the given box (drawing coordinates) with a margin.
     void zoomTo(const dc::BBox& b, double marginFraction = 0.25);
-    // Fits everything drawn with a small margin. Until the user zooms or pans, the
-    // view stays fitted when it is resized (so it opens fitted to its real size).
+    // Fits everything drawn with a small margin.
+    // Either fit is redone when the view is resized, until the user zooms or pans: the view
+    // opens fitted to its real size, and one zoomed while hidden (another tab) shows that zoom.
     void zoomToAll();
     void clearDrawing();
 
@@ -51,7 +52,13 @@ private:
     // Extent of what was drawn, from the geometry itself: Qt's item bounds count
     // cosmetic pen widths and fixed-size labels as drawing units.
     dc::BBox m_extent;
-    bool m_autoFit = false;
+    // The last fit asked for, redone on resize while active (until the user zooms or pans).
+    struct FitTarget {
+        bool active = false;
+        bool all = true;  // everything drawn (m_extent as it is then), else `box`
+        dc::BBox box;
+        double margin = 0;
+    } m_target;
     bool m_panning = false;
     QPoint m_lastPan;
     bool m_lassoEnabled = false;
@@ -66,6 +73,10 @@ Qt::PenStyle penStyleFor(dc::LtClass c);
 // A primitive's own color, as AutoCAD shows it: its resolved ACI or true color, with ACI 7
 // (black/white) in the color that contrasts with the background.
 QColor drawingColor(const dc::Primitive& p, bool darkBackground);
+// The stacking (z value) for a file shown as it is: AutoCAD's draw order (DRAWORDER), with
+// text and dimension values, which are only labels here, on top. Pieces of one entity share
+// it and stack in the order they are added.
+double asDrawnZ(const dc::Primitive& p);
 // AutoCAD's default model space background, and the light alternative.
 inline const QColor kModelSpaceDark(33, 40, 48);
 inline const QColor kModelSpaceLight(255, 255, 255);

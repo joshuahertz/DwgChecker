@@ -51,6 +51,7 @@ private slots:
     void linetypeByLayer();
     void linetypeByBlock();
     void hatchArcStepsIgnoreLastDigit();
+    void drawOrderFollowsSortentsTable();
     void linetypeExplicitAndPatterns();
     void layerZeroInheritance();
     // Misc
@@ -476,6 +477,34 @@ void TestCanon::hatchArcStepsIgnoreLastDigit() {
     const int printed = loopSize(1.5707963267949), exact = loopSize(kPi / 2);
     QVERIFY(exact > 30);
     QCOMPARE(printed, exact);
+}
+
+void TestCanon::drawOrderFollowsSortentsTable() {
+    // Three lines in file order a, m, c. DRAWORDER "send to back" on c writes a SORTENTSTABLE
+    // that shifts the sort handles up by one place, as in a real file: a draws as m, m as c,
+    // and c as a, so AutoCAD draws c, a, m. The primitives stay in file order (grading);
+    // each carries its place in the draw order (display).
+    auto build = [](bool table) {
+        DocBuilder b;
+        const quint64 ms = b.modelSpaceRecord();
+        const quint64 a = b.line({0, 0}, {1, 0});
+        const quint64 m = b.line({0, 1}, {1, 1});
+        const quint64 c = b.line({0, 2}, {1, 2});
+        if (table)
+            b.object("SORTENTSTABLE", {{"block_owner", href(ms, 4)},
+                                       {"ents", QJsonArray{href(a, 4), href(m, 4), href(c, 4)}},
+                                       {"sort_ents", QJsonArray{href(m, 0), href(c, 0), href(a, 0)}}});
+        return b.canon();
+    };
+    const Drawing sorted = build(true);
+    QCOMPARE(sorted.prims.size(), size_t(3));
+    for (int k = 0; k < 3; ++k) QCOMPARE(sorted.prims[k].p0.y, static_cast<double>(k));  // file order
+    QCOMPARE(sorted.prims[0].drawOrder, 1);  // a
+    QCOMPARE(sorted.prims[1].drawOrder, 2);  // m, on top
+    QCOMPARE(sorted.prims[2].drawOrder, 0);  // c, sent to the back
+
+    const Drawing plain = build(false);  // no table: the file order
+    for (int k = 0; k < 3; ++k) QCOMPARE(plain.prims[k].drawOrder, k);
 }
 
 QTEST_GUILESS_MAIN(TestCanon)

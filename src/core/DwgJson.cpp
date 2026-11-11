@@ -6,6 +6,8 @@
 #include <QJsonParseError>
 #include <QRegularExpression>
 
+#include <algorithm>
+
 namespace dc {
 
 quint64 DwgJson::href(const QJsonValue& v) {
@@ -91,6 +93,7 @@ QString DwgJson::typeOf(const QJsonObject& o) const {
 void DwgJson::index() {
     m_objects.clear(); m_byHandle.clear(); m_layers.clear(); m_layerByName.clear();
     m_ltypes.clear(); m_blocks.clear(); m_model.clear(); m_paper.clear(); m_ownedBy.clear();
+    m_sortKeys.clear(); m_modelBlock = m_paperBlock = 0;
 
     const QJsonArray arr = m_root.value("OBJECTS").toArray();
     m_objects.reserve(arr.size());
@@ -124,7 +127,15 @@ void DwgJson::index() {
                 b.anonymous = integer(o, "anonymous") != 0;
                 b.xref = integer(o, "blkisxref") != 0;
                 for (const auto& e : o.value("entities").toArray()) b.entities.push_back(href(e));
+                if (b.name.compare(QLatin1String("*Model_Space"), Qt::CaseInsensitive) == 0) m_modelBlock = h;
+                if (b.name.compare(QLatin1String("*Paper_Space"), Qt::CaseInsensitive) == 0) m_paperBlock = h;
                 m_blocks.insert(h, b);
+            } else if (type == "SORTENTSTABLE") {
+                // Pairs by position: ents[k] is drawn as if its handle were sort_ents[k].
+                const QJsonArray ents = o.value("ents").toArray(), sorts = o.value("sort_ents").toArray();
+                QHash<quint64, quint64>& keys = m_sortKeys[href(o.value("block_owner"))];
+                for (qsizetype k = 0; k < std::min(ents.size(), sorts.size()); ++k)
+                    if (const quint64 e = href(ents[k]), sk = href(sorts[k]); e && sk) keys.insert(e, sk);
             }
             continue;
         }
@@ -146,6 +157,15 @@ void DwgJson::index() {
             it->entities = owned;
         }
     }
+}
+
+std::vector<quint64> DwgJson::drawOrder(const std::vector<quint64>& ents, quint64 blockHandle) const {
+    const auto it = m_sortKeys.constFind(blockHandle);
+    if (!blockHandle || it == m_sortKeys.constEnd() || it->isEmpty()) return ents;
+    std::vector<quint64> out = ents;
+    const QHash<quint64, quint64>& keys = *it;
+    std::stable_sort(out.begin(), out.end(), [&](quint64 a, quint64 b) { return keys.value(a, a) < keys.value(b, b); });
+    return out;
 }
 
 const QJsonObject* DwgJson::object(quint64 handle) const {
