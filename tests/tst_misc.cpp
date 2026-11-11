@@ -278,13 +278,6 @@ void TestMisc::settingsRoundTrip() {
     const AppSettings t = AppSettings::fromJson(s.toJson());
     QVERIFY(!t.compare.detectLocation);
     QVERIFY(t.compare.matchColor && t.compare.requireByLayer);
-    // Whether step 2 (the location mode) was done is saved too; older settings count as done.
-    AppSettings u;
-    u.modeConfirmed = false;
-    QVERIFY(!AppSettings::fromJson(u.toJson()).modeConfirmed);
-    QJsonObject legacy = u.toJson();
-    legacy.remove("modeConfirmed");
-    QVERIFY(AppSettings::fromJson(legacy).modeConfirmed);
     QCOMPARE(t.compare.colorTolerance, 7.0);
     QCOMPARE(t.compare.locationPenaltyErrors, 0);
     QCOMPARE(t.compare.mode, Mode::Orthographic);

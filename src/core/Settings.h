@@ -97,9 +97,6 @@ struct AppSettings {
     DuplicateSettings duplicates;
     LoaderSettings loader;
     QString identityRegex = defaultIdentityRegex();
-    // Saved per set of solution drawings: whether the instructor chose the location mode (the
-    // main window's step 2). Settings saved before this existed count as chosen.
-    bool modeConfirmed = true;
 
     // Written as "version". 2: the hatch pattern check defaults on; settings saved
     // before that (no version) take the new default.

@@ -45,10 +45,6 @@ public:
     // Step 2 of the main window: the location mode (or the table of solution drawings). The
     // panel builds it; MainWindow puts it in its step box.
     QWidget* modeStepWidget() const { return m_modeStep; }
-    // Whether the location mode was chosen for these solution drawings: by picking it (each
-    // drawing's, with several) or because their saved settings were loaded.
-    bool modeChosen() const;
-    void setModeChosen(bool chosen);
     // What each solution drawing contains, by AppSettings::drawingKey (once they are read).
     void setDrawingContents(const std::map<QString, DrawingContent>& byKey);
     dc::AppSettings settings() const;
@@ -57,8 +53,7 @@ public:
 signals:
     void changed();
     void editViewsRequested(const QString& refPath);  // "Edit views…"; empty = the only drawing
-    void modeChoiceChanged();  // modeChosen() may have changed
-    void modeChosenByUser();   // a location mode was picked from a drop-down
+    void previewRequested(const QString& refPath);    // a drawing's name in the Solution drawings table
 
 protected:
     bool eventFilter(QObject* o, QEvent* e) override;
@@ -78,7 +73,6 @@ private:
     // with several solution drawings says which drawings each one applies to.
     void updateScopes();
     DrawingContent contentOf(const QString& key) const;
-    void updateModeNote();
     void rebuildDrawingRows();
     void applyDrawingLayout();
 
@@ -87,9 +81,6 @@ private:
     QWidget* m_drawingsBox;  // the Solution drawings table, in step 2
     QWidget* m_modeStep;
     QFormLayout* m_modeForm;
-    QLabel* m_modeNote;
-    bool m_modeChosen = false;
-    QSet<QString> m_chosenKeys;  // drawings whose mode was chosen (several drawings)
     QCheckBox* m_matchColor;
     QDoubleSpinBox* m_colorTol;
     QWidget* m_colorTolRow;

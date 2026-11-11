@@ -8,6 +8,7 @@
 #include <QPointer>
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <optional>
 
@@ -58,6 +59,8 @@ private:
     void cancel();
     void onFinished();
     void editViews(const QString& refPath = QString());  // empty: the only drawing, or ask which
+    // A window with the solution drawing in its own colors; opens once it is read.
+    void previewDrawing(const QString& refPath);
     void exportResults();
     void exportDuplicates();
     void openDetail(int student, int errorIndex = -1);
@@ -66,6 +69,7 @@ private:
     void referenceChanged();
     void folderChanged();
     void updateRefInfo();    // "inches · 4 objects · 5 dimensions", read in the background
+    void endRefRead();       // hides the reading progress and the busy cursor; drops a read in flight
     void updateDirInfo();    // "33 drawings found"
     void updateSteps();      // card highlights, Run enabled, the step guide
     void storeQuizSettings();  // the current settings, remembered for the chosen reference
@@ -74,10 +78,19 @@ private:
 
     // Top bar
     PathCard* m_refCard = nullptr;
+    QToolButton* m_showRef = nullptr;  // "Show drawing" on the card, for a single solution drawing
     PathCard* m_dirCard = nullptr;
     StepBox* m_modeBox = nullptr;  // step 2: the location mode
     int m_refReadable = 0;  // 1 read, -1 not readable, 0 reading / nothing chosen
     QByteArray m_refCanonSig;  // reading rules the solution card was last described with
+    int m_refRead = 0;      // counts reads of the solution drawings; only the latest updates the card
+    bool m_refReading = false;
+    // The solution drawings as last read for the card, by path (the reading rules of
+    // m_refCanonSig), with each one's summary; for the preview and Edit views.
+    std::map<QString, dc::DrawingPtr> m_refDrawings;
+    std::map<QString, QString> m_refSummaries;
+    QString m_pendingPreview;  // clicked while still being read: opens when the read ends
+    QHash<QString, QPointer<QDialog>> m_previews;  // one open preview per drawing
     int m_dirCount = 0;     // drawings in the chosen folder
     QToolButton* m_settingsToggle = nullptr;
     QScrollArea* m_settingsArea = nullptr;

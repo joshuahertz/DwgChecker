@@ -7,6 +7,7 @@
 #include "DuplicatesTab.h"
 #include "PathCard.h"
 #include "Platform.h"
+#include "PreviewDialog.h"
 #include "ResultsModel.h"
 #include "SettingsPanel.h"
 #include "ViewEditorDialog.h"
@@ -49,6 +50,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
+
+#include <functional>
 
 using namespace dc;
 
@@ -95,6 +98,15 @@ void MainWindow::buildUi() {
     lay->setContentsMargins(0, 0, 6, 0);
     m_refCard = new PathCard(PathCard::Kind::File, 1, tr("Reference (solution)"), tr("Click to choose the reference drawing"),
                              tr("Drawings (*.dwg *.json)"), {QStringLiteral("dwg"), QStringLiteral("json")}, true, left);
+    // One solution drawing: shown from the card (several: from their names in step 2).
+    m_showRef = new QToolButton(m_refCard);
+    m_showRef->setText(tr("Show drawing"));
+    m_showRef->setToolTip(tr("Show the solution drawing in its own colors and linetypes"));
+    m_showRef->setVisible(false);
+    m_refCard->addButton(m_showRef);
+    connect(m_showRef, &QToolButton::clicked, this, [this]() {
+        if (m_refCard->paths().size() == 1) previewDrawing(m_refCard->path());
+    });
     m_dirCard = new PathCard(PathCard::Kind::Folder, 3, tr("Student submissions"), tr("Click to choose the submissions folder"),
                              QString(), {}, false, left);
     // Step 2 (built by the settings panel, which keeps it in step with the other settings):
@@ -303,8 +315,7 @@ void MainWindow::buildUi() {
         if (canonSignature(currentSettings()) != m_refCanonSig) updateRefInfo();
     });
     connect(m_settings, &SettingsPanel::editViewsRequested, this, &MainWindow::editViews);
-    connect(m_settings, &SettingsPanel::modeChoiceChanged, this, &MainWindow::updateSteps);
-    connect(m_settings, &SettingsPanel::modeChosenByUser, this, &MainWindow::storeQuizSettings);  // remembered as chosen
+    connect(m_settings, &SettingsPanel::previewRequested, this, &MainWindow::previewDrawing);
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::run);
     connect(m_cancelBtn, &QPushButton::clicked, this, &MainWindow::cancel);
     connect(exportBtn, &QPushButton::clicked, this, &MainWindow::exportResults);
@@ -382,16 +393,22 @@ struct RefSummary {
     bool ok = false;
     QString text;
     std::map<QString, DrawingContent> contents;  // by AppSettings::drawingKey
+    // By path, each drawing read (also those before one that failed), for the preview and
+    // Edit views, and its own line ("inches  ·  42 objects, 2 dimensions") for the preview.
+    std::map<QString, DrawingPtr> drawings;
+    std::map<QString, QString> summaries;
 };
 
 // "inches  ·  42 objects, 2 dimensions; ignoring 51 objects on turned-off or frozen layers",
 // or "inches" and then a line per drawing ("Part A – 42 objects, …") when there are several.
-// Read in the background.
-RefSummary describeReferences(const QStringList& paths, const AppSettings& s) {
+// Read in the background; `progress(i, n, name)` is called before reading drawing i of n.
+RefSummary describeReferences(const QStringList& paths, const AppSettings& s,
+                              const std::function<void(int, int, const QString&)>& progress) {
     AutoLoader loader(s.loader);
     RefSummary out;
     QStringList lines, units;
     for (const QString& path : paths) {
+        progress(static_cast<int>(lines.size()), static_cast<int>(paths.size()), QFileInfo(path).completeBaseName());
         QString err;
         const auto d = loadDrawing(path, loader, s.referenceCanon(), &err);
         if (!d) {
@@ -413,6 +430,8 @@ RefSummary describeReferences(const QStringList& paths, const AppSettings& s) {
             line += (d->hiddenLayerObjectsSkipped ? QObject::tr("; ignoring %1 on turned-off or frozen layers")
                                                   : QObject::tr("; including %1 on turned-off or frozen layers"))
                         .arg(countText(d->hiddenLayerObjects, QObject::tr("object"), QObject::tr("objects")));
+        out.drawings[path] = d;
+        out.summaries[path] = d->meta.insUnits > 0 ? insUnitsName(d->meta.insUnits) + QStringLiteral("  ·  ") + line : line;
         if (d->meta.insUnits > 0 && !units.contains(insUnitsName(d->meta.insUnits))) units << insUnitsName(d->meta.insUnits);
         lines << (paths.size() > 1 ? QStringLiteral("%1 \u2013 %2").arg(QFileInfo(path).completeBaseName(), line) : line);
     }
@@ -428,9 +447,18 @@ RefSummary describeReferences(const QStringList& paths, const AppSettings& s) {
 void MainWindow::referenceChanged() {
     const QStringList paths = m_refCard->paths();
     addRecent(kRecentRefs, m_refCard, PathCard::encode(paths));
+    // Previews of the previous choice ("Drawing 2" may now be another file) close.
+    m_pendingPreview.clear();
+    m_refDrawings.clear();
+    m_refSummaries.clear();
+    for (const QPointer<QDialog>& d : std::as_const(m_previews))
+        if (d) d->close();
+    m_previews.clear();
+    m_showRef->setVisible(paths.size() == 1);
     m_refReadable = 0;
     m_settings->setSolutionDrawings(paths);  // several: each gets its own mode and checks
     if (paths.isEmpty()) {
+        endRefRead();
         m_refCard->setCaptionNote(QString());
         m_refCard->setDetail(tr("The solution drawing the submissions are graded against; choose several for a multi-drawing "
                                 "assignment (or drop them here)"));
@@ -441,13 +469,11 @@ void MainWindow::referenceChanged() {
     if (!saved.isEmpty()) {
         const AppSettings s = AppSettings::fromJson(QJsonDocument::fromJson(saved).object());
         m_settings->setSettings(s);
-        m_settings->setModeChosen(s.modeConfirmed);  // saved with them; other changes save settings too
         m_refCard->setCaptionNote(paths.size() > 1 ? tr("settings saved for these reference solutions")
                                                    : tr("settings saved for this reference solution"));
         log(tr("loaded the settings saved for %1").arg(m_refCard->paths().size() > 1 ? tr("this set of drawings")
                                                                                        : QFileInfo(paths.front()).fileName()));
     } else {
-        m_settings->setModeChosen(false);  // step 2: choose it
         m_refCard->setCaptionNote(paths.size() > 1 ? tr("new reference solutions: check the settings")
                                                    : tr("new reference solution: check the settings"));
     }
@@ -465,26 +491,87 @@ void MainWindow::updateRefInfo() {
     if (paths.isEmpty()) return;
     for (const QString& p : paths)
         if (!QFileInfo(p).isFile()) {
+            endRefRead();
             m_refReadable = -1;
             m_refCard->setDetail(tr("file not found: %1").arg(QDir::toNativeSeparators(p)), true);
             updateSteps();
             return;
         }
-    m_refCard->setDetail(tr("reading…"));
+    // Reading takes a few seconds per drawing (dwgread): a progress bar on the card, which
+    // moves for one drawing and counts several, and the busy cursor over the window, which
+    // stays usable meanwhile.
+    const int read = ++m_refRead;
+    m_refReading = true;
+    m_refDrawings.clear();  // read again with the current reading rules
+    m_refSummaries.clear();
+    m_refCard->setDetail(paths.size() > 1 ? tr("reading %1 drawings…").arg(paths.size()) : tr("reading…"));
+    m_refCard->showProgress(0, static_cast<int>(paths.size()));
+    setCursor(Qt::BusyCursor);
     AppSettings s = currentSettings();
     m_refCanonSig = canonSignature(s);
     s.loader.dwgreadPath = platform::findDwgRead();
+    QPointer<MainWindow> self(this);
+    auto progress = [self, read](int done, int total, const QString& name) {
+        if (total < 2) return;  // the moving bar already says it
+        QMetaObject::invokeMethod(
+            qApp, [self, read, done, total, name]() {
+                if (!self || read != self->m_refRead) return;  // a newer read, or the choice was cleared
+                self->m_refCard->showProgress(done, total);
+                self->m_refCard->setDetail(
+                    tr("reading %1 (%2 of %3)…").arg(name, QString::number(done + 1), QString::number(total)));
+            },
+            Qt::QueuedConnection);
+    };
     auto* w = new QFutureWatcher<RefSummary>(this);
-    connect(w, &QFutureWatcherBase::finished, this, [this, w, paths]() {
+    connect(w, &QFutureWatcherBase::finished, this, [this, w, read]() {
         const RefSummary res = w->result();
         w->deleteLater();
-        if (paths != m_refCard->paths()) return;  // a newer choice is being read
+        if (read != m_refRead) return;  // a newer choice is being read, or the choice was cleared
+        const QString pending = m_pendingPreview;  // a drawing clicked while reading
+        endRefRead();
         m_refReadable = res.ok ? 1 : -1;
+        m_refDrawings = res.drawings;
+        m_refSummaries = res.summaries;
         m_refCard->setDetail(res.text, !res.ok);
         if (res.ok) m_settings->setDrawingContents(res.contents);  // checks only for what the drawings have
         updateSteps();
+        if (!pending.isEmpty()) previewDrawing(pending);
     });
-    w->setFuture(QtConcurrent::run([paths, s]() { return describeReferences(paths, s); }));
+    w->setFuture(QtConcurrent::run([paths, s, progress]() { return describeReferences(paths, s, progress); }));
+}
+
+void MainWindow::endRefRead() {
+    ++m_refRead;  // a read still running no longer updates the card
+    m_refReading = false;
+    m_pendingPreview.clear();
+    m_refCard->hideProgress();
+    unsetCursor();
+}
+
+void MainWindow::previewDrawing(const QString& refPath) {
+    if (const QPointer<QDialog> open = m_previews.value(refPath)) {
+        open->raise();
+        open->activateWindow();
+        return;
+    }
+    const QString name = QFileInfo(refPath).fileName();
+    const auto it = m_refDrawings.find(refPath);
+    if (it == m_refDrawings.end()) {
+        if (m_refReading) {  // the card shows the progress; the preview opens when it ends
+            m_pendingPreview = refPath;
+            return;
+        }
+        QMessageBox::warning(this, tr("Show drawing"),
+                             tr("%1 could not be read; the reference card says why.").arg(name));
+        return;
+    }
+    // "Drawing 2", as the results call it (the card's order).
+    const QStringList refs = m_refCard->paths();
+    const int k = static_cast<int>(refs.indexOf(refPath));
+    const QString title = refs.size() > 1 && k >= 0 ? tr("Drawing %1: %2").arg(QString::number(k + 1), name) : name;
+    auto* dlg = new DrawingPreviewDialog(it->second, title, m_refSummaries[refPath], this);
+    m_previews.insert(refPath, dlg);
+    dlg->show();
 }
 
 void MainWindow::updateDirInfo() {
@@ -520,21 +607,22 @@ void MainWindow::updateSteps() {
     using State = PathCard::State;
     const bool running = m_watcher.isRunning();
     const bool refDone = !m_refCard->path().isEmpty() && m_refReadable >= 0;  // still reading counts as chosen
-    const bool modeDone = refDone && m_settings->modeChosen();
+    // Step 2 always has a location mode (the default, or the one saved for these drawings),
+    // which may well be right as it is: it never holds up Run (D68).
+    const bool modeDone = refDone;
     const bool dirDone = m_dirCount > 0;
-    const bool ready = refDone && modeDone && dirDone;
+    const bool ready = refDone && dirDone;
     m_refCard->setState(refDone ? State::Done : State::Active);
-    m_modeBox->setState(modeDone ? State::Done : refDone ? State::Active : State::Waiting);
-    m_dirCard->setState(dirDone ? State::Done : modeDone ? State::Active : State::Waiting);
+    m_modeBox->setState(modeDone ? State::Done : State::Waiting);
+    m_dirCard->setState(dirDone ? State::Done : refDone ? State::Active : State::Waiting);
     m_runBtn->setEnabled(ready && !running);
     m_runBtn->setIcon(QIcon(stepBadge(4, ready ? State::Active : State::Waiting, 24, devicePixelRatioF())));
-    m_runBtn->setToolTip(ready      ? tr("Step 4: grade the %1 drawings").arg(m_dirCount)
-                         : !refDone  ? tr("First choose the reference drawing (step 1)")
-                         : !modeDone ? tr("Next choose the location mode (step 2)")
-                                     : tr("Next choose the submissions folder (step 3)"));
+    m_runBtn->setToolTip(ready     ? tr("Step 4: grade the %1 drawings").arg(m_dirCount)
+                         : !refDone ? tr("First choose the reference drawing (step 1)")
+                                    : tr("Next choose the submissions folder (step 3)"));
 
     // The guide shown in Results until the first run: done steps checked, the next one in bold.
-    const int next = !refDone ? 1 : !modeDone ? 2 : !dirDone ? 3 : 4;
+    const int next = !refDone ? 1 : !dirDone ? 3 : 4;
     auto line = [next](int n, bool done, const QString& text) {
         QString t = QStringLiteral("%1&nbsp;&nbsp;%2").arg(done ? QStringLiteral("&#10003;") : QString::number(n), text);
         if (n == next) t = QStringLiteral("<b>%1</b>").arg(t);
@@ -544,7 +632,7 @@ void MainWindow::updateSteps() {
     m_guide->setText(QStringLiteral("<h2>%1</h2>").arg(tr("Grade a set of drawings in four steps")) +
                      line(1, refDone, tr("Choose the reference (solution) drawing, or several for a multi-drawing assignment: "
                                          "click the first card on the left.")) +
-                     line(2, modeDone, tr("Choose the location mode (with several drawings, one for each) in the second box. "
+                     line(2, modeDone, tr("Check the location mode (with several drawings, one for each) in the second box. "
                                           "It is remembered for these reference solutions.")) +
                      line(3, dirDone, tr("Choose the folder of student submissions: click the third card.")) +
                      line(4, false, tr("Click <b>Run</b>. The results appear here; click a row for its details.")));
@@ -703,13 +791,19 @@ void MainWindow::editViews(const QString& chosen) {
     }
     if (!QFileInfo(refPath).isFile()) { QMessageBox::warning(this, tr("Views"), tr("File not found: %1").arg(refPath)); return; }
     AppSettings s = currentSettings();
-    s.loader.dwgreadPath = platform::findDwgRead();
-    AutoLoader loader(s.loader);
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    QString err;
-    auto ref = loadDrawing(refPath, loader, s.referenceCanon(), &err);
-    QApplication::restoreOverrideCursor();
-    if (!ref) { QMessageBox::warning(this, tr("Views"), tr("Could not read the reference: %1").arg(err)); return; }
+    // The drawing as read for the card (same reading rules), else read now.
+    DrawingPtr ref;
+    if (const auto known = m_refDrawings.find(refPath); known != m_refDrawings.end()) {
+        ref = known->second;
+    } else {
+        s.loader.dwgreadPath = platform::findDwgRead();
+        AutoLoader loader(s.loader);
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        QString err;
+        ref = loadDrawing(refPath, loader, s.referenceCanon(), &err);
+        QApplication::restoreOverrideCursor();
+        if (!ref) { QMessageBox::warning(this, tr("Views"), tr("Could not read the reference: %1").arg(err)); return; }
+    }
     QString note;
     const auto known = m_viewsByRef.constFind(refPath);
     const ViewSet initial = resolveReferenceViews(*ref, refPath, s.compare,

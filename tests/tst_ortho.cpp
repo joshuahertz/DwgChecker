@@ -48,6 +48,7 @@ private slots:
     void scaledDrawing();
     void ignoredView();
     void ignoredFrameKeepsRealErrors();
+    void ignoredCopyOfAGradedView();
 
 private:
     std::shared_ptr<Drawing> ref;
@@ -324,6 +325,54 @@ void TestOrtho::ignoredFrameKeepsRealErrors() {
     vs2.primView.resize(more.prims.size(), -1);
     vs2.rebuild(more);
     QVERIFY(vs2.primView.back() != fv);
+}
+
+void TestOrtho::ignoredCopyOfAGradedView() {
+    // A solution with the part twice: the same geometry again with its dimensions, named
+    // Ignored and listed first, and a clean copy, the graded Front view. The student draws
+    // the part once. Both views claimed it equally, the first in the list won, and the
+    // drawing scored 0 against its own solution; the graded view must take it.
+    auto shape = [](Vec2 o, const QString& tag) {  // an L: it maps onto itself only unmoved
+        const std::vector<Vec2> pts = {{0, 0}, {4, 0}, {4, 1}, {1.5, 1}, {1.5, 3}, {0, 3}};
+        std::vector<Primitive> out;
+        for (size_t k = 0; k < pts.size(); ++k) {
+            const Vec2 a = pts[k], b = pts[(k + 1) % pts.size()];
+            out.push_back(plainLine({o.x + a.x, o.y + a.y}, {o.x + b.x, o.y + b.y}, tag + QString::number(k)));
+        }
+        return out;
+    };
+    const int n = 6;
+    Drawing two;
+    for (const Primitive& p : shape({0, -10}, QStringLiteral("I"))) two.prims.push_back(p);  // the dimensioned copy
+    for (const Primitive& p : shape({0, 0}, QStringLiteral("F"))) two.prims.push_back(p);    // the graded one
+    ViewSet vs;
+    ViewDef ignored;
+    ignored.id = 0;
+    ignored.name = ViewName::Ignored;
+    ViewDef front;
+    front.id = 1;
+    front.name = ViewName::Front;
+    vs.views = {ignored, front};
+    vs.primView.assign(two.prims.size(), 0);
+    for (int i = n; i < 2 * n; ++i) vs.primView[i] = 1;
+    vs.rebuild(two);
+    QCOMPARE(vs.views[1].prims.size(), size_t(n));
+
+    Drawing once;  // the student's single copy, somewhere else on the sheet
+    for (const Primitive& p : shape({20, 5}, QStringLiteral("S"))) once.prims.push_back(p);
+    const CompareResult r = compareDrawings(two, once, ortho(), &vs);
+    QVERIFY2(r.views[1].found, qPrintable(dumpErrors(r)));
+    QCOMPARE(r.refCount, n);
+    QCOMPARE(r.matched, n);
+    QCOMPARE(r.penalizedExtras, 0);
+    QCOMPARE(r.correctness, 100.0);
+
+    Drawing both = once;  // with the dimensioned copy too: one view each, nothing extra
+    for (const Primitive& p : shape({20, -5}, QStringLiteral("T"))) both.prims.push_back(p);
+    const CompareResult b = compareDrawings(two, both, ortho(), &vs);
+    QVERIFY2(b.views[0].found && b.views[1].found, qPrintable(dumpErrors(b)));
+    QCOMPARE(b.matched, n);
+    QCOMPARE(b.penalizedExtras, 0);
 }
 
 QTEST_GUILESS_MAIN(TestOrtho)

@@ -11,6 +11,7 @@
 class QHBoxLayout;
 class QLabel;
 class QMenu;
+class QProgressBar;
 class QToolButton;
 
 namespace dcgui {
@@ -36,6 +37,10 @@ public:
     static QString encode(const QStringList& paths) { return paths.join(QLatin1Char('|')); }
     static QStringList decode(const QString& entry) { return entry.split(QLatin1Char('|'), Qt::SkipEmptyParts); }
     void setDetail(const QString& text, bool problem = false);
+    // A thin progress bar under the detail line while the choice is being read: `done` of
+    // `total` when total > 1, else a moving bar. hideProgress() removes it.
+    void showProgress(int done, int total);
+    void hideProgress();
     // Gray text after the caption, e.g. "settings saved for this quiz".
     void setCaptionNote(const QString& note);
     // Most recent first; listed by the Recent button (hidden when empty).
@@ -74,6 +79,7 @@ private:
     QLabel* m_captionLabel = nullptr;
     ElidedLabel* m_title = nullptr;
     QLabel* m_detail = nullptr;  // wraps (a line per solution drawing)
+    QProgressBar* m_progress = nullptr;
     QToolButton* m_recentBtn = nullptr;
     QMenu* m_menu = nullptr;
     QHBoxLayout* m_buttons = nullptr;

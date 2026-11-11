@@ -903,6 +903,124 @@ signs it after upload.
   on this managed laptop, so the first install should come from a
   private-audience Store submission.
 
+**D65. Progress while the solution drawings are read (user request,
+2026-11-10).** Reading them was already in the background, but the only sign was
+"reading…" in the card's gray detail line, so the pause after choosing them
+looked like nothing was happening. Now the reference card shows a thin progress
+bar under that line: a moving bar for one drawing, and for several a bar that
+counts them, with "reading Q10Problem2 (2 of 3)…". The window shows Qt's busy
+cursor (an arrow with a spinner, not the hourglass, since the window stays
+usable; the card keeps its pointing hand). Every read gets a number, and only
+the latest one updates the card or ends the busy state, so a slow earlier read
+that finishes late changes nothing. Clearing the choice or a missing file ends
+it at once. Edit views… still reads its drawing on the GUI thread with the wait
+cursor, as before.
+
+**D66. A preview of each solution drawing (user request, 2026-11-10).** With
+several solution drawings, the names in the step 2 table are links. Each opens a
+window (PreviewDialog) that shows that drawing alone, so the drawings can be
+told apart.
+- **The same drawing code as the detail view** (DrawingView): lines, arcs,
+  circles, hatches, text and dimension values, linetypes as dash patterns,
+  wheel zoom, drag pan, and a tooltip with each item's kind, layer and linetype.
+- **The drawing's own colors** instead of status colors: each primitive's color
+  after ByLayer and ByBlock (its ACI or true color, already resolved by the
+  canonicalizer). ACI 7 shows white on the dark background and black on the
+  white one, as in AutoCAD. The background starts as AutoCAD's default model
+  space (33, 40, 48), so yellow and white lines show. A checkbox switches it to
+  white, remembered in "preview/darkBackground".
+- **What is shown is what is graded:** the drawing as read with the reference
+  reading rules, so objects on turned-off or frozen layers are left out when
+  that setting is on, and the header says so, as the card does.
+- **Fast:** the drawings read for the reference card are kept (m_refDrawings, by
+  path, together with each one's summary line), so the preview opens at once,
+  and Edit views… uses them too instead of reading the file again. They are
+  dropped when the reading rules change and the card reads them again. A name
+  clicked while reading opens when the read ends; a drawing that could not be
+  read says so.
+- **Several previews can be open,** one per drawing; clicking the same name
+  again brings its window forward. Their titles use the results' "Drawing N"
+  numbers. They close when the choice of solution drawings changes, since
+  "Drawing 2" may then be another file.
+- **A single solution drawing** has no table, so the reference card gets a
+  **Show drawing** button (next to Recent, shown only with exactly one drawing)
+  that opens the same window (user decision).
+- **Not done:** the view boxes of an Orthographic drawing aren't drawn in the
+  preview.
+
+**D67. A drawing's mode, once picked, counts as chosen in any set (bug fix,
+2026-11-10; superseded by D68 the same day, and its code removed).** With several solution drawings, Run stayed disabled until every
+drawing's Location mode drop-down was clicked, even when the modes shown were
+already right. Step 2 counted as done only for the exact set of paths whose
+settings were saved with modeConfirmed, but settings are keyed by the full
+paths of the set (quizKey). The same files in another folder, or the set with a
+file added or removed, are a new set: each drawing's mode was filled in (modes
+are remembered by file name), yet none counted as chosen. The saved settings
+showed this: three separate Q10 sets and two Q4 sets.
+- **DrawingSettings has `modeChosen`,** saved with the drawing's mode (JSON
+  "modeChosen"; settings saved before it read as false). Picking a drawing's
+  mode sets it; loading a set saved as confirmed sets it for that set's
+  drawings. With several drawings, step 2 is done when all of the set's drawings
+  have it, so a drawing is asked about once, not once per set or folder. A
+  drawing never seen before still has to be chosen (D60).
+- **setSettings merges perDrawing instead of replacing it:** what the loaded
+  settings say about a drawing wins, drawings they don't list stay known, and
+  modeChosen, once true, stays true. An older saved set holds an older snapshot
+  of the drawings and would otherwise forget picks made since.
+- **One drawing is unchanged:** its mode is the main Location mode, saved with
+  the set.
+- **Test:** tst_batch `perDrawingSettingsRoundTrip` (the flag round-trips;
+  without it, false).
+
+**D68. The location mode no longer holds up Run (user decision, 2026-11-10).**
+The default mode, or the one remembered for the drawings, is often right, so
+there's no reason to make the instructor touch every drop-down. This reverses
+D60's "the mode must be chosen every time" gate, and with it D67.
+- **Run** is enabled once a readable reference and a submissions folder with
+  drawings are chosen. Step 2 gets its check as soon as step 1 is done, and the
+  guide says "Check the location mode".
+- **Removed:** AppSettings::modeConfirmed, DrawingSettings::modeChosen and
+  their JSON keys (old saved settings that have them still load; the keys are
+  ignored), SettingsPanel's modeChosen()/setModeChosen(), the bold "Choose the
+  location mode…" note in step 2, and the modeChoiceChanged/modeChosenByUser
+  signals. A mode change is still saved for the reference solutions at once,
+  through the panel's changed() signal, as before.
+- **Kept from D67:** loading saved settings merges perDrawing instead of
+  replacing it, so an older saved set doesn't bring back older modes for
+  drawings it doesn't list.
+
+**D69. Graded views come before Ignored ones (bug fix, 2026-11-10).** In a Q3
+set of five Orthographic solution drawings, every student's Problem 2 and
+Extended Work files were matched to each other's solution. Both solutions have
+the part twice: a clean copy, graded as Front, and the same geometry again with
+its dimensions, named Ignored, and the Ignored view was first in the view list.
+- **Cause:** resolveViews placed the views by the most student items claimed in
+  total, ties to the first combination tried, which varies view 0 fastest. On a
+  student's single copy, Front and Ignored claimed the same items, so the
+  Ignored view took it. Front was "not found", its items were set aside, and the
+  file scored about 0 against its own solution. With both right pairings at
+  about 0, the one-to-one assignment (D52) had nothing to prefer, and the swap
+  was as good as any. Problem 1 also has Ignored views, but listed after its
+  graded ones, and Problems 3 and 4 have none, so they were unaffected.
+  Reproduced in Python with a simulation of the view placement on the real
+  files (kept in the scratchpad, not in the repo): Problem 2's file scored 0 %
+  against Problem 2 before the fix and 40.5 % after. The dumps and drawings
+  showed the duplicated geometry.
+- **Fix:** an Ignored view only keeps a student's copy of it from counting as
+  extra, so it never competes with a graded view.
+  - resolveViews scores a combination by the items claimed by graded views,
+    then the items the Ignored views add, then the fewest failed alignment
+    checks. The greedy path for many views also places graded views first.
+  - compareCore's exact matching (Pass A and B) runs graded views before Ignored
+    ones, then larger before smaller, so an Ignored view placed over a graded
+    one can't take its items either.
+- **Test:** tst_ortho `ignoredCopyOfAGradedView`: a solution with an L-shape
+  twice (Ignored first, Front second). A student's single copy scores 100 %
+  with Front found. A student who drew both copies gets one view each and
+  nothing extra.
+- **Results graded before this fix** for drawings with such an Ignored copy
+  were wrong (about 0 % for those files) and should be run again.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

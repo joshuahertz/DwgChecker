@@ -14,6 +14,7 @@ qt_add_executable(DwgChecker WIN32 MACOSX_BUNDLE
   PathCard.h PathCard.cpp
   DetailDialog.h DetailDialog.cpp
   DrawingView.h DrawingView.cpp
+  PreviewDialog.h PreviewDialog.cpp
   ViewEditorDialog.h ViewEditorDialog.cpp
   AutoCadController.h AutoCadController.cpp
 )

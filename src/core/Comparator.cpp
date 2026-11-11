@@ -349,11 +349,16 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
     // ---- Pass A: exact matches (geometry + linetype class + layer) ----
     Matching m;
     m.reset(nR, nS);
-    // Larger groups first so that shared sizes cannot steal from the bigger view.
+    // Graded views before Ignored ones, so that an Ignored view repeating a graded one (the
+    // same part with its dimensions) never takes the items the graded view matches; then the
+    // larger first, so that shared sizes cannot steal from the bigger view.
     std::vector<int> gorder(groups.size());
     for (int k = 0; k < static_cast<int>(groups.size()); ++k) gorder[k] = k;
-    std::stable_sort(gorder.begin(), gorder.end(),
-                     [&](int a, int b) { return groups[a].refIdx.size() > groups[b].refIdx.size(); });
+    std::stable_sort(gorder.begin(), gorder.end(), [&](int a, int b) {
+        const bool ia = ortho && views->isIgnored(a), ib = ortho && views->isIgnored(b);
+        if (ia != ib) return !ia;
+        return groups[a].refIdx.size() > groups[b].refIdx.size();
+    });
     for (int k : gorder) {
         Group& g = groups[k];
         if (ortho && !r.views[k].found) continue;

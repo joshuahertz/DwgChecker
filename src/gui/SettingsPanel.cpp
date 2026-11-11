@@ -147,22 +147,10 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
     auto* mLay = new QVBoxLayout(m_modeStep);
     mLay->setContentsMargins(0, 0, 0, 0);
     mLay->addWidget(withInfo(tr("Location mode"), locationModeTip(), m_modeStep, true));
-    m_modeNote = new QLabel(tr("Choose how location is graded for this assignment."), m_modeStep);
-    m_modeNote->setWordWrap(true);
-    QFont noteFont = m_modeNote->font();
-    noteFont.setBold(true);
-    m_modeNote->setFont(noteFont);
-    mLay->addWidget(m_modeNote);
     m_modeForm = new QFormLayout;
     mLay->addLayout(m_modeForm);
     m_mode = combo({tr("Absolute"), tr("Relative"), tr("Orthographic")});
     m_mode->setToolTip(locationModeTip());
-    connect(m_mode, &QComboBox::activated, this, [this]() {
-        m_modeChosen = true;
-        updateModeNote();
-        emit modeChoiceChanged();
-        emit modeChosenByUser();
-    });
     m_modeForm->addRow(m_mode);
     m_modeHelp = new QLabel(this);
     m_modeHelp->setWordWrap(true);
@@ -567,34 +555,9 @@ void SettingsPanel::updateScopes() {
     if (m_headHatches) m_headHatches->setVisible(anyHatches);
 }
 
-bool SettingsPanel::modeChosen() const {
-    if (m_drawingPaths.size() < 2) return m_modeChosen;
-    for (const QString& p : m_drawingPaths)
-        if (!m_chosenKeys.contains(AppSettings::drawingKey(p))) return false;
-    return true;
-}
-
-void SettingsPanel::setModeChosen(bool chosen) {
-    m_modeChosen = chosen;
-    m_chosenKeys.clear();
-    if (chosen)
-        for (const QString& p : m_drawingPaths) m_chosenKeys.insert(AppSettings::drawingKey(p));
-    updateModeNote();
-    emit modeChoiceChanged();
-}
-
-void SettingsPanel::updateModeNote() {
-    const bool multi = m_drawingPaths.size() > 1;
-    m_modeNote->setText(multi ? tr("Choose the location mode of each drawing for this assignment.")
-                              : tr("Choose the location mode for this assignment."));
-    m_modeNote->setVisible(!m_drawingPaths.isEmpty() && !modeChosen());
-}
-
 void SettingsPanel::setSolutionDrawings(const QStringList& paths) {
     m_drawingPaths = paths;
     m_contents.clear();  // not read yet
-    m_modeChosen = false;
-    m_chosenKeys.clear();
     rebuildDrawingRows();
     applyDrawingLayout();
 }
@@ -632,9 +595,14 @@ void SettingsPanel::rebuildDrawingRows() {
             m_perDrawing[key] = ds;
         }
         const DrawingSettings ds = m_perDrawing[key];
+        // The name is a link that shows the drawing, to tell the drawings apart.
         auto* name = new QLabel(m_drawingsBox);
-        name->setText(name->fontMetrics().elidedText(QFileInfo(path).fileName(), Qt::ElideMiddle, 170));
-        name->setToolTip(QDir::toNativeSeparators(path));
+        name->setTextFormat(Qt::RichText);
+        name->setText(QStringLiteral("<a href=\"show\">%1</a>")
+                          .arg(name->fontMetrics().elidedText(QFileInfo(path).fileName(), Qt::ElideMiddle, 170).toHtmlEscaped()));
+        name->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+        name->setToolTip(tr("Show this drawing: %1").arg(QDir::toNativeSeparators(path)));
+        connect(name, &QLabel::linkActivated, this, [this, path]() { emit previewRequested(path); });
         auto* mode = new QComboBox(m_drawingsBox);
         mode->addItems({tr("Absolute"), tr("Relative"), tr("Orthographic")});
         mode->setCurrentIndex(static_cast<int>(ds.mode));
@@ -657,12 +625,6 @@ void SettingsPanel::rebuildDrawingRows() {
             m_perDrawing[key].mode = static_cast<Mode>(m);
             updateModeHelp();  // and what applies now
             emit changed();
-        });
-        connect(mode, &QComboBox::activated, this, [this, key]() {
-            m_chosenKeys.insert(key);
-            updateModeNote();
-            emit modeChoiceChanged();
-            emit modeChosenByUser();
         });
         connect(dims, &QCheckBox::toggled, this, [this, key](bool on) {
             m_perDrawing[key].checkDimensions = on;
@@ -688,7 +650,6 @@ void SettingsPanel::applyDrawingLayout() {
     m_dimPrec->setText(multi ? tr("Dimension precision must match (4.00 vs 4.000)") : tr("…and the precision they show (4.00 vs 4.000)"));
     m_hatchPattern->setText(multi ? tr("Hatch pattern must match") : tr("…and with the same hatch pattern"));
     updateModeHelp();  // and which settings apply
-    updateModeNote();
 }
 
 // Drop-downs and number boxes take the mouse wheel only once clicked into; otherwise the
@@ -771,7 +732,9 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     m_timeout->setValue(s.loader.timeoutSec);
     m_oda->setText(s.loader.odaConverterPath);
     for (QWidget* w : kids) w->blockSignals(false);
-    m_perDrawing = s.perDrawing;
+    // Per drawing (by file name): what these settings say wins, and drawings they don't list
+    // stay as they are (an older saved set has an older snapshot of the drawings).
+    for (const auto& [key, ds] : s.perDrawing) m_perDrawing[key] = ds;
     rebuildDrawingRows();
     applyDrawingLayout();
 }
@@ -798,7 +761,6 @@ AppSettings SettingsPanel::settings() const {
     s.compare.matchColor = m_matchColor->isChecked();
     s.compare.colorTolerance = m_colorTol->value();
     s.compare.requireByLayer = m_byLayer->isChecked();
-    s.modeConfirmed = modeChosen();  // saved with these solution drawings' settings
     s.compare.nearMissRadius = sciValue(m_nearMiss, 0);
     s.canon.layerIgnoreRegex = m_ignoreRe->text().trimmed();
     s.canon.usePaperSpace = m_paper->isChecked();

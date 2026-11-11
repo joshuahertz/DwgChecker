@@ -63,4 +63,11 @@ private:
 // Pen style for a linetype class (dash patterns are cosmetic, so they stay readable at any zoom).
 Qt::PenStyle penStyleFor(dc::LtClass c);
 
+// A primitive's own color, as AutoCAD shows it: its resolved ACI or true color, with ACI 7
+// (black/white) in the color that contrasts with the background.
+QColor drawingColor(const dc::Primitive& p, bool darkBackground);
+// AutoCAD's default model space background, and the light alternative.
+inline const QColor kModelSpaceDark(33, 40, 48);
+inline const QColor kModelSpaceLight(255, 255, 255);
+
 }  // namespace dcgui

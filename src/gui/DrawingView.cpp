@@ -28,6 +28,11 @@ Qt::PenStyle penStyleFor(LtClass c) {
     return Qt::SolidLine;
 }
 
+QColor drawingColor(const Primitive& p, bool darkBackground) {
+    if (p.aci == 7) return darkBackground ? QColor(Qt::white) : QColor(Qt::black);
+    return QColor(static_cast<QRgb>(p.rgb));  // 0xRRGGBB, opaque
+}
+
 DrawingView::DrawingView(QWidget* parent) : QGraphicsView(parent) {
     setScene(new QGraphicsScene(this));
     setRenderHint(QPainter::Antialiasing);

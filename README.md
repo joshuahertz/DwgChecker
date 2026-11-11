@@ -95,12 +95,18 @@ all of this.
 **GUI.** The steps and Settings sit in a column on the left, and the results
 fill the right side (drag the divider between them to resize). The app opens
 with nothing chosen and walks through four numbered steps: (1) click the first
-card to choose the reference (solution) drawing; (2) choose the **location
+card to choose the reference (solution) drawing; (2) check the **location
 mode** (Absolute, Relative or Orthographic; with several drawings, one for each),
 which is remembered for those reference solutions; (3) click the third card to
 choose the submissions folder; (4) click **Run**. The next step is outlined,
-finished steps get a check, and Run is enabled once the first three are done. You can also drop the file or folder on a card, or pick one from its
-**Recent** button. The reference card shows what was read
+finished steps get a check, and Run is enabled once a reference and a
+submissions folder are chosen: the location mode always has a value (the
+default, or the one remembered), so step 2 needs a change only when that value
+is wrong. You can also drop the file or folder on a card, or pick one from its
+**Recent** button. While the solution drawings are read (a few seconds each),
+the reference card shows a progress bar ("reading Q10Problem2 (2 of 3)…" for
+several) and the cursor shows the app is busy; the window stays usable. The
+reference card then shows what was read
 ("inches · 42 objects, 2 dimensions; ignoring 51 objects on turned-off or frozen
 layers", or a line per drawing), and the submissions card shows how many
 drawings it found (Canvas bulk downloads work as-is). Settings are remembered for
@@ -125,7 +131,13 @@ hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
   Settings then shows a **Solution drawings** table with each drawing's location
   mode, **Dims.** and **Hatches** checks (only for a drawing that has them) and
   **Edit views…** (only for an Orthographic one); the other settings apply to all
-  drawings. A setting that only some drawings use names them underneath, e.g.
+  drawings. Click a drawing's name to see it, to tell the drawings apart: a window
+  with the drawing in its own colors and linetypes, as in AutoCAD (ACI 7
+  black/white contrasting with the background; a checkbox switches between
+  AutoCAD's dark background and white), zoom and pan as in the detail view, and
+  each item's layer when you hover over it. Several can be open at once; a drawing
+  still being read opens when it is read. With a single solution drawing, the
+  **Show drawing** button on the reference card opens the same window. A setting that only some drawings use names them underneath, e.g.
   "Only for Q10Problem 1_1-6 (Absolute mode)".
 - Results tab, one row per student, sorted A to Z after each run: a **Possible
   cheating** icon (red = strong evidence, amber = weaker; hover for the details),

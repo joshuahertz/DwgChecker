@@ -14,6 +14,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QProgressBar>
 #include <QStyle>
 #include <QToolButton>
 
@@ -115,6 +116,11 @@ PathCard::PathCard(Kind kind, int step, const QString& caption, const QString& e
     m_detail->setWordWrap(true);
     m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // never widens the card
     grid->addWidget(m_detail, 2, 1);
+    m_progress = new QProgressBar(this);
+    m_progress->setTextVisible(false);
+    m_progress->setMaximumHeight(6);
+    m_progress->setVisible(false);  // a hidden row takes no space
+    grid->addWidget(m_progress, 3, 1);
     grid->setColumnStretch(1, 1);
 
     m_buttons = new QHBoxLayout;
@@ -166,6 +172,18 @@ void PathCard::setDetail(const QString& text, bool problem) {
     m_detail->setToolTip(text);
     m_detail->update();
 }
+
+void PathCard::showProgress(int done, int total) {
+    if (total > 1) {
+        m_progress->setRange(0, total);
+        m_progress->setValue(done);
+    } else {
+        m_progress->setRange(0, 0);  // busy: a moving bar
+    }
+    m_progress->setVisible(true);
+}
+
+void PathCard::hideProgress() { m_progress->setVisible(false); }
 
 void PathCard::setCaptionNote(const QString& note) {
     m_note = note;

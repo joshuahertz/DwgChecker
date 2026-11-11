@@ -423,41 +423,57 @@ OrthoResolution resolveViews(const std::vector<Primitive>& ref, const ViewSet& v
         }
     }
 
-    // 2. Joint resolution: every combination of candidates (plus "not found"),
-    //    one-to-one claims across views, most total matches; ties broken by checks.
+    // 2. Joint resolution: every combination of candidates (plus "not found"), one-to-one
+    //    claims across views. Graded views come first: the most items claimed by graded views,
+    //    then the most that Ignored views add on top (so that a student's copy of one is set
+    //    aside, not extra), then the fewest failed alignment checks. An Ignored view often
+    //    repeats a graded one (the same part again, with its dimensions): counted alike, the
+    //    two tied on a student's single copy, the first in the list won, and an Ignored view
+    //    listed first took the drawing, which then scored 0 against its own solution.
     const double alignTol = s.alignTol > 0 ? s.alignTol : s.linTol;
     long long combos = 1;
     for (int v = 0; v < nv && combos <= 200000; ++v) combos *= static_cast<long long>(res.candidates[v].size()) + 1;
-    auto evaluate = [&](const std::vector<int>& pick, int* failed) {
-        int total = 0;
+    struct Score {
+        int graded = -1, total = -1, failed = 1 << 30;
+        bool beats(const Score& o) const {
+            if (graded != o.graded) return graded > o.graded;
+            if (total != o.total) return total > o.total;
+            return failed < o.failed;
+        }
+    };
+    auto evaluate = [&](const std::vector<int>& pick) {
+        Score sc;
+        sc.total = 0;
         std::vector<uint64_t> seen(words, 0);
-        for (int v = 0; v < nv; ++v) {
-            if (pick[v] < 0) continue;
-            const auto& b = bits[v][pick[v]];
-            for (size_t w = 0; w < words; ++w) {
-                total += std::popcount(b[w] & ~seen[w]);
-                seen[w] |= b[w];
+        for (int pass = 0; pass < 2; ++pass) {  // graded views, then Ignored ones
+            for (int v = 0; v < nv; ++v) {
+                if (pick[v] < 0 || vs.isIgnored(v) != (pass == 1)) continue;
+                const auto& b = bits[v][pick[v]];
+                for (size_t w = 0; w < words; ++w) {
+                    sc.total += std::popcount(b[w] & ~seen[w]);
+                    seen[w] |= b[w];
+                }
             }
+            if (pass == 0) sc.graded = sc.total;
         }
         std::vector<const Transform2D*> ts(nv, nullptr);
         for (int v = 0; v < nv; ++v)
             if (pick[v] >= 0) ts[v] = &res.candidates[v][pick[v]].T;
-        int f = 0;
-        for (const auto& c : orthoChecks(vs, ts, alignTol)) f += c.applicable && !c.passed;
-        *failed = f;
-        return total;
+        sc.failed = 0;
+        for (const auto& c : orthoChecks(vs, ts, alignTol)) sc.failed += c.applicable && !c.passed;
+        return sc;
     };
     std::vector<int> pick(nv, -1), best(nv, -1);
-    int bestTotal = -1, bestFailed = 1 << 30;
     if (combos <= 200000) {
+        Score bestScore;
         std::vector<int> cur(nv, -1);
         // Odometer over (-1 .. size-1) per view.
         while (true) {
-            int failed = 0;
-            const int total = evaluate(cur, &failed);
+            const Score sc = evaluate(cur);
             ++res.combinationsTried;
-            if (total > bestTotal || (total == bestTotal && failed < bestFailed)) {
-                bestTotal = total; bestFailed = failed; best = cur;
+            if (sc.beats(bestScore)) {
+                bestScore = sc;
+                best = cur;
             }
             int v = 0;
             while (v < nv) {
@@ -468,20 +484,25 @@ OrthoResolution resolveViews(const std::vector<Primitive>& ref, const ViewSet& v
             if (v == nv) break;
         }
     } else {
-        // Too many views for brute force: greedy, largest view first.
+        // Too many views for brute force: greedy, graded views first, then the larger first.
         std::vector<int> order(nv);
         std::iota(order.begin(), order.end(), 0);
-        std::sort(order.begin(), order.end(), [&](int a, int b) { return vs.views[a].prims.size() > vs.views[b].prims.size(); });
+        std::sort(order.begin(), order.end(), [&](int a, int b) {
+            if (vs.isIgnored(a) != vs.isIgnored(b)) return !vs.isIgnored(a);
+            return vs.views[a].prims.size() > vs.views[b].prims.size();
+        });
+        Score bestScore = evaluate(pick);
         for (int v : order) {
-            int bv = -1, bt = bestTotal;
+            int bv = -1;
             for (int k = 0; k < static_cast<int>(res.candidates[v].size()); ++k) {
                 pick[v] = k;
-                int failed = 0;
-                const int t = evaluate(pick, &failed);
-                if (t > bt) { bt = t; bv = k; }
+                const Score sc = evaluate(pick);
+                if (sc.beats(bestScore)) {
+                    bestScore = sc;
+                    bv = k;
+                }
             }
             pick[v] = bv;
-            bestTotal = std::max(bestTotal, bt);
         }
         best = pick;
     }
