@@ -62,11 +62,7 @@ DrawingPreviewDialog::DrawingPreviewDialog(DrawingPtr drawing, const QString& ti
 }
 
 void DrawingPreviewDialog::build() {
-    const bool dark = m_dark->isChecked();
-    m_view->clearDrawing();  // the view's zoom and pan stay
-    m_view->setBackgroundBrush(dark ? kModelSpaceDark : kModelSpaceLight);
-    for (const Primitive& p : m_drawing->prims)  // stacked in AutoCAD's draw order
-        if (QGraphicsItem* it = m_view->addPrimitive(p, drawingColor(p, dark), 1.5)) it->setZValue(asDrawnZ(p));
+    m_view->showAsDrawn(m_drawing.get(), m_dark->isChecked());  // the view's zoom and pan stay
 }
 
 }  // namespace dcgui

@@ -40,6 +40,7 @@ private slots:
     void initTestCase();
     void parsing();
     void polylinePathWithIslandSynthetic();
+    void outerStyleStopsAtFirstIsland();
     void clockwiseEdgeArc();
     void offByDefault();
     void selfPasses();
@@ -110,6 +111,30 @@ void TestHatch::polylinePathWithIslandSynthetic() {
                                               QJsonObject{{"flag", 22}, {"polyline_paths", hole}}}}});
     const Drawing di = i.canon();
     QVERIFY(hatchContains(*firstHatch(di), {1.0, 1.0}));
+}
+
+void TestHatch::outerStyleStopsAtFirstIsland() {
+    // A square plate, a square island, and a smaller square inside the island. "Normal" (style
+    // 0) fills the innermost square again; "Outer" (style 1) stops at the first island (D76).
+    auto square = [](double x0, double y0, double x1, double y1) {
+        return QJsonArray{QJsonObject{{"point", QJsonArray{x0, y0}}}, QJsonObject{{"point", QJsonArray{x1, y0}}},
+                          QJsonObject{{"point", QJsonArray{x1, y1}}}, QJsonObject{{"point", QJsonArray{x0, y1}}}};
+    };
+    auto hatch = [&](int style) {
+        DocBuilder b;
+        b.raw("HATCH", "0", {{"name", "ANSI31"}, {"style", style},
+                             {"paths", QJsonArray{QJsonObject{{"flag", 1}, {"polyline_paths", square(0, 0, 10, 10)}},
+                                                  QJsonObject{{"flag", 16}, {"polyline_paths", square(2, 2, 8, 8)}},
+                                                  QJsonObject{{"flag", 16}, {"polyline_paths", square(4, 4, 6, 6)}}}}});
+        return b.canon();
+    };
+    const Drawing normal = hatch(0), outer = hatch(1);
+    QVERIFY(hatchContains(*firstHatch(normal), {1, 1}));
+    QVERIFY(!hatchContains(*firstHatch(normal), {3, 3}));
+    QVERIFY(hatchContains(*firstHatch(normal), {5, 5}));
+    QVERIFY(hatchContains(*firstHatch(outer), {1, 1}));
+    QVERIFY(!hatchContains(*firstHatch(outer), {3, 3}));
+    QVERIFY(!hatchContains(*firstHatch(outer), {5, 5}));
 }
 
 void TestHatch::clockwiseEdgeArc() {

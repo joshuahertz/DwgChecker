@@ -24,28 +24,4 @@ StudentIdentity IdentityParser::parse(const QString& fileName) const {
     return id;
 }
 
-QString normalizePersonName(const QString& s) {
-    QString out;
-    for (QChar c : s.toLower())
-        if (c.isLetter()) out += c;
-    return out;
-}
-
-bool personMatchesStudent(const QString& who, const QString& studentName) {
-    const QString a = normalizePersonName(who), b = normalizePersonName(studentName);
-    if (a.size() < 3 || b.size() < 3) return false;
-    if (a == b) return true;
-    // "Jane Smith" vs "smithjane": same letters in a different order of the two parts.
-    const QStringList parts = who.toLower().split(QRegularExpression(QStringLiteral("[^a-z]+")), Qt::SkipEmptyParts);
-    if (parts.size() >= 2) {
-        QString rev;
-        for (auto it = parts.crbegin(); it != parts.crend(); ++it) rev += *it;
-        if (rev == b) return true;
-    }
-    // A login contained in the name (or vice versa), when long enough to be meaningful.
-    if (a.size() >= 5 && b.contains(a)) return true;
-    if (b.size() >= 5 && a.contains(b)) return true;
-    return false;
-}
-
 }  // namespace dc

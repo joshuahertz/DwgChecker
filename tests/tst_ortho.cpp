@@ -49,6 +49,7 @@ private slots:
     void ignoredView();
     void ignoredFrameKeepsRealErrors();
     void ignoredCopyOfAGradedView();
+    void scaleIgnoresIgnoredViews();
 
 private:
     std::shared_ptr<Drawing> ref;
@@ -373,6 +374,37 @@ void TestOrtho::ignoredCopyOfAGradedView() {
     QVERIFY2(b.views[0].found && b.views[1].found, qPrintable(dumpErrors(b)));
     QCOMPARE(b.matched, n);
     QCOMPARE(b.penalizedExtras, 0);
+}
+
+void TestOrtho::scaleIgnoresIgnoredViews() {
+    // A large Ignored view (a title block's rules) and a small graded one; the student drew only
+    // the part, twice too large. The scale is judged on the graded geometry alone: counting the
+    // title block, half of the solution could never match and the scale went undetected (D76).
+    const std::vector<Vec2> pts = {{0, 0}, {4, 0}, {4, 1}, {1.5, 1}, {1.5, 3}, {0, 3}};
+    const int n = static_cast<int>(pts.size());
+    Drawing sol;
+    for (int k = 0; k < n; ++k) sol.prims.push_back(plainLine(pts[k], pts[(k + 1) % n], QStringLiteral("F%1").arg(k)));
+    for (int k = 0; k < 20; ++k)
+        sol.prims.push_back(plainLine({30, -20.0 - k}, {31.0 + k, -20.0 - k}, QStringLiteral("T%1").arg(k)));
+    ViewSet vs;
+    ViewDef front;
+    front.id = 0;
+    front.name = ViewName::Front;
+    ViewDef block;
+    block.id = 1;
+    block.name = ViewName::Ignored;
+    vs.views = {front, block};
+    vs.primView.assign(sol.prims.size(), 1);
+    for (int i = 0; i < n; ++i) vs.primView[i] = 0;
+    vs.rebuild(sol);
+
+    Drawing big;
+    for (int k = 0; k < n; ++k)
+        big.prims.push_back(plainLine(pts[k] * 2 + Vec2{50, 50}, pts[(k + 1) % n] * 2 + Vec2{50, 50}, QStringLiteral("S%1").arg(k)));
+    const CompareResult r = compareDrawings(sol, big, ortho(), &vs);
+    QVERIFY2(r.scaled, qPrintable(dumpErrors(r)));
+    QVERIFY(std::fabs(r.scaleFactor - 2) < 1e-9);
+    QCOMPARE(r.matched, n);
 }
 
 QTEST_GUILESS_MAIN(TestOrtho)

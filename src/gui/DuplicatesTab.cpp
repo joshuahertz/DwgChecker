@@ -74,7 +74,10 @@ void DuplicatesTab::rebuild() {
     m_details->clear();
     if (!m_batch) return;
     const auto& d = m_batch->dups;
-    m_notes->setText(d.notes.isEmpty() ? QString() : QStringLiteral("<b>%1</b> %2").arg(tr("Notes:"), d.notes.join("<br>").toHtmlEscaped()));
+    // Each note escaped, then joined: escaping the joined text showed the <br> as text (D76).
+    QStringList notes;
+    for (const QString& n : d.notes) notes << n.toHtmlEscaped();
+    m_notes->setText(notes.isEmpty() ? QString() : QStringLiteral("<b>%1</b> %2").arg(tr("Notes:"), notes.join(QStringLiteral("<br>"))));
     for (int k = 0; k < static_cast<int>(d.pairs.size()); ++k) {
         const PairResult& p = d.pairs[k];
         if (!p.flagged() && !m_showInfo->isChecked()) continue;
@@ -118,14 +121,14 @@ void DuplicatesTab::showDetails(int row) {
     const PairResult& p = m_batch->dups.pairs[m_rowToPair[row]];
     const DupEntry& a = m_batch->dupEntries[p.a];
     const DupEntry& b = m_batch->dupEntries[p.b];
+    // One arg() call each: a later call would fill a "%1" inside a file or student name (D76).
     QString html = QStringLiteral("<h3>%1 &harr; %2</h3><p>Level: <b>%3</b>, combined score %4</p><table cellpadding=3>")
-                       .arg(a.display.toHtmlEscaped(), b.display.toHtmlEscaped(), strengthName(p.level))
-                       .arg(p.score, 0, 'f', 0);
+                       .arg(a.display.toHtmlEscaped(), b.display.toHtmlEscaped(), strengthName(p.level),
+                            QString::number(p.score, 'f', 0));
     for (const auto& s : p.evidence)
         html += QStringLiteral("<tr><td><b>%1</b></td><td>%2</td><td>weight %3</td></tr><tr><td></td><td colspan=2>%4</td></tr>")
-                    .arg(s.label.toHtmlEscaped(), strengthName(s.strength))
-                    .arg(s.weight, 0, 'f', 0)
-                    .arg(s.detail.toHtmlEscaped());
+                    .arg(s.label.toHtmlEscaped(), strengthName(s.strength), QString::number(s.weight, 'f', 0),
+                         s.detail.toHtmlEscaped());
     html += QStringLiteral("</table>");
     auto files = [](const DupEntry& e) { return e.drawing ? e.drawing->meta.path.toHtmlEscaped() : QString(); };
     html += QStringLiteral("<p style='color:#666'>%1<br>%2</p>").arg(files(a), files(b));

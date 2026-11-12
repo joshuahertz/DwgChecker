@@ -5,6 +5,8 @@
 
 #include <QtTest>
 
+#include <algorithm>
+
 using namespace dc;
 using namespace dct;
 
@@ -65,7 +67,8 @@ private slots:
     void corpusSignals();
     void templateFingerprintWhitelisted();
     void sharedFingerprintIsProbableTemplate();
-    void lastSavedByMatchesOtherStudent();
+    void sameAccountNameIsStrong();
+    void severalNamesInOneStudentsFiles();
     void bitExactNonRoundIsStrong();
     void absoluteModeIgnoresBitExact();
     void clusters();
@@ -140,13 +143,58 @@ void TestDuplicates::sharedFingerprintIsProbableTemplate() {
     QVERIFY(noted);
 }
 
-void TestDuplicates::lastSavedByMatchesOtherStudent() {
-    std::vector<DupEntry> e{student("smithjane", synth("{A}", "jsmith", 0)), student("doejohn", synth("{B}", "Jane Smith", 20)),
+void TestDuplicates::sameAccountNameIsStrong() {
+    // Each student's files carry their own account name: two students with the same one is
+    // strong evidence, whatever the name looks like (D77).
+    std::vector<DupEntry> e{student("smithjane", synth("{A}", "x4471", 0)), student("doejohn", synth("{B}", "x4471", 20)),
                             student("x", synth("{X}", "x", 40)), student("y", synth("{Y}", "y", 60))};
     const DupReport r = detectDuplicates(e, DuplicateSettings{}, Mode::Relative, nullptr);
     const PairResult* p = pairOf(r, 0, 1);
-    QVERIFY(has(p, "savedby-other"));
+    QVERIFY(has(p, "accountname"));
     QCOMPARE(p->level, Strength::Strong);
+    QVERIFY(!pairOf(r, 0, 2) || !has(pairOf(r, 0, 2), "accountname"));
+
+    // Across the two fields: one file's LastSavedBy is the other's Author.
+    auto withAuthor = [](std::shared_ptr<Drawing> d, const QString& author) {
+        d->meta.author = author;
+        return d;
+    };
+    std::vector<DupEntry> x{student("smithjane", withAuthor(synth("{A}", "jsmith", 0), "jsmith")),
+                            student("doejohn", withAuthor(synth("{B}", "jdoe", 20), "jsmith")),
+                            student("x", synth("{X}", "x", 40)), student("y", synth("{Y}", "y", 60))};
+    const DupReport rx = detectDuplicates(x, DuplicateSettings{}, Mode::Relative, nullptr);
+    const PairResult* px = pairOf(rx, 0, 1);
+    QVERIFY(has(px, "accountname"));
+    QCOMPARE(px->level, Strength::Strong);
+    // One signal for the pair, the name listed once with where each file has it.
+    const auto named = std::count_if(px->evidence.begin(), px->evidence.end(), [](const Signal& s) { return s.id == "accountname"; });
+    QCOMPARE(static_cast<int>(named), 1);
+    for (const Signal& s : px->evidence)
+        if (s.id == "accountname")
+            QVERIFY2(s.detail.contains(QStringLiteral("smithjane's LastSavedBy and Author, doejohn's Author")), qPrintable(s.detail));
+}
+
+void TestDuplicates::severalNamesInOneStudentsFiles() {
+    // One student's two files saved under two account names: both files get the signal, at
+    // medium (amber); a student whose files agree gets none (D77).
+    std::vector<DupEntry> e{student("smithjane", synth("{A}", "jsmith", 0)), student("smithjane", synth("{A2}", "jdoe", 10)),
+                            student("x", synth("{X}", "x", 40)), student("x", synth("{X2}", "x", 50)),
+                            student("y", synth("{Y}", "y", 60))};
+    e[0].owner = e[1].owner = QStringLiteral("smithjane");
+    e[2].owner = e[3].owner = QStringLiteral("x");
+    e[4].owner = QStringLiteral("y");
+    const DupReport r = detectDuplicates(e, DuplicateSettings{}, Mode::Relative, nullptr);
+    QCOMPARE(r.fileSignals.size(), e.size());
+    for (int i : {0, 1}) {
+        QCOMPARE(r.fileSignals[i].size(), size_t(1));
+        QCOMPARE(r.fileSignals[i][0].id, QStringLiteral("names-lastsavedby"));
+        QCOMPARE(r.fileSignals[i][0].strength, Strength::Medium);
+        QVERIFY(r.fileSignals[i][0].detail.contains(QStringLiteral("\"jdoe\"")));
+    }
+    for (int i : {2, 3, 4}) QVERIFY(r.fileSignals[i].empty());
+    bool noted = false;
+    for (const QString& n : r.notes) noted = noted || n.contains(QStringLiteral("different LastSavedBy names"));
+    QVERIFY(noted);
 }
 
 void TestDuplicates::bitExactNonRoundIsStrong() {

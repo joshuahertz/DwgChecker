@@ -34,8 +34,6 @@ std::vector<Primitive> transformAll(const std::vector<Primitive>& stu, const std
 
 namespace {
 
-Vec2 keyPoint(const Primitive& p) { return p.kind == PrimKind::Line ? p.midpoint() : p.center; }
-
 struct CandidateList {
     std::vector<AlignCandidate> items;
     double linTol, angTol;
@@ -163,10 +161,25 @@ AlignResult alignDrawings(const std::vector<Primitive>& ref, const std::vector<i
         }
     }
 
-    // 4. Score each candidate by its match count.
+    // 4. Score each candidate by its match count, on a geometry-only copy of the student's lines,
+    //    arcs and circles moved in place: no names, ids or lists copied per candidate (D76).
+    std::vector<Primitive> bare(stu.size());
+    for (int j : stuGeo) {
+        const Primitive& s = stu[j];
+        Primitive& b = bare[j];
+        b.kind = s.kind;
+        b.p0 = s.p0;
+        b.p1 = s.p1;
+        b.center = s.center;
+        b.radius = s.radius;
+        b.a0 = s.a0;
+        b.a1 = s.a1;
+        b.ltClass = s.ltClass;
+    }
+    std::vector<Primitive> work = bare;
     for (auto& c : cands.items) {
-        const auto st = transformAll(stu, stuGeo, c.T);
-        c.score = countMatches(ref, refGeo, st, stuGeo, o.criteria);
+        for (int j : stuGeo) work[j] = transformed(bare[j], c.T);
+        c.score = countMatches(ref, refGeo, work, stuGeo, o.criteria);
     }
     res.candidatesTried = static_cast<int>(cands.items.size());
     std::stable_sort(cands.items.begin(), cands.items.end(), [](const AlignCandidate& a, const AlignCandidate& b) {

@@ -2,6 +2,7 @@
 
 #include "TestUtil.h"
 
+#include <QJsonDocument>
 #include <QtTest>
 
 using namespace dc;
@@ -54,8 +55,11 @@ private slots:
     void drawOrderFollowsSortentsTable();
     void linetypeExplicitAndPatterns();
     void layerZeroInheritance();
+    void blockOnTurnedOffLayer();
+    void nearColorsMergeWithinTolerance();
     // Misc
     void nonZeroZWarning();
+    void nanCoordinatesLeftOut();
 };
 
 void TestCanon::bulgeArcs() {
@@ -446,12 +450,76 @@ void TestCanon::layerZeroInheritance() {
     QCOMPARE(d.prims[0].ltClass, LtClass::Hidden);
 }
 
+void TestCanon::blockOnTurnedOffLayer() {
+    // A block on a turned-off layer: its layer-0 objects are hidden with it, those on a layer
+    // that is on still show, as in AutoCAD. A frozen layer hides the whole block (D76).
+    DocBuilder b;
+    b.layer("OFF", "Continuous", 16 + 2);
+    b.layer("FROZEN", "Continuous", 16 + 1);
+    b.layer("PART");
+    const quint64 blk = b.beginBlock("B");
+    b.line({0, 0}, {1, 0}, "0");
+    b.line({0, 1}, {1, 1}, "PART");
+    b.endBlock();
+    b.insert(blk, {0, 0}, {1, 1, 1}, 0, "OFF");
+    b.insert(blk, {5, 0}, {1, 1, 1}, 0, "FROZEN");
+    CanonSettings s;
+    s.skipHiddenLayers = true;
+    const Drawing d = b.canon(s);
+    QCOMPARE(d.prims.size(), size_t(1));
+    QVERIFY(findLine(d, {0, 1}, {1, 1}));
+}
+
+void TestCanon::nearColorsMergeWithinTolerance() {
+    // An edge drawn in two pieces in near true colors: one line when colors must match within a
+    // tolerance that covers them, two when they must be the same color (D76).
+    DocBuilder b;
+    b.entity("LINE", "0", {{"start", pt(0, 0)}, {"end", pt(1, 0)}, {"color", QJsonObject{{"rgb", "c2fa0505"}}}});
+    b.entity("LINE", "0", {{"start", pt(1, 0)}, {"end", pt(2, 0)}, {"color", QJsonObject{{"rgb", "c2fb0606"}}}});
+    CanonSettings s;
+    s.mergeByColor = true;
+    s.colorTolerance = 0;
+    QCOMPARE(b.canon(s).prims.size(), size_t(2));
+    s.colorTolerance = 5;
+    const Drawing d = b.canon(s);
+    QCOMPARE(d.prims.size(), size_t(1));
+    QVERIFY(findLine(d, {0, 0}, {2, 0}));
+
+    // Three pieces drifting 4 % at each step: the ends are 8 % apart, beyond the tolerance, so
+    // the three do not all become one line, though each touching pair is within it.
+    DocBuilder c;
+    c.entity("LINE", "0", {{"start", pt(0, 0)}, {"end", pt(1, 0)}, {"color", QJsonObject{{"rgb", "c2fa0505"}}}});
+    c.entity("LINE", "0", {{"start", pt(1, 0)}, {"end", pt(2, 0)}, {"color", QJsonObject{{"rgb", "c2e80505"}}}});
+    c.entity("LINE", "0", {{"start", pt(2, 0)}, {"end", pt(3, 0)}, {"color", QJsonObject{{"rgb", "c2d60505"}}}});
+    const Drawing chain = c.canon(s);
+    QCOMPARE(chain.prims.size(), size_t(2));
+    QVERIFY(!findLine(chain, {0, 0}, {3, 0}));
+}
+
 void TestCanon::nonZeroZWarning() {
     DocBuilder b;
     b.line3({0, 0, 0}, {1, 0, 0.5});
     const Drawing d = b.canon();
     QCOMPARE(d.prims.size(), size_t(1));
     QVERIFY(hasWarning(d, WarnKind::NonZeroZ));
+}
+
+void TestCanon::nanCoordinatesLeftOut() {
+    // A parser build that prints nan: the object is left out with a warning, not drawn at 0 (D76).
+    DocBuilder b;
+    b.line({0, 0}, {1, 0});
+    b.line({0, 1}, {12345.5, 1});
+    QByteArray text = QJsonDocument(b.root()).toJson(QJsonDocument::Compact);
+    QVERIFY(text.contains("12345.5"));
+    text.replace("12345.5", "nan");
+    DwgJson j;
+    QString err;
+    QVERIFY2(j.parse(text, &err), qPrintable(err));
+    QVERIFY(j.hadNonFinite());
+    const Drawing d = canonicalize(j, CanonSettings{});
+    QCOMPARE(d.prims.size(), size_t(1));
+    QVERIFY(findLine(d, {0, 0}, {1, 0}));
+    QVERIFY(hasWarning(d, WarnKind::Load));
 }
 
 void TestCanon::hatchArcStepsIgnoreLastDigit() {

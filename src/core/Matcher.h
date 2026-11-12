@@ -19,6 +19,10 @@ struct MatchCriteria {
     bool strictCenterlines = false;
     bool checkDimensions = false;
     bool checkDimPrecision = true;  // with checkDimensions: the shown precision must agree
+    // Orthographic mode: a linear dimension between the same two lines across the measurement
+    // counts wherever it is, so a width given in another view does; otherwise its points must be
+    // on the same edges (D78).
+    bool dimLinesAnywhere = false;
 };
 
 // Geometry within tolerance, ignoring linetype class and layer.

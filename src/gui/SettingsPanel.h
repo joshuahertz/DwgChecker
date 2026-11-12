@@ -59,8 +59,11 @@ protected:
     bool eventFilter(QObject* o, QEvent* e) override;
 
 private:
-    QLineEdit* sciEdit(double v);
+    // A number field; `bottom` is the smallest value allowed (a tolerance must be above 0).
+    QLineEdit* sciEdit(double v, double bottom = 0);
     static double sciValue(const QLineEdit* e, double def);
+    // Puts a value in a field from sciEdit; one out of its range shows `def` instead.
+    static void setSci(QLineEdit* e, double v, double def);
     void updateModeHelp();  // the mode's one-line description, then updateScopes()
     // A grey note under a shared setting that only some solution drawings use.
     struct Scope {

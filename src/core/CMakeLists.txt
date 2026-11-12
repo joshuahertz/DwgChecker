@@ -11,6 +11,7 @@ add_library(dwgcore STATIC
   Canonicalizer.h Canonicalizer.cpp
   DimText.h DimText.cpp
   SpatialGrid.h
+  Dsu.h
   Matcher.h Matcher.cpp
   HatchCheck.h HatchCheck.cpp
   Aligner.h Aligner.cpp

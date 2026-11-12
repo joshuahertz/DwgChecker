@@ -57,6 +57,14 @@ namespace {
 constexpr double kAllMargin = 0.05;
 }
 
+void DrawingView::showAsDrawn(const Drawing* d, bool dark) {
+    clearDrawing();
+    setBackgroundBrush(dark ? kModelSpaceDark : kModelSpaceLight);
+    if (!d) return;
+    for (const Primitive& p : d->prims)  // stacked in AutoCAD's draw order
+        if (QGraphicsItem* it = addPrimitive(p, drawingColor(p, dark), 1.5)) it->setZValue(asDrawnZ(p));
+}
+
 QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& color, double width, const Transform2D& t) {
     const Primitive p = transformed(src, t);
     m_extent.add(p.bbox());

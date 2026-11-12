@@ -41,7 +41,59 @@ double matchCost(const Primitive& r, const Primitive& s) {
     }
 }
 
-Vec2 keyPoint(const Primitive& p) { return p.kind == PrimKind::Line ? p.midpoint() : p.center; }
+
+
+// Parallel within the angular tolerance plus what the linear tolerance allows over the shorter
+// vector; `eitherWay`: also pointing the opposite way.
+bool parallel(Vec2 a, Vec2 b, double linTol, double angTol, bool eitherWay) {
+    const double la = a.length(), lb = b.length();
+    if (la <= 0 || lb <= 0) return false;
+    const double sine = cross(a, b) / (la * lb);
+    return std::fabs(sine) <= angTol + 2 * linTol / std::min(la, lb) && (eitherWay || dot(a, b) > 0);
+}
+
+// A dimension must measure the same thing, not just have the same value (D76, D78). Its text and
+// dimension line may sit anywhere.
+// - Linear or aligned (either type for the other): the same measuring direction, and each point
+//   on the edge the solution's point is on (any point along it; the same point when it is on no
+//   such line). A centerline counts along its whole line, and so does the line across through a
+//   circle's or arc's center (user decision). In Orthographic mode, on the same line across the
+//   measurement anywhere, so a width given in another view counts (user rule).
+// - Angular: the same vertex and the same two sides (any points along them).
+// - Radius and diameter: the same center. Arc length: the same arc. Ordinate: the same feature.
+bool dimensionPlaceMatches(const Primitive& r, const Primitive& s, const MatchCriteria& c) {
+    const double tol = c.linTol;
+    auto samePair = [tol](Vec2 a0, Vec2 a1, Vec2 b0, Vec2 b1) {
+        return (dist(a0, b0) <= tol && dist(a1, b1) <= tol) || (dist(a0, b1) <= tol && dist(a1, b0) <= tol);
+    };
+    const QString& t = r.dimType;
+    if (isLinearDimType(t)) {
+        if (!r.dimPlace || !s.dimPlace) return samePair(r.p0, r.p1, s.p0, s.p1);
+        const DimPlace& R = *r.dimPlace;
+        if (!parallel(R.dir, s.dimPlace->dir, tol, c.angTol, true)) return false;
+        const Vec2 d = R.dir.normalized();
+        // Where a student point v may be for the solution's point q.
+        auto at = [&](Vec2 v, Vec2 q, bool hasEdge, bool endless, Vec2 ea, Vec2 eb) {
+            if (c.dimLinesAnywhere) return std::fabs(dot(v - q, d)) <= tol;  // the same line across
+            if (hasEdge && endless) return pointLineDistance(v, ea, eb) <= tol;  // a centerline, any length
+            if (hasEdge) return pointSegmentDistance(v, ea, eb) <= tol;         // anywhere on that edge
+            return dist(v, q) <= tol;                                            // the same point
+        };
+        auto at0 = [&](Vec2 v) { return at(v, r.p0, R.hasEdge0, R.edge0Endless, R.edge0a, R.edge0b); };
+        auto at1 = [&](Vec2 v) { return at(v, r.p1, R.hasEdge1, R.edge1Endless, R.edge1a, R.edge1b); };
+        return (at0(s.p0) && at1(s.p1)) || (at1(s.p0) && at0(s.p1));
+    }
+    if (t == QLatin1String("ARC_DIMENSION") && !samePair(r.p0, r.p1, s.p0, s.p1)) return false;
+    if (t == QLatin1String("ORDINATE") && dist(r.p0, s.p0) > tol) return false;
+    if (r.hasDimCenter && s.hasDimCenter && dist(r.dimCenter, s.dimCenter) > tol) return false;
+    if (isAngularDimType(t) && r.dimPlace && s.dimPlace) {
+        const DimPlace& R = *r.dimPlace;
+        const DimPlace& S = *s.dimPlace;
+        auto same = [&](Vec2 a, Vec2 b) { return parallel(a, b, tol, c.angTol, R.sidesAreLines); };
+        return (same(R.side0, S.side0) && same(R.side1, S.side1)) || (same(R.side0, S.side1) && same(R.side1, S.side0));
+    }
+    return true;
+}
 
 }  // namespace
 
@@ -62,8 +114,9 @@ bool geometryMatches(const Primitive& r, const Primitive& s, const MatchCriteria
         return dist(r.center, s.center) <= c.linTol && std::fabs(r.radius - s.radius) <= c.linTol &&
                arcAnglesMatch(r, s, c.linTol, c.angTol);
     case PrimKind::Dimension:
-        if (r.dimType != s.dimType) return false;
-        return std::fabs(r.measurement - s.measurement) <= (isAngularDimType(r.dimType) ? c.angTol : c.linTol);
+        if (!sameDimFamily(r.dimType, s.dimType)) return false;  // linear and aligned stand for each other (D78)
+        return std::fabs(r.measurement - s.measurement) <= (isAngularDimType(r.dimType) ? c.angTol : c.linTol) &&
+               dimensionPlaceMatches(r, s, c);
     default: return false;
     }
 }
@@ -190,7 +243,7 @@ std::vector<Pairing> pairNearMisses(const std::vector<Primitive>& ref, const std
                         (dist(r.arcStart(), s.arcStart()) + dist(r.arcEnd(), s.arcEnd())) / 2;
                 break;
             case PrimKind::Dimension:
-                if (r.dimType != s.dimType || dist(r.center, s.center) > radius) continue;
+                if (!sameDimFamily(r.dimType, s.dimType) || dist(r.center, s.center) > radius) continue;
                 score = std::fabs(r.measurement - s.measurement) + dist(r.center, s.center) * 0.01;
                 break;
             default: continue;

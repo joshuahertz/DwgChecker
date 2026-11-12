@@ -71,7 +71,7 @@ struct Transform2D {
     Vec2 apply(Vec2 p) const { return {a * p.x + b * p.y + tx, c * p.x + d * p.y + ty}; }
     Vec2 applyLinear(Vec2 v) const { return {a * v.x + b * v.y, c * v.x + d * v.y}; }
     Transform2D operator*(const Transform2D& o) const;  // this after o
-    Transform2D inverse() const;
+    Transform2D inverse() const;  // the identity when singular (det 0), which no real transform here is
     double det() const { return a * d - b * c; }
     bool isMirrored() const { return det() < 0; }
     // Rotation angle of the linear part (after removing any mirror and scale), in (-pi, pi].

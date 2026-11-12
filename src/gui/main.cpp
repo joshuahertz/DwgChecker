@@ -3,12 +3,15 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QIcon>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QScreen>
 #include <QSplashScreen>
 #include <QTimer>
+#include <QWindow>
 
 #include <algorithm>
+#include <functional>
 
 namespace {
 
@@ -61,11 +64,16 @@ QPixmap splashPixmap() {
 class Splash : public QSplashScreen {
 public:
     explicit Splash(const QPixmap& pm) : QSplashScreen(pm, Qt::WindowStaysOnTopHint) {}
+    std::function<void()> onClick;  // a click closes the splash and shows the window at once (D76)
 
 protected:
     void drawContents(QPainter* p) override {
         p->setPen(QColor(24, 72, 140));
         p->drawText(QRectF(rect()).adjusted(36, 0, -36, -26), Qt::AlignLeft | Qt::AlignBottom, message());
+    }
+    void mousePressEvent(QMouseEvent* e) override {
+        QSplashScreen::mousePressEvent(e);
+        if (onClick) onClick();
     }
 };
 
@@ -81,18 +89,31 @@ int main(int argc, char** argv) {
     QApplication::setWindowIcon(icon);
 
     // The splash covers the start (the window is built, the saved state loaded and dwgread's
-    // version checked). It stays at least a second so that it doesn't just flash, then closes
-    // once the window is up; a click closes it at once.
-    QElapsedTimer started;
-    started.start();
+    // version checked). That work blocks the event loop, and a window is drawn only once the
+    // system has put it on screen, so the splash is first shown and painted, then the work
+    // starts. It stays 1.5 s from then (counted from before it was drawn, it only flashed), and
+    // the main window takes its place when it closes; a click closes it sooner.
     Splash splash(splashPixmap());
     splash.show();
     splash.showMessage(QObject::tr("Starting…"));
+    QElapsedTimer started;
+    started.start();
+    while (!(splash.windowHandle() && splash.windowHandle()->isExposed()) && started.elapsed() < 1000)
+        app.processEvents(QEventLoop::AllEvents, 20);
+    splash.repaint();
     app.processEvents();
+    started.restart();  // on screen from now
 
-    dcgui::MainWindow w;
-    w.show();
-    const int left = std::max(0, 1000 - static_cast<int>(started.elapsed()));
-    QTimer::singleShot(left, &splash, [&splash, &w]() { splash.finish(&w); });
+    dcgui::MainWindow w;  // shown when the splash closes: after 1.5 s, or at a click
+    bool shown = false;
+    auto showWindow = [&splash, &w, &shown]() {
+        if (shown) return;
+        shown = true;
+        w.show();
+        splash.finish(&w);
+    };
+    splash.onClick = showWindow;
+    const int left = std::max(0, 1500 - static_cast<int>(started.elapsed()));
+    QTimer::singleShot(left, &splash, showWindow);
     return app.exec();
 }

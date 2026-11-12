@@ -75,12 +75,20 @@ void AutoCadController::open(QWidget* parent, const QString& path, const QByteAr
             return;
         inst = current();
     }
+    // The read-only copy is made only now, once it will be opened (none is left behind when the
+    // user cancels), and it must be the bytes just checked: a sync client may have changed the
+    // file in between (D76).
     QString target = path;
     if (protectEvidence()) {
         QString err;
         target = platform::makeEvidenceCopy(path, &err);
         if (target.isEmpty()) {
             QMessageBox::warning(parent, tr("Open in AutoCAD"), tr("Could not open it as read-only: %1").arg(err));
+            return;
+        }
+        if (sha256File(target) != now) {
+            QMessageBox::warning(parent, tr("Open in AutoCAD"),
+                                 tr("%1 changed while it was being opened. Try again.").arg(QFileInfo(path).fileName()));
             return;
         }
     }

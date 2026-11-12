@@ -7,6 +7,7 @@
 #include <QStringList>
 
 #include <map>
+#include <optional>
 
 namespace dc {
 
@@ -35,6 +36,10 @@ struct CanonSettings {
     double angTol = 1e-6;
     bool mergeByLayer = false;      // only merge lines on the same layer (when layers must match)
     bool mergeByColor = false;      // ... of the same color (when colors must match)
+    double colorTolerance = 0;      // ... within this colorDifference (copied from CompareSettings)
+    // Find the edges the drawing's dimensions measure from (D78). Only a solution's are used, so
+    // student drawings skip it (effectiveCanon).
+    bool dimensionEdges = true;
 };
 
 struct CompareSettings {
@@ -114,6 +119,11 @@ struct AppSettings {
 
     QJsonObject toJson() const;
     static AppSettings fromJson(const QJsonObject& o);
+    // The same as JSON text, for QSettings and settings files (D76). fromJsonText returns
+    // nothing, with the reason in `error`, for text that is not valid JSON or not a settings
+    // object (another JSON file picked by mistake), instead of the defaults.
+    QByteArray toJsonText(bool compact = true) const;
+    static std::optional<AppSettings> fromJsonText(const QByteArray& text, QString* error = nullptr);
 };
 
 }  // namespace dc

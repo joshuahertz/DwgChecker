@@ -3,6 +3,7 @@
 #include <QFileInfo>
 
 #include <QJsonArray>
+#include <QJsonDocument>
 
 #include <algorithm>
 
@@ -51,6 +52,8 @@ CanonSettings AppSettings::effectiveCanon() const {
     c.angTol = compare.angTol;
     c.mergeByLayer = compare.requireLayerMatch;
     c.mergeByColor = compare.matchColor;
+    c.colorTolerance = compare.colorTolerance;
+    c.dimensionEdges = false;  // a student drawing's are never used; referenceCanon() turns them on
     return c;
 }
 
@@ -103,6 +106,7 @@ QJsonObject AppSettings::toJson() const {
 
 CanonSettings AppSettings::referenceCanon() const {
     CanonSettings c = effectiveCanon();
+    c.dimensionEdges = true;
     if (c.ignoreHiddenLayersInReference) c.skipHiddenLayers = true;
     return c;
 }
@@ -187,6 +191,25 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
     // whenever hatches were off, so a stored "false" says nothing about a choice.
     if (o.value("version").toInt(1) < 2) s.compare.checkHatchPattern = CompareSettings{}.checkHatchPattern;
     return s;
+}
+
+QByteArray AppSettings::toJsonText(bool compact) const {
+    return QJsonDocument(toJson()).toJson(compact ? QJsonDocument::Compact : QJsonDocument::Indented);
+}
+
+std::optional<AppSettings> AppSettings::fromJsonText(const QByteArray& text, QString* error) {
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(text, &pe);
+    if (pe.error != QJsonParseError::NoError) {
+        if (error) *error = QStringLiteral("not valid JSON: %1 at offset %2").arg(pe.errorString()).arg(pe.offset);
+        return std::nullopt;
+    }
+    const QJsonObject o = doc.object();
+    if (!doc.isObject() || !(o.value("canon").isObject() || o.value("compare").isObject())) {
+        if (error) *error = QStringLiteral("not a DWG Checker settings file (it has no \"canon\" or \"compare\" settings)");
+        return std::nullopt;
+    }
+    return fromJson(o);
 }
 
 }  // namespace dc

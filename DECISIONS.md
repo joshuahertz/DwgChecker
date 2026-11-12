@@ -295,9 +295,13 @@ is Medium (round coordinates); a synthetic copy at 13.48291034 is Strong.
 | FINGERPRINTGUID | strong | 70 |
 | TDUCREATE | strong | 60 |
 | bit-exact | strong/medium | 60/35 |
-| saved by another student | strong | 50 |
-| same LastSavedBy / Author | medium | 30 |
+| same account name (LastSavedBy or Author in either file), two students (D77) | strong | 60 |
+| same account name, a student and the reference | medium | 30 |
+| different LastSavedBy / Author names in one student's files (D77) | medium | 30 |
 | handles, extra layers, original name | info | 5 |
+
+"Saved by another student" (strong, 50), which guessed whether an account name was
+a classmate's name, was removed in D77.
 
 The combined score is the sum, capped at 100. A pair's level is its strongest
 signal. Clusters join pairs with strong signals.
@@ -1133,9 +1137,203 @@ once for its version (probeParser, synchronous).
   version, and the credit line of D63, in a thin frame of the icon's blue, with
   "Starting…" kept inside the card's margin (a QSplashScreen subclass, since the
   default draws the message against the window's edge).
-- **Timing:** it stays on top for at least a second, so it doesn't just flash,
-  then closes once the main window is showing (QSplashScreen::finish). A click
-  closes it at once.
+- **Timing:** the start-up work blocks the event loop, and a window is drawn only
+  once the system has exposed it. So the splash is shown, then events are
+  processed until it is exposed (at most 1 s) and it is painted, and only then
+  does the work start. It stays 1.5 s from that moment, and the main window,
+  built hidden meanwhile, is shown as it closes (QSplashScreen::finish). The
+  first version counted a 1 s minimum from before the splash was drawn and
+  showed the main window at once: the splash only flashed. A click closes it
+  sooner (since D76 it also shows the main window at once).
+
+**D76. Fixes from two code reviews (user request, 2026-11-11).** The user ran
+`/code-review high` on `src/core` (18 findings) and `src/gui` (26), and asked for
+all of them to be fixed. Grading changes:
+- **A dimension must measure the same place** (Matcher `dimensionPlaceMatches`),
+  not only have the same kind and value: the two extension-line origins of a
+  linear, aligned or arc-length one (either order), an ordinate's feature
+  point, and the center or vertex of a radius, diameter or angular one (new
+  `Primitive::dimCenter`: `center_pt`, a radius's `def_pt`, the middle of a
+  diameter's two points, or where an ANG2LN's lines meet). The text and
+  dimension line may sit anywhere. Before, a same-valued dimension anywhere,
+  even in another view, counted. An equivalent dimension placed on other points,
+  such as another pair of points on the same two parallel lines, did not match
+  yet; D78 added that, at the user's request.
+- **A block on a turned-off layer** is no longer skipped whole: as in AutoCAD,
+  its objects on layers that are on still show; those on layer 0 take the
+  block's layer and are hidden with it. A frozen layer still hides the block.
+- **The wrong-scale check counts graded geometry only**: an Ignored view (a
+  dimensioned copy, a title block) no longer raises the bar of half the
+  solution or adds to a factor's score.
+- **Merging by color uses the color tolerance**: pieces of one edge in near
+  colors merge when colors must match within a tolerance that covers them
+  (CanonSettings gets `colorTolerance`); an exact RGB key kept them apart, so
+  the edge read as missing plus extras.
+- **The "Outer" hatch style** fills to the first island only: loops nested two
+  or more deep are dropped. It was filled like Normal.
+- **nan and inf from the parser** become null, not 0.0, and an object with one
+  is left out with a warning, rather than drawn at the origin.
+- **No units warning for a unitless file** (INSUNITS 0).
+- **Ignored views are handled in one place** (compareCore): their reference
+  items are out from the start, the graded views match first (both passes),
+  and only then do Ignored views take what is left, geometry only. Before, an
+  Ignored view matched between the graded views' two passes.
+- **Transform2D::inverse** returns the identity for a singular transform.
+
+Cheating detection and files:
+- **"Saved by another student"** counts once per direction, not once for
+  LastSavedBy and again for Author. A new rule for matching a login to a
+  student's name was also written here; it still matched a surname alone, and
+  D77 removed the whole signal instead.
+- **Non-ASCII paths**: dwgread is given the Windows short path when there is
+  one; otherwise the file is copied to the temporary folder, or, when that path
+  is not ASCII either (a user name with accents), to `%ProgramData%\DwgChecker\staging`.
+- **CSV cells** starting with `=`, `+`, `-` or `@` that are not numbers get a
+  leading apostrophe (spreadsheet formula injection from file or layer names).
+- **Open in AutoCAD** checks the read-only copy it opens, not the original
+  before copying, so a file changed in between is caught.
+
+The main window and dialogs:
+- **Views from a run are no longer kept as confirmed.** Only views confirmed in
+  the editor are passed to later runs; before, the first Orthographic run's own
+  views were, so a changed gap threshold or sidecar had no effect until the app
+  restarted. They are now passed whatever mode the set shows, so a drawing set
+  to Orthographic in its own row gets them too. The editor starts from the
+  confirmed views, else the sidecar or a fresh segmentation.
+- **Settings files**: `AppSettings::toJsonText` / `fromJsonText` replace six
+  hand-written round trips. Loading a file that is not settings (invalid JSON,
+  or no "canon"/"compare") is refused with a message; it used to reset every
+  setting and overwrite the quiz's saved settings. Loaded settings re-read the
+  solution drawings when the reading rules changed. Saving writes the whole
+  file or reports why not (QSaveFile).
+- **Number fields** take a decimal point in any locale (a comma was accepted,
+  then read as invalid and silently replaced by the default) and fall back to
+  their last good value; the two tolerances must be above 0.
+- **dwgread is required** unless every solution, submission and template is a
+  JSON dump; the check looked at the first solution only.
+- **Background work**: a superseded read of the solution drawings stops before
+  its next drawing; the submissions folder is scanned in the background (it
+  blocked the window); an exception in either, or in a run, becomes an error
+  message instead of ending the app.
+- **Previews close** when the drawings are re-read with other rules.
+- **Paths are compared ignoring case** on Windows and macOS (`samePath`): the
+  same drawing picked twice, or a solution inside the submissions folder.
+- **The view editor** re-segments when the gap slider is let go, and asks first
+  if views were assigned or named by hand; its list of each primitive's view
+  always covers the drawing; the lasso picks an arc by its middle, not its
+  center; a sidecar that could not be written is not named as the views'
+  source, and the log says the views are kept for the session only.
+- **The cheating tab**: notes are escaped one by one (a `<br>` showed as text),
+  and names are filled in with one `arg()` call (a "%1" in a name was replaced).
+- **A click on the splash** shows the main window at once.
+- **The results table** is laid out again once a column drag pauses (60 ms),
+  not for every pixel.
+- One finding needed no change: the flag column's sort key cannot mix levels,
+  since a pair's score is capped at 100; its two copies became one helper.
+
+Efficiency and cleanup: resolveViews scores combinations without writing check
+messages; alignment scores candidates on a geometry-only copy moved in place;
+cheating detection builds each file's exact-geometry keys once (and its unused
+map is gone); `Dsu` (Dsu.h) and `keyPoint` (Model.h) are defined once; the
+as-drawn view of a file is `DrawingView::showAsDrawn`; the detail view's zoom
+context is one helper. New tests: tst_dims `placeMatters`; tst_canon
+`blockOnTurnedOffLayer`, `nearColorsMergeWithinTolerance`,
+`nanCoordinatesLeftOut`; tst_hatch `outerStyleStopsAtFirstIsland`; tst_ortho
+`scaleIgnoresIgnoredViews`; tst_misc `unitlessFileHasNoUnitsWarning`,
+`singularInverseIsIdentity`, and more cases in `csvEscaping` and
+`settingsRoundTrip`.
+
+**D77. Account names in the metadata: a plain comparison (user decisions,
+2026-11-11).** The user's experience: every student's files carry their own
+account name (LastSavedBy, Author), sometimes a number or something generic
+rather than a name, and two students share one only when they share files. So:
+- **"Saved by another student" is removed**, with `personMatchesStudent`. It
+  guessed whether an account name ("jsmith") was a classmate's name from the
+  Canvas file name, where the surname and first name run together, so it cannot
+  tell where the surname ends; a surname alone matched every student with it.
+- **The same account name in two students' files is strong** (red, 60; it was
+  medium), and the two fields are one pool (user rule): a name in one file's
+  LastSavedBy or Author that is also in the other file's LastSavedBy or Author.
+  It is one signal per pair ("same account name"), saying which field of each
+  file has the name. A name shared by more than 30% of the class, counted over
+  both fields (a lab account), is still not flagged. Between a student and the reference it stays medium (the
+  instructor's account can come with a handed-out file), and with a template file
+  it is not a signal (expected).
+- **New: different names in one student's files.** When a student submits
+  several files and they carry different LastSavedBy names, or different Author
+  names, each of those files gets a medium signal (amber icon) listing which file
+  carries which name; it also appears as a note on the Possible cheating tab and
+  in its CSV. Names shared by much of the class are left out of the comparison,
+  as above. Author was included at the user's choice, although it is set when a
+  file is first created, so drawings started from different files can differ.
+  Kept in `DupReport::fileSignals`, per file; `copyFlagFor` uses one when no
+  pair has stronger evidence.
+- Tests: tst_duplicates `sameAccountNameIsStrong` and
+  `severalNamesInOneStudentsFiles` replace `lastSavedByMatchesOtherStudent`;
+  tst_misc `personNames` is gone.
+
+**D78. Equivalent dimensions (user decisions, 2026-11-11).** D76 made a dimension
+match only from the same points. The follow-up the user asked for: a student may
+give the same measurement from other points, such as a width between two
+parallel edges from any pair of points on them. A dimension now matches when it
+measures the same thing (Matcher `dimensionPlaceMatches`):
+- **Linear and aligned** stand for each other (`sameDimFamily`). They need the
+  same measuring direction (a linear one's `dim_rotation`, an aligned one's from
+  its points; `DimPlace::dir`) and the same value. Each point must then be:
+  - in Absolute and Relative mode, on the edge the solution's point is on: the
+    longest line of the solution through that point that runs parallel to the
+    extension lines (`DimPlace::edge…`, found in postProcess after lines are
+    merged). Any point along it counts. Many students dimension to a hole's
+    centerline rather than its center; the distance is the same, which is
+    acceptable (user decision). So a centerline counts along its whole line (its
+    length is free, as in matching), and so does the line across through a
+    circle's or arc's center, drawn or not (`DimPlace::edge…Endless`). A point on
+    no such line must be the same point;
+  - in Orthographic mode (user rule), on the same line across the measurement,
+    anywhere (`MatchCriteria::dimLinesAnywhere`), so a width given in another
+    view, such as the top view above the front view, counts.
+- **Angular**: the same vertex (D76) and now also the same two sides
+  (`DimPlace::side0/1`: from the vertex to the picked points for a 3-point angle,
+  rays; an ANG2LN's two lines, either way), any points along them. Before, any
+  angle of that size at the vertex counted.
+- Unchanged: radius and diameter by their center, arc length by the arc's ends,
+  ordinate by its feature point.
+
+Directions agree within the angular tolerance plus twice the linear tolerance
+over the shorter vector, as elsewhere; the 1e-6 tolerances are unchanged.
+Tests: tst_dims `equivalentDimensions` (other points on the same edges, an
+aligned for a linear dimension, another plate's edges in each mode, another
+direction, a point on no edge, and angles from other points on the same sides)
+and `dimensionsToAHoleCenter` (a point on the centerline past the solution's
+center mark, and a solution without one).
+
+**D79. Fixes from a code review of D76–D78 (user request, 2026-11-11).** Nine
+findings. One was intended: centerlines count as dimension edges (D78). The
+other eight are fixed:
+- **Color merging cannot chain past the tolerance**: pieces joined into one line
+  or arc must all be within the color tolerance of each other (`PieceSets`). A
+  pairwise check let 0, 4 and 8 % apart become one line at a tolerance of 5.
+- **The view editor's gap slider** re-segments only when the gap changed: a click
+  on the handle, let go in place, no longer asks to throw away the views (or
+  throws them away). The Auto-segment button still re-segments.
+- **Open in AutoCAD** checks the original, asks what it must, finds AutoCAD, and
+  only then makes the read-only copy, which must have the checked bytes
+  ("changed while it was being opened" otherwise). No copy is left behind when
+  the user cancels or re-scans.
+- **The staging folder** for non-ASCII paths is per user (a hash of the home
+  folder in its name), so another account's folder never blocks it.
+- **Number fields** show what is used: a loaded value out of range (a tolerance
+  of 0 in a hand-edited file) shows the default that is used instead, and the
+  field's fallback value follows settings loaded while its signals are blocked.
+- **Run** describes the submissions it just found instead of scanning the folder
+  a second time in the background.
+- **Dimension edges** are found for solution drawings only
+  (`CanonSettings::dimensionEdges`, off in `effectiveCanon`).
+- **The reading signature** includes what `referenceCanon()` takes from the
+  matching rules (tolerances, merging by layer and by color), so changing those
+  re-reads the solution drawings that the preview and Edit views use.
+Tests: tst_canon `nearColorsMergeWithinTolerance` (the chain), tst_batch
+(`dimensionEdges` per drawing kind).
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,

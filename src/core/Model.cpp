@@ -76,6 +76,10 @@ QString ltClassName(LtClass c) {
 bool isGeometric(PrimKind k) { return k == PrimKind::Line || k == PrimKind::Arc || k == PrimKind::Circle; }
 bool isAngularDimType(const QString& t) { return t.startsWith(QLatin1String("ANG")); }
 
+bool isLinearDimType(const QString& t) { return t == QLatin1String("LINEAR") || t == QLatin1String("ALIGNED"); }
+
+bool sameDimFamily(const QString& a, const QString& b) { return a == b || (isLinearDimType(a) && isLinearDimType(b)); }
+
 double Primitive::sweep() const {
     if (kind == PrimKind::Circle) return kTwoPi;
     if (kind != PrimKind::Arc) return 0;
@@ -134,6 +138,15 @@ Primitive transformed(const Primitive& p, const Transform2D& t) {
     r.p0 = t.apply(p.p0);
     r.p1 = t.apply(p.p1);
     r.center = t.apply(p.center);
+    if (p.hasDimCenter) r.dimCenter = t.apply(p.dimCenter);
+    if (p.dimPlace) {
+        auto q = std::make_shared<DimPlace>(*p.dimPlace);
+        q->dir = t.applyLinear(q->dir);
+        q->side0 = t.applyLinear(q->side0);
+        q->side1 = t.applyLinear(q->side1);
+        for (Vec2* e : {&q->edge0a, &q->edge0b, &q->edge1a, &q->edge1b}) *e = t.apply(*e);
+        r.dimPlace = std::move(q);
+    }
     // Uniform scale of a similarity transform (exactly 1 for rigid ones).
     double sc = std::sqrt(std::fabs(t.det()));
     if (std::fabs(sc - 1.0) < 1e-12) sc = 1.0;

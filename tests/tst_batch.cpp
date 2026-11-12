@@ -235,6 +235,9 @@ void TestBatch::turnedOffLayersInSolutionIgnored() {
     AppSettings d;
     QVERIFY(d.referenceCanon().skipHiddenLayers);
     QVERIFY(!d.effectiveCanon().skipHiddenLayers);
+    // Only a solution's dimension edges are used, so only a solution looks for them (D76).
+    QVERIFY(d.referenceCanon().dimensionEdges);
+    QVERIFY(!d.effectiveCanon().dimensionEdges);
 }
 
 void TestBatch::absoluteDrawingInWrongPlaceFindsItsDrawing() {

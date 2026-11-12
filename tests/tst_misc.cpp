@@ -65,7 +65,6 @@ private slots:
     void alignMirror();
     void identityCanvas();
     void identityFallback();
-    void personNames();
     void formatting();
     void settingsRoundTrip();
     void csvEscaping();
@@ -76,6 +75,8 @@ private slots:
     void errorSummaryCounts();
     void similarityTransforms();
     void scaleCandidateList();
+    void unitlessFileHasNoUnitsWarning();
+    void singularInverseIsIdentity();
 };
 
 void TestMisc::transformBasics() {
@@ -209,13 +210,6 @@ void TestMisc::identityFallback() {
     QCOMPARE(a.name, QStringLiteral("My Drawing"));
 }
 
-void TestMisc::personNames() {
-    QVERIFY(personMatchesStudent("Jane Smith", "smithjane"));
-    QVERIFY(personMatchesStudent("smithjane", "smithjane"));
-    QVERIFY(!personMatchesStudent("jhertz", "smithjane"));
-    QVERIFY(!personMatchesStudent("", "smithjane"));
-}
-
 void TestMisc::formatting() {
     QCOMPARE(fmtLen(0.75), QStringLiteral("0.750"));
     QCOMPARE(fmtLen(0.7501, 0.75), QStringLiteral("0.7501"));
@@ -276,6 +270,16 @@ void TestMisc::settingsRoundTrip() {
     s.compare.requireByLayer = true;
     s.compare.locationPenaltyErrors = 0;
     const AppSettings t = AppSettings::fromJson(s.toJson());
+    // As text, as saved and loaded; text that is not settings is refused, not read as the
+    // defaults (D76).
+    const std::optional<AppSettings> fromText = AppSettings::fromJsonText(s.toJsonText(false));
+    QVERIFY(fromText && fromText->compare.linTol == 0.001 && fromText->compare.mode == Mode::Orthographic);
+    QString why;
+    QVERIFY(!AppSettings::fromJsonText("{\"OBJECTS\": []}", &why));
+    QVERIFY(why.contains(QStringLiteral("not a DWG Checker settings file")));
+    QVERIFY(!AppSettings::fromJsonText("{\"compare\": {", &why));
+    QVERIFY(why.contains(QStringLiteral("not valid JSON")));
+    QVERIFY(!AppSettings::fromJsonText(QByteArray()));
     QVERIFY(!t.compare.detectLocation);
     QVERIFY(t.compare.matchColor && t.compare.requireByLayer);
     QCOMPARE(t.compare.colorTolerance, 7.0);
@@ -316,6 +320,11 @@ void TestMisc::csvEscaping() {
     QCOMPARE(csvEscape("plain"), QStringLiteral("plain"));
     QCOMPARE(csvEscape("a,b"), QStringLiteral("\"a,b\""));
     QCOMPARE(csvEscape("say \"hi\""), QStringLiteral("\"say \"\"hi\"\"\""));
+    // Formula-looking text is neutralized; numbers are left alone (D76).
+    QCOMPARE(csvEscape("=HYPERLINK(\"x\")"), QStringLiteral("\"'=HYPERLINK(\"\"x\"\")\""));
+    QCOMPARE(csvEscape("@SUM(A1)"), QStringLiteral("'@SUM(A1)"));
+    QCOMPARE(csvEscape("+1 extra"), QStringLiteral("'+1 extra"));
+    QCOMPARE(csvEscape("-2.5"), QStringLiteral("-2.5"));
 }
 
 void TestMisc::displacedCopiesArePaired() {
@@ -476,6 +485,31 @@ void TestMisc::scaleCandidateList() {
     for (double f : c) QVERIFY(std::fabs(f - 1) >= 1e-3);
     QCOMPARE(insUnitsMeters(1), 0.0254);
     QCOMPARE(insUnitsMeters(0), 0.0);
+}
+
+void TestMisc::unitlessFileHasNoUnitsWarning() {
+    // INSUNITS 0 (unitless) says nothing about the units it was drawn in (D76).
+    Drawing r, s;
+    r.prims = {line({0, 0}, {3, 0}), line({0, 0}, {0, 2})};
+    s.prims = r.prims;
+    r.meta.insUnits = 1;
+    s.meta.insUnits = 0;
+    auto unitsWarning = [](const CompareResult& res) {
+        for (const auto& e : res.errors)
+            if (e.text.contains(QStringLiteral("units mismatch"))) return true;
+        return false;
+    };
+    CompareSettings cs;
+    QVERIFY(!unitsWarning(compareDrawings(r, s, cs, nullptr)));
+    s.meta.insUnits = 4;
+    QVERIFY(unitsWarning(compareDrawings(r, s, cs, nullptr)));
+}
+
+void TestMisc::singularInverseIsIdentity() {
+    QVERIFY(Transform2D::scaling(0).inverse().isIdentity());
+    const Transform2D t = Transform2D::rigid(deg(30), 2, 3);
+    const Vec2 p{1.5, -0.5};
+    QVERIFY(dist(t.inverse().apply(t.apply(p)), p) < 1e-12);
 }
 
 QTEST_GUILESS_MAIN(TestMisc)

@@ -51,6 +51,15 @@ constexpr int kBadge = 30;
 const QColor kActive(40, 120, 220), kDone(46, 170, 80), kWaiting(150, 150, 150);
 }  // namespace
 
+bool samePath(const QString& a, const QString& b) {
+    const QString x = QDir::cleanPath(QFileInfo(a).absoluteFilePath()), y = QDir::cleanPath(QFileInfo(b).absoluteFilePath());
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    return x.compare(y, Qt::CaseInsensitive) == 0;
+#else
+    return x == y;
+#endif
+}
+
 QPixmap stepBadge(int step, PathCard::State state, int size, qreal dpr) {
     QPixmap pm(QSize(size, size) * dpr);
     pm.setDevicePixelRatio(dpr);
@@ -141,7 +150,8 @@ PathCard::PathCard(Kind kind, int step, const QString& caption, const QString& e
 void PathCard::setPaths(const QStringList& paths) {
     QStringList clean;
     for (const QString& p : paths)
-        if (!p.isEmpty() && !clean.contains(QDir::cleanPath(p))) clean << QDir::cleanPath(p);
+        if (!p.isEmpty() && std::none_of(clean.cbegin(), clean.cend(), [&](const QString& c) { return samePath(c, p); }))
+            clean << QDir::cleanPath(p);
     if (!m_multiple && clean.size() > 1) clean = clean.mid(0, 1);
     // Several solution drawings in name order, numbers by value ("Problem 2" before "Problem 10"):
     // the results call them Drawing 1, 2, 3… in this order.
@@ -341,7 +351,7 @@ QStringList PathCard::acceptedPaths(const QList<QUrl>& urls) const {
     for (const QUrl& u : urls) {
         if (!u.isLocalFile()) continue;
         const QString p = acceptedPath(u.toLocalFile());
-        if (!p.isEmpty() && !out.contains(p)) out << p;
+        if (!p.isEmpty() && std::none_of(out.cbegin(), out.cend(), [&](const QString& o) { return samePath(o, p); })) out << p;
         if (!m_multiple && !out.isEmpty()) break;
     }
     return out;

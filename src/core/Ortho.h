@@ -77,8 +77,10 @@ struct AlignmentCheck {
     QString text;  // failure description
 };
 
-// Projection alignment and arrangement checks from per-view translations.
-std::vector<AlignmentCheck> orthoChecks(const ViewSet& vs, const std::vector<const Transform2D*>& viewT, double alignTol);
+// Projection alignment and arrangement checks from per-view translations. Without text, only
+// whether each passed (resolveViews scores up to 200,000 combinations with it).
+std::vector<AlignmentCheck> orthoChecks(const ViewSet& vs, const std::vector<const Transform2D*>& viewT, double alignTol,
+                                        bool withText = true);
 
 OrthoResolution resolveViews(const std::vector<Primitive>& ref, const ViewSet& vs, const std::vector<Primitive>& stu,
                              const std::vector<int>& stuIdx, const CompareSettings& s, const MatchCriteria& crit);

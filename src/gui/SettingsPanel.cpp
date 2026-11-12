@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -102,22 +103,54 @@ QWidget* indented(QWidget* child, QWidget* parent) {
 constexpr double kRadToDeg = 180.0 / kPi;
 const char* kAdvancedKey = "ui/advancedSettingsOpen";
 
+// Numbers written as Settings saves and reads them: with a decimal point whatever the system's
+// locale (a comma was accepted, then read as invalid and silently replaced; D76), and in range.
+// A field left with a value out of range goes back to its last good one.
+class SciValidator : public QDoubleValidator {
+public:
+    SciValidator(double bottom, QLineEdit* e) : QDoubleValidator(bottom, 1e9, 12, e), m_good(e->text()) {
+        setNotation(QDoubleValidator::ScientificNotation);
+        QLocale c = QLocale::c();
+        c.setNumberOptions(QLocale::RejectGroupSeparator);
+        setLocale(c);
+        connect(e, &QLineEdit::textChanged, this, [this](const QString& text) {
+            QString s = text;
+            int pos = 0;
+            if (validate(s, pos) == QValidator::Acceptable) m_good = text;
+        });
+    }
+    void fixup(QString& input) const override { input = m_good; }
+    // For a value set while the field's signals are blocked (setSettings).
+    void setGood(const QString& text) { m_good = text; }
+
+private:
+    QString m_good;
+};
+
 }  // namespace
 
-QLineEdit* SettingsPanel::sciEdit(double v) {
+QLineEdit* SettingsPanel::sciEdit(double v, double bottom) {
     auto* e = new QLineEdit(QString::number(v, 'g', 6), this);
-    auto* val = new QDoubleValidator(0, 1e9, 12, e);
-    val->setNotation(QDoubleValidator::ScientificNotation);
-    e->setValidator(val);
+    e->setValidator(new SciValidator(bottom, e));
     e->setMaximumWidth(110);
     connect(e, &QLineEdit::editingFinished, this, &SettingsPanel::changed);
     return e;
 }
 
+void SettingsPanel::setSci(QLineEdit* e, double v, double def) {
+    // A value the field would not accept (a tolerance of 0 from a hand-edited settings file)
+    // shows as `def`, which is what sciValue would use: the field shows what is used (D76).
+    QString text = QString::number(v, 'g', 6), check = text;
+    int pos = 0;
+    if (e->validator() && e->validator()->validate(check, pos) != QValidator::Acceptable) text = QString::number(def, 'g', 6);
+    e->setText(text);
+    if (auto* sv = dynamic_cast<const SciValidator*>(e->validator())) const_cast<SciValidator*>(sv)->setGood(text);
+}
+
 double SettingsPanel::sciValue(const QLineEdit* e, double def) {
     bool ok = false;
-    const double v = e->text().toDouble(&ok);
-    return ok ? v : def;
+    const double v = e->text().toDouble(&ok);  // the C locale, as the field's validator
+    return ok && e->hasAcceptableInput() ? v : def;
 }
 
 SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget(parent), m_acad(acad) {
@@ -190,7 +223,7 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
     m_mirror->setToolTip(tr("A drawing flipped over, as with the MIRROR command"));
     fRules->addRow(m_rotation);
     fRules->addRow(m_mirror);
-    m_linTol = sciEdit(1e-6);
+    m_linTol = sciEdit(1e-6, 1e-12);  // a tolerance of 0 would accept nothing
     m_linTol->setToolTip(tr("How far apart two points may be and still count as the same point"));
     fRules->addRow(tr("Tolerance (drawing units)"), m_linTol);
     m_extras = combo({tr("Count against the score"), tr("List only")});
@@ -273,7 +306,7 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
     // Matching details.
     auto* gMatch = new QGroupBox(tr("More matching rules"), m_advanced);
     auto* fMatch = new QFormLayout(gMatch);
-    m_angTol = sciEdit(1e-6);
+    m_angTol = sciEdit(1e-6, 1e-12);
     m_angTol->setToolTip(tr("How far apart two directions may be and still count as the same"));
     fMatch->addRow(tr("Angle tolerance (degrees)"), m_angTol);
     m_nearMiss = sciEdit(0);
@@ -695,8 +728,8 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     m_matchLt->setChecked(s.compare.matchLinetype);
     m_rotation->setChecked(s.compare.allowRotation);
     m_mirror->setChecked(s.compare.allowMirror);
-    m_linTol->setText(QString::number(s.compare.linTol, 'g', 6));
-    m_angTol->setText(QString::number(s.compare.angTol * kRadToDeg, 'g', 6));
+    setSci(m_linTol, s.compare.linTol, 1e-6);  // the defaults are those settings() falls back to
+    setSci(m_angTol, s.compare.angTol * kRadToDeg, 1e-6);
     m_layerMatch->setChecked(s.compare.requireLayerMatch);
     m_extras->setCurrentIndex(s.compare.extras == ExtrasPolicy::Penalize ? 0 : 1);
     m_dims->setChecked(s.compare.checkDimensions);
@@ -709,7 +742,7 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     m_matchColor->setChecked(s.compare.matchColor);
     m_colorTol->setValue(s.compare.colorTolerance);
     m_byLayer->setChecked(s.compare.requireByLayer);
-    m_nearMiss->setText(QString::number(s.compare.nearMissRadius, 'g', 6));
+    setSci(m_nearMiss, s.compare.nearMissRadius, 0);
     m_ignoreRe->setText(s.canon.layerIgnoreRegex);
     m_paper->setChecked(s.canon.usePaperSpace);
     m_skipDefpoints->setChecked(s.canon.skipDefpoints);
@@ -721,7 +754,7 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     m_visiblePat->setText(s.canon.visiblePatterns.join("; "));
     m_topK->setValue(s.compare.orthoTopK);
     m_gapPct->setValue(s.compare.orthoGapFraction * 100);
-    m_alignTol->setText(QString::number(s.compare.alignTol, 'g', 6));
+    setSci(m_alignTol, s.compare.alignTol, 0);
     m_alignSev->setCurrentIndex(static_cast<int>(s.compare.alignmentSeverity));
     m_arrangeSev->setCurrentIndex(static_cast<int>(s.compare.arrangementSeverity));
     m_templates->clear();

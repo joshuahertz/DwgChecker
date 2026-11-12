@@ -88,6 +88,10 @@ private:
 // A round step badge: the number, or a check when done (also used for the Run step).
 QPixmap stepBadge(int step, PathCard::State state, int size, qreal dpr);
 
+// Whether two paths name the same file or folder: absolute and cleaned, and ignoring case on
+// Windows and macOS, whose file systems do (D76). Safe in any thread.
+bool samePath(const QString& a, const QString& b);
+
 // A step of the main window that holds controls instead of a path (step 2: the location
 // mode). It looks like a PathCard: a badge for the step's state, a frame that is outlined
 // while the step is next.

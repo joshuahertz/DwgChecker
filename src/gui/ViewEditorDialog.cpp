@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
 #include <QTableWidget>
@@ -75,38 +76,62 @@ ViewEditorDialog::ViewEditorDialog(DrawingPtr ref, const QString& refPath, const
     split->setStretchFactor(1, 1);
 
     auto* buttons = new QHBoxLayout;
-    auto* resegment = new QPushButton(tr("Auto-segment again"), this);
+    auto* resegmentBtn = new QPushButton(tr("Auto-segment again"), this);
     auto* saveBtn = new QPushButton(tr("Save views"), this);
     auto* cancel = new QPushButton(tr("Cancel"), this);
     saveBtn->setDefault(true);
-    buttons->addWidget(resegment);
+    buttons->addWidget(resegmentBtn);
     buttons->addStretch();
     buttons->addWidget(saveBtn);
     buttons->addWidget(cancel);
     lay->addLayout(buttons);
 
+    // The gap applies when the slider is let go (a drag no longer re-segments at every step), or
+    // at once from the keyboard or the wheel (D76).
     connect(m_gap, &QSlider::valueChanged, this, [this](int v) {
-        // Live preview: re-segment with the new threshold (discarding manual reassignments).
-        m_vs = segmentViews(*m_ref, v / 2000.0);
-        m_selected.clear();
-        refreshTable();
-        redraw();
+        if (m_gap->isSliderDown()) m_gapLabel->setText(tr("%1 % of the drawing diagonal (let go to apply)").arg(v / 20.0, 0, 'f', 2));
+        else resegment(true);
     });
-    connect(resegment, &QPushButton::clicked, this, [this]() {
-        m_vs = segmentViews(*m_ref, m_gap->value() / 2000.0);
-        m_selected.clear();
-        refreshTable();
-        redraw();
-    });
+    connect(m_gap, &QSlider::sliderReleased, this, [this]() { resegment(true); });
+    connect(resegmentBtn, &QPushButton::clicked, this, [this]() { resegment(false); });
     connect(m_view, &DrawingView::lassoFinished, this, &ViewEditorDialog::onLasso);
     connect(assign, &QPushButton::clicked, this, &ViewEditorDialog::assignSelection);
     connect(newView, &QPushButton::clicked, this, &ViewEditorDialog::addView);
     connect(saveBtn, &QPushButton::clicked, this, &ViewEditorDialog::save);
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
 
+    // One view per primitive of this drawing, so that a selection can always be assigned (D76).
+    if (m_vs.primView.size() != m_ref->prims.size()) {
+        m_vs.primView.resize(m_ref->prims.size(), -1);  // -1: rebuild() puts it in the nearest view
+        m_vs.rebuild(*m_ref);
+    }
     refreshTable();
     redraw();
     m_view->zoomToAll();
+}
+
+bool ViewEditorDialog::resegment(bool onlyIfGapChanged) {
+    const double gap = m_gap->value() / 2000.0;
+    const int inUse = std::clamp(static_cast<int>(std::lround(m_vs.gapFraction * 2000)), 1, 200);
+    if (onlyIfGapChanged && m_gap->value() == inUse) {  // a click on the handle, let go in place
+        refreshTable();  // the label shows the gap in use again
+        return false;
+    }
+    if (m_edited &&
+        QMessageBox::question(this, tr("Views"),
+                              tr("Splitting the drawing again throws away the views you assigned or named. Continue?")) !=
+            QMessageBox::Yes) {
+        const QSignalBlocker block(m_gap);  // the slider goes back to the gap in use
+        m_gap->setValue(inUse);
+        refreshTable();
+        return false;
+    }
+    m_vs = segmentViews(*m_ref, gap);
+    m_selected.clear();
+    m_edited = false;
+    refreshTable();
+    redraw();
+    return true;
 }
 
 void ViewEditorDialog::refreshTable() {
@@ -123,6 +148,7 @@ void ViewEditorDialog::refreshTable() {
         names->setCurrentIndex(names->findData(static_cast<int>(m_vs.views[v].name)));
         connect(names, &QComboBox::currentIndexChanged, this, [this, v, names](int) {
             m_vs.views[v].name = static_cast<ViewName>(names->currentData().toInt());
+            m_edited = true;
             // Only labels change; rebuilding the table here would delete this combo box mid-signal.
             for (int k = 0; k < m_target->count(); ++k) m_target->setItemText(k, m_vs.label(m_target->itemData(k).toInt()));
             redraw();
@@ -150,7 +176,9 @@ void ViewEditorDialog::redraw() {
 void ViewEditorDialog::onLasso(const QPolygonF& poly, bool add) {
     if (!add) m_selected.clear();
     for (int i = 0; i < static_cast<int>(m_ref->prims.size()); ++i) {
-        const Vec2 c = m_ref->prims[i].kind == PrimKind::Line ? m_ref->prims[i].midpoint() : m_ref->prims[i].center;
+        // A point on what is drawn: an arc's middle, not its center, which can lie far from the
+        // arc, even in another view (D76).
+        const Vec2 c = m_ref->prims[i].midpoint();
         if (poly.containsPoint(QPointF(c.x, c.y), Qt::OddEvenFill)) m_selected.insert(i);
     }
     refreshTable();
@@ -160,8 +188,10 @@ void ViewEditorDialog::onLasso(const QPolygonF& poly, bool add) {
 void ViewEditorDialog::assignSelection() {
     const int v = m_target->currentData().toInt();
     if (m_selected.empty() || v < 0 || v >= static_cast<int>(m_vs.views.size())) return;
-    for (int i : m_selected) m_vs.primView[i] = v;
+    for (int i : m_selected)
+        if (i < static_cast<int>(m_vs.primView.size())) m_vs.primView[i] = v;
     m_selected.clear();
+    m_edited = true;
     m_vs.rebuild(*m_ref);
     refreshTable();
     redraw();
@@ -173,8 +203,10 @@ void ViewEditorDialog::addView() {
     d.id = static_cast<int>(m_vs.views.size());
     d.name = ViewName::Other;
     m_vs.views.push_back(d);
-    for (int i : m_selected) m_vs.primView[i] = d.id;
+    for (int i : m_selected)
+        if (i < static_cast<int>(m_vs.primView.size())) m_vs.primView[i] = d.id;
     m_selected.clear();
+    m_edited = true;
     // Drop views that became empty and renumber.
     m_vs.rebuild(*m_ref);
     std::vector<int> remap(m_vs.views.size(), -1);
@@ -186,7 +218,7 @@ void ViewEditorDialog::addView() {
             k.id = remap[v];
             kept.push_back(k);
         }
-    for (int& pv : m_vs.primView) pv = pv >= 0 ? remap[pv] : -1;
+    for (int& pv : m_vs.primView) pv = pv >= 0 && pv < static_cast<int>(remap.size()) ? remap[pv] : -1;
     m_vs.views = kept;
     m_vs.rebuild(*m_ref);
     refreshTable();
@@ -202,10 +234,13 @@ void ViewEditorDialog::save() {
         return;
     m_vs.refSha256 = m_ref->meta.sha256;
     QString err;
-    if (!saveSidecar(sidecarPath(m_refPath), m_vs, *m_ref, &err)) {
+    m_saved = saveSidecar(sidecarPath(m_refPath), m_vs, *m_ref, &err);
+    if (m_saved) {
+        m_vs.source = sidecarPath(m_refPath);
+    } else {  // no sidecar to name as the source (D76)
+        m_vs.source = QStringLiteral("editor");
         QMessageBox::warning(this, tr("Views"), tr("Could not save the sidecar: %1\nThe views are still used for this session.").arg(err));
     }
-    m_vs.source = sidecarPath(m_refPath);
     accept();
 }
 

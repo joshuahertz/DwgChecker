@@ -26,9 +26,4 @@ private:
     QRegularExpression m_re;
 };
 
-// Lower-case letters only, for comparing a LastSavedBy/Author value with a student name.
-QString normalizePersonName(const QString& s);
-// True when `who` (LastSavedBy/Author) plausibly names the student `studentName`.
-bool personMatchesStudent(const QString& who, const QString& studentName);
-
 }  // namespace dc

@@ -24,6 +24,7 @@ class QSplitter;
 class QSortFilterProxyModel;
 class QStackedWidget;
 class QTabWidget;
+class QTimer;
 class QTreeView;
 class QToolButton;
 
@@ -73,6 +74,10 @@ private:
     void updateDirInfo();    // "33 drawings found"
     void updateSteps();      // card highlights, Run enabled, the step guide
     void storeQuizSettings();  // the current settings, remembered for the chosen reference
+    // Puts settings in the panel and re-reads the solution drawings if the reading rules
+    // changed, as a change made in the panel does (D76).
+    void applySettings(const dc::AppSettings& s);
+    void closePreviews();
     void addRecent(const char* key, PathCard* card, const QString& path);
     void clearRecent(const char* key, PathCard* card);
 
@@ -85,6 +90,7 @@ private:
     QByteArray m_refCanonSig;  // reading rules the solution card was last described with
     int m_refRead = 0;      // counts reads of the solution drawings; only the latest updates the card
     bool m_refReading = false;
+    std::shared_ptr<std::atomic_bool> m_refCancel;  // set to stop the read in flight between drawings
     bool m_busyCursor = false;  // the application's busy cursor is set (one level, while reading)
     // The solution drawings as last read for the card, by path (the reading rules of
     // m_refCanonSig), with each one's summary; for the preview and Edit views.
@@ -93,6 +99,9 @@ private:
     QString m_pendingPreview;  // clicked while still being read: opens when the read ends
     QHash<QString, QPointer<QDialog>> m_previews;  // one open preview per drawing
     int m_dirCount = 0;     // drawings in the chosen folder
+    int m_dirScan = 0;      // counts scans of the folder (in the background); only the latest updates the card
+    QString m_dirScanned;   // the folder m_dirCount is for
+    QTimer* m_relayout = nullptr;  // lays the results out again once a column drag pauses
     QToolButton* m_settingsToggle = nullptr;
     QScrollArea* m_settingsArea = nullptr;
     QSplitter* m_split = nullptr;  // the steps and settings | the results
@@ -115,7 +124,10 @@ private:
 
     AutoCadController* m_acad = nullptr;
     std::shared_ptr<const dc::BatchOutput> m_batch;
-    QHash<QString, dc::ViewSet> m_viewsByRef;  // per solution drawing: confirmed in the editor, or from the last run
+    // Per solution drawing, the views confirmed in the editor, passed to every run. The views a
+    // run found itself are not kept: they counted as confirmed, so later settings and sidecar
+    // changes were ignored (D76).
+    QHash<QString, dc::ViewSet> m_confirmedViews;
     QFutureWatcher<dc::BatchOutput> m_watcher;
     std::shared_ptr<dc::IDrawingLoader> m_runLoader;
     std::atomic_bool m_cancel{false};

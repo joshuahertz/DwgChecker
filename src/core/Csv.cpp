@@ -31,9 +31,23 @@ CopyFlag copyFlagFor(const BatchOutput& b, int si) {
             f.pairIndex = k;
         }
     }
+    // Evidence from the student's own files (several account names, D77): it flags the file when
+    // no pair has stronger evidence.
+    const Signal* own = nullptr;
+    if (si >= 0 && si < static_cast<int>(b.dups.fileSignals.size()))
+        for (const Signal& s : b.dups.fileSignals[si]) {
+            tips << QStringLiteral("[%1] %2").arg(strengthName(s.strength), s.detail);
+            if (!own || s.strength > own->strength) own = &s;
+        }
     if (si >= 0 && si < static_cast<int>(b.dups.fileNotes.size()))
         for (const QString& n : b.dups.fileNotes[si]) tips << QStringLiteral("[note] ") + n;
     f.tooltip = tips.join('\n');
+    if (own && own->strength >= Strength::Weak && (!best || own->strength > best->level)) {
+        f.level = own->strength >= Strength::Strong ? Strength::Strong : Strength::Weak;
+        f.text = (f.level == Strength::Strong ? QStringLiteral("⚠ ") : QString()) + own->label;
+        f.pairIndex = -1;
+        return f;
+    }
     if (!best) return f;
     f.level = best->level >= Strength::Strong ? Strength::Strong : Strength::Weak;
     // Partners sharing the same strongest signal.
@@ -61,12 +75,19 @@ QString correctnessText(const StudentRun& r) {
 }
 
 QString csvEscape(const QString& s) {
-    if (s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r')) {
-        QString t = s;
+    QString t = s;
+    // A cell a spreadsheet would run as a formula (a file, layer or login name starting with
+    // = + - @) gets a leading apostrophe; numbers stay numbers (D76).
+    if (!t.isEmpty() && QStringLiteral("=+-@\t\r").contains(t.front())) {
+        bool number = false;
+        t.toDouble(&number);
+        if (!number) t.prepend(QLatin1Char('\''));
+    }
+    if (t.contains(',') || t.contains('"') || t.contains('\n') || t.contains('\r')) {
         t.replace('"', QStringLiteral("\"\""));
         return '"' + t + '"';
     }
-    return s;
+    return t;
 }
 
 static QString header(const BatchOutput& b) {
@@ -142,6 +163,10 @@ QString duplicatesCsv(const BatchOutput& b) {
         for (const auto& s : p.evidence) sig << QStringLiteral("%1 (%2): %3").arg(s.label, strengthName(s.strength), s.detail);
         out += csvEscape(b.dupEntries[p.a].display) + ',' + csvEscape(b.dupEntries[p.b].display) + ',' + strengthName(p.level) + ',' +
                QString::number(p.score, 'f', 0) + ',' + csvEscape(sig.join(QStringLiteral("; "))) + '\n';
+    }
+    if (!b.dups.notes.isEmpty()) {  // probable templates, several account names in one student's files
+        out += QStringLiteral("\nNote\n");
+        for (const QString& n : b.dups.notes) out += csvEscape(n) + '\n';
     }
     if (!b.dups.clusters.empty()) {
         out += QStringLiteral("\nCluster,Members\n");

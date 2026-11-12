@@ -93,6 +93,7 @@ Transform2D Transform2D::operator*(const Transform2D& o) const {
 
 Transform2D Transform2D::inverse() const {
     const double D = det();
+    if (!(std::fabs(D) > 1e-300) || !std::isfinite(D)) return identity();  // singular: no inverse (D76)
     Transform2D r;
     r.a = d / D; r.b = -b / D; r.c = -c / D; r.d = a / D;
     r.tx = -(r.a * tx + r.b * ty);

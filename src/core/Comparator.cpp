@@ -24,6 +24,7 @@ MatchCriteria criteriaFrom(const CompareSettings& s) {
     c.strictCenterlines = s.strictCenterlines;
     c.checkDimensions = s.checkDimensions;
     c.checkDimPrecision = s.checkDimPrecision;
+    c.dimLinesAnywhere = s.mode == Mode::Orthographic;  // user rule (D78)
     return c;
 }
 
@@ -346,19 +347,33 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
         }
     }
 
+    // ---- Ignored views (Orthographic): located like any view, so that the student's copy of one
+    // is set aside rather than extra, but never graded. Their reference items are out from the
+    // start, and they take student items only after every graded view has matched, so an Ignored
+    // view repeating a graded one (the same part with its dimensions) never takes the graded
+    // view's items (D69, D76). ----
+    std::vector<char> ignoredGroup(groups.size(), 0);
+    if (ortho)
+        for (int k = 0; k < static_cast<int>(groups.size()); ++k) {
+            if (!views->isIgnored(k)) continue;
+            ignoredGroup[k] = 1;
+            r.views[k].ignored = true;
+            r.views[k].refCount = 0;
+            for (int i : groups[k].refIdx) {
+                r.refStatus[i] = PrimStatus::NotCompared;
+                --r.refCount;
+            }
+        }
+
     // ---- Pass A: exact matches (geometry + linetype class + layer) ----
     Matching m;
     m.reset(nR, nS);
-    // Graded views before Ignored ones, so that an Ignored view repeating a graded one (the
-    // same part with its dimensions) never takes the items the graded view matches; then the
-    // larger first, so that shared sizes cannot steal from the bigger view.
-    std::vector<int> gorder(groups.size());
-    for (int k = 0; k < static_cast<int>(groups.size()); ++k) gorder[k] = k;
-    std::stable_sort(gorder.begin(), gorder.end(), [&](int a, int b) {
-        const bool ia = ortho && views->isIgnored(a), ib = ortho && views->isIgnored(b);
-        if (ia != ib) return !ia;
-        return groups[a].refIdx.size() > groups[b].refIdx.size();
-    });
+    // The graded views, the larger first, so that shared sizes cannot steal from the bigger view.
+    std::vector<int> gorder;
+    for (int k = 0; k < static_cast<int>(groups.size()); ++k)
+        if (!ignoredGroup[k]) gorder.push_back(k);
+    std::stable_sort(gorder.begin(), gorder.end(),
+                     [&](int a, int b) { return groups[a].refIdx.size() > groups[b].refIdx.size(); });
     for (int k : gorder) {
         Group& g = groups[k];
         if (ortho && !r.views[k].found) continue;
@@ -392,7 +407,7 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
             if (ortho && !r.views[k].found) continue;
             matchInto(ref.prims, g.refIdx, g.st, stuIdx, crit, true, m);
         }
-        for (int k = 0; k < static_cast<int>(groups.size()); ++k) {
+        for (int k : gorder) {
             for (int i : groups[k].refIdx) {
                 const int j = m.refToStu[i];
                 if (j < 0 || r.refStatus[i] == PrimStatus::Matched) continue;
@@ -401,7 +416,6 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                 r.stuPartner[j] = i;
                 r.stuView[j] = groups[k].view;
                 r.stuT[j] = groups[k].T;
-                if (ortho && views->isIgnored(k)) continue;  // set aside below, never an error
                 const Primitive& R = ref.prims[i];
                 const Primitive& S = groups[k].st[j];
                 if (R.kind == PrimKind::Dimension) {
@@ -424,6 +438,20 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                 }
                 eAttr.push_back({cat, groups[k].prefix + attributeText(R, S, crit), groups[k].view, {i}, {j}, true, label});
             }
+        }
+    }
+
+    // ---- The Ignored views take what the graded ones left that they match (geometry only):
+    // the student's copy of a title block, a border, a dimensioned extra view. ----
+    for (int k = 0; k < static_cast<int>(groups.size()); ++k) {
+        if (!ignoredGroup[k] || !r.views[k].found) continue;
+        matchInto(ref.prims, groups[k].refIdx, groups[k].st, stuIdx, crit, true, m);
+        for (int i : groups[k].refIdx) {
+            const int j = m.refToStu[i];
+            if (j < 0) continue;
+            r.stuStatus[j] = PrimStatus::NotCompared;
+            r.stuView[j] = k;
+            r.stuT[j] = groups[k].T;
         }
     }
 
@@ -461,35 +489,20 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
         }
     }
 
-    // ---- Ignored views: located like any view, so the student's copy of one is claimed, but
-    // nothing in them is graded: their reference items, the student items matched to them
-    // and the leftovers nearest to them. ----
-    if (ortho) {
-        bool any = false;
-        for (int k = 0; k < static_cast<int>(groups.size()); ++k) {
-            if (!views->isIgnored(k)) continue;
-            any = true;
-            r.views[k].ignored = true;
-            r.views[k].refCount = 0;
-            for (int i : groups[k].refIdx) {
-                const int j = r.refPartner[i];
-                if (j >= 0) {
-                    r.stuStatus[j] = PrimStatus::NotCompared;
-                    r.stuPartner[j] = -1;
-                }
-                r.refStatus[i] = PrimStatus::NotCompared;
-                r.refPartner[i] = -1;
-                --r.refCount;
-            }
-            groups[k].refIdx.clear();
-            for (int j : stuIdx)
-                if (r.stuView[j] == k && r.stuStatus[j] != PrimStatus::NotCompared) r.stuStatus[j] = PrimStatus::NotCompared;
-        }
-        if (any) {
-            unclaimed.clear();
-            for (int j : stuIdx)
-                if (r.stuStatus[j] == PrimStatus::Extra) unclaimed.push_back(j);
-        }
+    // ---- The leftovers nearest to an Ignored view are set aside with it; nothing of it goes
+    // on to the near-miss pairing below. ----
+    bool anyIgnored = false;
+    for (int k = 0; k < static_cast<int>(groups.size()); ++k) {
+        if (!ignoredGroup[k]) continue;
+        anyIgnored = true;
+        groups[k].refIdx.clear();
+        for (int j : stuIdx)
+            if (r.stuView[j] == k && r.stuStatus[j] == PrimStatus::Extra) r.stuStatus[j] = PrimStatus::NotCompared;
+    }
+    if (anyIgnored) {
+        unclaimed.clear();
+        for (int j : stuIdx)
+            if (r.stuStatus[j] == PrimStatus::Extra) unclaimed.push_back(j);
     }
 
     // ---- Near-miss pairing, then whatever remains is missing / extra ----
@@ -568,7 +581,8 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
     }
 
     // ---- Warnings ----
-    if (ref.meta.insUnits >= 0 && stu.meta.insUnits >= 0 && ref.meta.insUnits != stu.meta.insUnits)
+    // Not for a unitless file (INSUNITS 0): it says nothing about the units it was drawn in (D76).
+    if (ref.meta.insUnits > 0 && stu.meta.insUnits > 0 && ref.meta.insUnits != stu.meta.insUnits)
         eWarn.push_back({ErrCat::Warning,
                          QStringLiteral("warning: units mismatch: drawing is in %1, reference is in %2")
                              .arg(insUnitsName(stu.meta.insUnits), insUnitsName(ref.meta.insUnits)),
@@ -657,12 +671,22 @@ QString factorText(double f) {
     return num(f) + QChar(0x00D7);
 }
 
+// The reference's graded geometry: lines, arcs and circles, not those of an Ignored view (D76).
+std::vector<int> gradedGeometry(const Drawing& ref, const CompareSettings& s, const ViewSet* views) {
+    const bool ortho = s.mode == Mode::Orthographic && views && !views->views.empty();
+    std::vector<int> out;
+    for (int i = 0; i < static_cast<int>(ref.prims.size()); ++i) {
+        if (!isGeometric(ref.prims[i].kind)) continue;
+        if (ortho && i < static_cast<int>(views->primView.size()) && views->isIgnored(views->primView[i])) continue;
+        out.push_back(i);
+    }
+    return out;
+}
+
 // Matches a scaled copy reaches with the mode's own alignment (cheap ranking of candidates).
-int scaledScore(const Drawing& ref, const Drawing& stuScaled, const CompareSettings& s) {
+int scaledScore(const Drawing& ref, const std::vector<int>& refIdx, const Drawing& stuScaled, const CompareSettings& s) {
     const MatchCriteria crit = criteriaFrom(s);
-    std::vector<int> refIdx, stuIdx;
-    for (int i = 0; i < static_cast<int>(ref.prims.size()); ++i)
-        if (isGeometric(ref.prims[i].kind)) refIdx.push_back(i);
+    std::vector<int> stuIdx;
     for (int j = 0; j < static_cast<int>(stuScaled.prims.size()); ++j)
         if (isGeometric(stuScaled.prims[j].kind)) stuIdx.push_back(j);
     if (s.mode == Mode::Absolute) return countMatches(ref.prims, refIdx, stuScaled.prims, stuIdx, crit);
@@ -704,8 +728,9 @@ static CompareResult compareAtBestScale(const Drawing& ref, const Drawing& stu, 
                                         const ViewSet* views) {
     CompareResult base = compareCore(ref, stu, s, views);
     if (!s.detectScale || base.refCount == 0 || base.matched >= 0.5 * base.refCount) return base;
-    int geoRef = 0, geoStu = 0;
-    for (const auto& p : ref.prims) geoRef += isGeometric(p.kind);
+    const std::vector<int> graded = gradedGeometry(ref, s, views);  // an Ignored view's copy says nothing
+    const int geoRef = static_cast<int>(graded.size());
+    int geoStu = 0;
     for (const auto& p : stu.prims) geoStu += isGeometric(p.kind);
     if (geoRef == 0 || geoStu == 0) return base;
 
@@ -717,7 +742,7 @@ static CompareResult compareAtBestScale(const Drawing& ref, const Drawing& stu, 
     double bestF = 1;
     int bestScore = 0;
     for (double f : scaleCandidates(ref, stu)) {
-        const int sc = scaledScore(ref, scaledCopy(stu, 1.0 / f), ss);
+        const int sc = scaledScore(ref, graded, scaledCopy(stu, 1.0 / f), ss);
         if (sc > bestScore) { bestScore = sc; bestF = f; }
     }
     const int needed = std::max(3, static_cast<int>(std::ceil(0.5 * geoRef)));

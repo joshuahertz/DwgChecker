@@ -43,24 +43,40 @@ int DwgJson::integer(const QJsonObject& o, const char* key, int def) {
     return v.isDouble() ? static_cast<int>(v.toDouble()) : def;
 }
 
-static QByteArray sanitize(const QByteArray& in) {
-    // Non-release LibreDWG builds can print bare nan/inf, which is not JSON.
+static QByteArray sanitize(const QByteArray& in, bool* nonFinite) {
+    // Non-release LibreDWG builds can print bare nan/inf, which is not JSON. They become null, not
+    // 0.0, which would put geometry at the origin (D76).
     QString s = QString::fromUtf8(in);
     static const QRegularExpression bad(QStringLiteral(R"((?<=[\[:,\s])-?(nan|inf|infinity)(?=[\],}\s]))"),
                                         QRegularExpression::CaseInsensitiveOption);
-    s.replace(bad, QStringLiteral("0.0"));
+    *nonFinite = s.contains(bad);
+    s.replace(bad, QStringLiteral("null"));
     // Control characters inside strings.
     for (QChar& c : s)
         if (c.unicode() < 0x20 && c != '\n' && c != '\r' && c != '\t') c = QChar(' ');
     return s.toUtf8();
 }
 
+bool DwgJson::hasNull(const QJsonValue& v) {
+    if (v.isNull()) return true;
+    if (v.isArray()) {
+        for (const auto& e : v.toArray())
+            if (hasNull(e)) return true;
+    } else if (v.isObject()) {
+        const QJsonObject o = v.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it)
+            if (hasNull(it.value())) return true;
+    }
+    return false;
+}
+
 bool DwgJson::parse(const QByteArray& json, QString* error) {
     QJsonParseError pe;
     QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
+    m_nonFinite = false;
     if (pe.error != QJsonParseError::NoError) {
         const QString first = pe.errorString() + QStringLiteral(" at offset %1").arg(pe.offset);
-        doc = QJsonDocument::fromJson(sanitize(json), &pe);
+        doc = QJsonDocument::fromJson(sanitize(json, &m_nonFinite), &pe);
         if (pe.error != QJsonParseError::NoError) {
             if (error) *error = QStringLiteral("invalid JSON from parser: %1").arg(first);
             return false;

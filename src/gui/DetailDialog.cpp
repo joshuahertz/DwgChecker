@@ -27,6 +27,16 @@ namespace {
 // Overlay: matched green, missing red, present but wrong (shifted, wrong size...) yellow, extra purple.
 const QColor kRefGray(175, 175, 175), kMatched(30, 150, 50), kMissing(210, 30, 30), kShifted(225, 175, 0), kExtra(150, 70, 200);
 const QColor kDarkText(20, 20, 20);  // on the light status colors
+
+// A box to zoom to with some context: at least 15% of the drawing's size (its diagonal) around it.
+BBox withContext(const BBox& b, double diagonal) {
+    const double minSize = 0.15 * diagonal;
+    BBox z = b;
+    const Vec2 c = b.center();
+    if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
+    if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
+    return z;
+}
 }
 
 DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student, QWidget* parent)
@@ -213,16 +223,10 @@ void DetailDialog::buildRaw() {
     const StudentRun& run = m_batch->students[m_student];
     const bool dark = m_rawDark->isChecked();
     // Everything in the file, dimensions and Ignored views included (the overlay shows only
-    // what is graded), each item in its own color; the views keep their zoom and pan.
-    auto draw = [dark](DrawingView* view, const Drawing* d) {
-        view->clearDrawing();
-        view->setBackgroundBrush(dark ? kModelSpaceDark : kModelSpaceLight);
-        if (!d) return;
-        for (const Primitive& p : d->prims)  // stacked in AutoCAD's draw order, as in the preview
-            if (QGraphicsItem* it = view->addPrimitive(p, drawingColor(p, dark), 1.5)) it->setZValue(asDrawnZ(p));
-    };
-    draw(m_raw, run.drawing.get());
-    draw(m_refView, &m_batch->refDrawing(run));
+    // what is graded), each item in its own color, as in the preview; the views keep their zoom
+    // and pan.
+    m_raw->showAsDrawn(run.drawing.get(), dark);
+    m_refView->showAsDrawn(&m_batch->refDrawing(run), dark);
 }
 
 void DetailDialog::updateLegend() {
@@ -302,13 +306,7 @@ BBox DetailDialog::rawErrorBox(int k) const {
 void DetailDialog::zoomRaw(const BBox& b) {
     const StudentRun& run = m_batch->students[m_student];
     if (!b.valid() || !run.drawing) { m_raw->zoomToAll(); return; }
-    // Some context, as in the overlay: at least 15% of the file's own size around it.
-    const double minSize = 0.15 * run.drawing->bbox().diagonal();
-    BBox z = b;
-    const Vec2 c = b.center();
-    if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
-    if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
-    m_raw->zoomTo(z, 0.2);
+    m_raw->zoomTo(withContext(b, run.drawing->bbox().diagonal()), 0.2);  // context of the file's own size
 }
 
 BBox DetailDialog::errorBox(int k) const {
@@ -337,12 +335,7 @@ void DetailDialog::zoomToError(int k) {
         zoomRef(BBox());
         return;
     }
-    // Keep some context: at least 15% of the reference size around the error.
-    const double minSize = 0.15 * m_batch->refDrawing(m_batch->students[m_student]).bbox().diagonal();
-    BBox z = b;
-    const Vec2 c = b.center();
-    if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
-    if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
+    const BBox z = withContext(b, m_batch->refDrawing(m_batch->students[m_student]).bbox().diagonal());
     m_view->zoomTo(z, 0.2);
     zoomRef(z);  // the solution is in the overlay's frame: the same place
 }
@@ -453,11 +446,7 @@ void DetailDialog::zoomToPrimitive(int row) {
     zoomRaw(student ? d->prims[row].bbox() : rawBoxOfRef(row));
     // The overlay is in the reference frame: move student primitives there first.
     const Primitive p = student ? transformed(d->prims[row], run.result.stuT[row]) : d->prims[row];
-    BBox z = p.bbox();
-    const double minSize = 0.15 * m_batch->refDrawing(run).bbox().diagonal();
-    const Vec2 c = z.center();
-    if (z.width() < minSize) { z.x0 = c.x - minSize / 2; z.x1 = c.x + minSize / 2; }
-    if (z.height() < minSize) { z.y0 = c.y - minSize / 2; z.y1 = c.y + minSize / 2; }
+    const BBox z = withContext(p.bbox(), m_batch->refDrawing(run).bbox().diagonal());
     m_view->zoomTo(z, 0.2);
     zoomRef(z);
 }

@@ -1,11 +1,15 @@
 #include "Duplicates.h"
 
+#include "Dsu.h"
+
 #include <QHash>
+#include <QMap>
 #include <QSet>
 
 #include <algorithm>
 #include <cstring>
 #include <numeric>
+#include <optional>
 
 namespace dc {
 
@@ -65,13 +69,6 @@ QByteArray exactKey(const Primitive& p, bool* nontrivial) {
     return k;
 }
 
-struct Dsu {
-    std::vector<int> p;
-    explicit Dsu(int n) : p(n) { std::iota(p.begin(), p.end(), 0); }
-    int find(int x) { while (p[x] != x) x = p[x] = p[p[x]]; return x; }
-    void unite(int a, int b) { a = find(a); b = find(b); if (a != b) p[std::max(a, b)] = std::min(a, b); }
-};
-
 QString fmtDuration(double sec) {
     const int s = static_cast<int>(sec + 0.5);
     return QStringLiteral("%1:%2").arg(s / 60).arg(s % 60, 2, 10, QChar('0'));
@@ -82,39 +79,60 @@ QString timeKey(const DrawingMeta& m) {
     return t.valid ? QStringLiteral("%1/%2").arg(t.day).arg(t.ms) : QString();
 }
 
-}  // namespace
+// Each primitive's exact key (empty for annotations), built once per drawing rather than for
+// every pair of drawings (D76).
+struct ExactKeys {
+    std::vector<QByteArray> key;
+    std::vector<char> nontrivial;
+};
 
-BitExactStats bitExact(const Drawing& a, const Drawing& b, const std::vector<int>* onlyA, const std::vector<int>* onlyB) {
+ExactKeys exactKeys(const Drawing& d) {
+    ExactKeys k;
+    k.key.resize(d.prims.size());
+    k.nontrivial.assign(d.prims.size(), 0);
+    for (size_t i = 0; i < d.prims.size(); ++i) {
+        if (!isGeometric(d.prims[i].kind)) continue;
+        bool nt = false;
+        k.key[i] = exactKey(d.prims[i], &nt);
+        k.nontrivial[i] = nt;
+    }
+    return k;
+}
+
+BitExactStats bitExactKeys(const ExactKeys& a, const ExactKeys& b, const std::vector<int>* onlyA, const std::vector<int>* onlyB) {
     BitExactStats st;
     QHash<QByteArray, int> counts;
-    QHash<QByteArray, bool> nontriv;
-    auto each = [](const Drawing& d, const std::vector<int>* only, auto&& f) {
-        if (only) { for (int i : *only) f(d.prims[i]); }
-        else for (const auto& p : d.prims) f(p);
+    auto each = [](const ExactKeys& k, const std::vector<int>* only, auto&& f) {
+        if (only) {
+            for (int i : *only) f(i);
+        } else {
+            for (int i = 0; i < static_cast<int>(k.key.size()); ++i) f(i);
+        }
     };
     int na = 0, nb = 0;
-    each(a, onlyA, [&](const Primitive& p) {
-        if (!isGeometric(p.kind)) return;
-        bool nt = false;
-        const QByteArray k = exactKey(p, &nt);
-        counts[k]++;
-        nontriv[k] = nt;
+    each(a, onlyA, [&](int i) {
+        if (a.key[i].isEmpty()) return;
+        counts[a.key[i]]++;
         ++na;
     });
-    each(b, onlyB, [&](const Primitive& p) {
-        if (!isGeometric(p.kind)) return;
+    each(b, onlyB, [&](int i) {
+        if (b.key[i].isEmpty()) return;
         ++nb;
-        bool nt = false;
-        const QByteArray k = exactKey(p, &nt);
-        auto it = counts.find(k);
+        auto it = counts.find(b.key[i]);
         if (it != counts.end() && *it > 0) {
             --*it;
             ++st.exact;
-            if (nt) ++st.nontrivial;
+            if (b.nontrivial[i]) ++st.nontrivial;
         }
     });
     st.smaller = std::min(na, nb);
     return st;
+}
+
+}  // namespace
+
+BitExactStats bitExact(const Drawing& a, const Drawing& b, const std::vector<int>* onlyA, const std::vector<int>* onlyB) {
+    return bitExactKeys(exactKeys(a), exactKeys(b), onlyA, onlyB);
 }
 
 DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettings& s, Mode mode, const ViewSet* views,
@@ -126,7 +144,8 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
     // Class-wide frequencies, to recognize template / shared-account values. Counted in
     // students, not files: one student's several files share a lot with each other.
     using Owners = QHash<QString, QSet<QString>>;
-    Owners fpCount, timeCount, savedByCount, authorCount, origCount;
+    // nameCount: account names, in LastSavedBy or Author alike (D77).
+    Owners fpCount, timeCount, nameCount, origCount;
     QSet<QString> owners, templateFp, templateTimes;
     for (int i = 0; i < n; ++i) {
         const DupEntry& e = E[i];
@@ -142,8 +161,8 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
         owners.insert(who);
         if (!m.fingerprintGuid.isEmpty()) fpCount[m.fingerprintGuid].insert(who);
         if (!timeKey(m).isEmpty()) timeCount[timeKey(m)].insert(who);
-        if (!m.lastSavedBy.isEmpty()) savedByCount[m.lastSavedBy.toLower()].insert(who);
-        if (!m.author.isEmpty()) authorCount[m.author.toLower()].insert(who);
+        for (const QString& name : {m.lastSavedBy, m.author})
+            if (!name.isEmpty()) nameCount[name.toLower()].insert(who);
         if (!e.identity.orig.isEmpty()) origCount[e.identity.orig.toLower()].insert(who);
     }
     const int students = static_cast<int>(owners.size());
@@ -154,9 +173,10 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
             rep.notes << QStringLiteral("Probable template: FINGERPRINTGUID %1 is shared by %2 of %3 students; "
                                         "pairs sharing only this fingerprint are not flagged")
                              .arg(it.key()).arg(it.value().size()).arg(students);
-    for (auto it = savedByCount.begin(); it != savedByCount.end(); ++it)
+    for (auto it = nameCount.begin(); it != nameCount.end(); ++it)
         if (it.value().size() > limit)
-            rep.notes << QStringLiteral("LastSavedBy \"%1\" is shared by %2 of %3 students (shared lab account?); not flagged")
+            rep.notes << QStringLiteral("Account name \"%1\" (LastSavedBy or Author) is shared by %2 of %3 students (shared lab "
+                                        "account or template?); not flagged")
                              .arg(it.key()).arg(it.value().size()).arg(students);
 
     // Reference layer names: layers beyond these are "non-required".
@@ -164,6 +184,13 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
     for (const auto& e : E)
         if (e.role == EntryRole::Reference && e.drawing)
             for (const auto& l : e.drawing->layers) refLayers.insert(l.name.toUpper());
+
+    // Exact keys per file, built when first needed.
+    std::vector<std::optional<ExactKeys>> keys(n);
+    auto keysOf = [&](int i) -> const ExactKeys& {
+        if (!keys[i]) keys[i] = exactKeys(*E[i].drawing);
+        return *keys[i];
+    };
 
     for (int a = 0; a < n; ++a) {
         for (int b = a + 1; b < n; ++b) {
@@ -221,28 +248,31 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
                     QStringLiteral("identical TDUCREATE %1 UTC (stored to the second by AutoCAD)").arg(t.toString()),
                     Strength::Strong, 60);
             }
-            // 5. Shared identity fields.
-            if (!ma.lastSavedBy.isEmpty() && ma.lastSavedBy.compare(mb.lastSavedBy, Qt::CaseInsensitive) == 0 &&
-                !common(savedByCount, ma.lastSavedBy.toLower()))
-                add("lastsavedby", QStringLiteral("same LastSavedBy"),
-                    QStringLiteral("both files were last saved by \"%1\"").arg(ma.lastSavedBy), Strength::Medium, 30);
-            if (!ma.author.isEmpty() && ma.author.compare(mb.author, Qt::CaseInsensitive) == 0 &&
-                !common(authorCount, ma.author.toLower()))
-                add("author", QStringLiteral("same Author"), QStringLiteral("both files have Author \"%1\"").arg(ma.author),
-                    Strength::Medium, 30);
-            if (bothStudents) {
-                auto otherName = [&](const DupEntry& X, const DupEntry& Y) {
-                    for (const QString& who : {X.drawing->meta.lastSavedBy, X.drawing->meta.author}) {
-                        if (who.isEmpty()) continue;
-                        if (personMatchesStudent(who, Y.identity.name) && !personMatchesStudent(who, X.identity.name))
-                            add("savedby-other", QStringLiteral("saved by %1").arg(Y.display),
-                                QStringLiteral("%1's file names \"%2\" as LastSavedBy/Author, which matches student %3")
-                                    .arg(X.display, who, Y.display),
-                                Strength::Strong, 50);
-                    }
+            // 5. The same account name. Each student's files carry their own, so a name in one
+            //    file's LastSavedBy or Author that is also in the other's LastSavedBy or Author is
+            //    strong evidence (user rules, D77), one signal for the pair; a name shared by much
+            //    of the class (a lab account) is not. With the reference it stays medium: the
+            //    instructor's account may come with a handed-out file. With a template, expected.
+            if (!withTemplate) {
+                // Which fields of a file carry a name: "LastSavedBy", "Author" or both.
+                auto fieldsWith = [](const DrawingMeta& m, const QString& name) {
+                    QStringList f;
+                    if (m.lastSavedBy.compare(name, Qt::CaseInsensitive) == 0) f << QStringLiteral("LastSavedBy");
+                    if (m.author.compare(name, Qt::CaseInsensitive) == 0) f << QStringLiteral("Author");
+                    return f.join(QStringLiteral(" and "));
                 };
-                otherName(A, B);
-                otherName(B, A);
+                QStringList shared, seen;
+                for (const QString& name : {ma.lastSavedBy, ma.author}) {
+                    if (name.isEmpty() || seen.contains(name.toLower()) || common(nameCount, name.toLower())) continue;
+                    seen << name.toLower();
+                    const QString inB = fieldsWith(mb, name);
+                    if (!inB.isEmpty())
+                        shared << QStringLiteral("\"%1\" (%2's %3, %4's %5)").arg(name, A.display, fieldsWith(ma, name), B.display, inB);
+                }
+                if (!shared.isEmpty())
+                    add("accountname", QStringLiteral("same account name"),
+                        QStringLiteral("both files carry the account name %1").arg(shared.join(QStringLiteral("; "))),
+                        bothStudents ? Strength::Strong : Strength::Medium, bothStudents ? 60 : 30);
             }
             // 6. Bit-exact absolute geometry. Never in Absolute mode: the placement is given there,
             //    so every correct drawing has the reference's exact coordinates (user decision).
@@ -256,7 +286,7 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
                     std::vector<int> ia, ib;
                     for (int i = 0; i < static_cast<int>(A.primView.size()); ++i) if (A.primView[i] == v) ia.push_back(i);
                     for (int i = 0; i < static_cast<int>(B.primView.size()); ++i) if (B.primView[i] == v) ib.push_back(i);
-                    const BitExactStats st = bitExact(*A.drawing, *B.drawing, &ia, &ib);
+                    const BitExactStats st = bitExactKeys(keysOf(a), keysOf(b), &ia, &ib);
                     if (st.smaller < 3) continue;
                     ++compared;
                     if (st.exact >= 0.9 * st.smaller) { ++identical; nontrivial += st.nontrivial; }
@@ -271,7 +301,7 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
                         st, st == Strength::Strong ? 60 : st == Strength::Medium ? 35 : 15);
                 }
             } else {
-                const BitExactStats st = bitExact(*A.drawing, *B.drawing);
+                const BitExactStats st = bitExactKeys(keysOf(a), keysOf(b), nullptr, nullptr);
                 if (st.exact >= 3 && st.smaller > 0) {
                     const double frac = static_cast<double>(st.exact) / st.smaller;
                     Strength str = Strength::Info;
@@ -346,6 +376,47 @@ DupReport detectDuplicates(const std::vector<DupEntry>& E, const DuplicateSettin
         if (t >= 0 && t < s.smallEditMinutes * 60 && e.correctness >= 50)
             rep.fileNotes[i] << QStringLiteral("total editing time (TDINDWG) only %1 for a drawing that is %2% correct")
                                     .arg(fmtDuration(t)).arg(e.correctness, 0, 'f', 0);
+    }
+
+    // Several account names in one student's files (user rule, D77): a student's files should all
+    // carry the same LastSavedBy, and the same Author; another name in one of them suggests a file
+    // made or saved by someone else. A name shared by much of the class (a lab account, a
+    // template's author) does not count. Medium: the student's files are flagged amber.
+    rep.fileSignals.resize(n);
+    QMap<QString, std::vector<int>> filesOf;  // by owner, in a stable order
+    for (int i = 0; i < n; ++i)
+        if (E[i].role == EntryRole::Student && E[i].drawing && !E[i].owner.isEmpty()) filesOf[E[i].owner].push_back(i);
+    struct Field {
+        const char* id;
+        const char* label;
+        QString DrawingMeta::*value;
+    };
+    const Field fields[] = {{"lastsavedby", "LastSavedBy", &DrawingMeta::lastSavedBy}, {"author", "Author", &DrawingMeta::author}};
+    for (auto it = filesOf.cbegin(); it != filesOf.cend(); ++it) {
+        const std::vector<int>& files = it.value();
+        if (files.size() < 2) continue;
+        for (const Field& f : fields) {
+            QMap<QString, QStringList> byName;  // lower-case name -> the files that carry it
+            QHash<QString, QString> asWritten;
+            for (int i : files) {
+                const QString v = E[i].drawing->meta.*f.value;
+                if (v.isEmpty() || common(nameCount, v.toLower())) continue;
+                byName[v.toLower()] << E[i].identity.fileName;
+                asWritten.insert(v.toLower(), v);
+            }
+            if (byName.size() < 2) continue;
+            QStringList names;
+            for (auto nm = byName.cbegin(); nm != byName.cend(); ++nm)
+                names << QStringLiteral("\"%1\" in %2").arg(asWritten.value(nm.key()), nm.value().join(QStringLiteral(", ")));
+            const QString who = E[files.front()].display;
+            const QString detail = QStringLiteral("%1's files have different %2 names: %3").arg(who, QLatin1String(f.label),
+                                                                                              names.join(QStringLiteral("; ")));
+            for (int i : files)
+                rep.fileSignals[i].push_back({QStringLiteral("names-") + QLatin1String(f.id),
+                                              QStringLiteral("different %1 names in this student's files").arg(QLatin1String(f.label)),
+                                              detail, Strength::Medium, 30});
+            rep.notes << detail;
+        }
     }
     return rep;
 }

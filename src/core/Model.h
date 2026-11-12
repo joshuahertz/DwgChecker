@@ -60,12 +60,34 @@ QString ltClassName(LtClass c);
 bool isGeometric(PrimKind k);  // Line, Arc, Circle
 // ANG2LN / ANG3PT: the measurement is an angle in radians. Arc length is a length.
 bool isAngularDimType(const QString& dimType);
+// LINEAR (horizontal, vertical, rotated) and ALIGNED: a distance between two points.
+bool isLinearDimType(const QString& dimType);
+// Dimension types that can stand for each other: the same type, or linear and aligned (D78).
+bool sameDimFamily(const QString& a, const QString& b);
+
+// Where a dimension measures, beyond its points (D78).
+struct DimPlace {
+    Vec2 dir;                    // linear / aligned: the direction it measures along (any length)
+    Vec2 side0, side1;           // angular: its two sides from the vertex (any length)
+    bool sidesAreLines = false;  // ANG2LN: the sides are lines, either way along them
+    // Linear / aligned: for each extension-line origin (p0, p1), the drawing's line through it
+    // that runs parallel to the extension lines, when there is one: an edge it measures from.
+    bool hasEdge0 = false, hasEdge1 = false;
+    Vec2 edge0a, edge0b, edge1a, edge1b;
+    // The edge is an endless line through a and b: a centerline, whose length is free, or the
+    // line across through a circle's or arc's center, drawn or not (user decision).
+    bool edge0Endless = false, edge1Endless = false;
+};
 
 struct Primitive {
     PrimKind kind = PrimKind::Unsupported;
     // Geometry, 2D WCS.
-    Vec2 p0, p1;            // Line endpoints; Dimension definition points
+    Vec2 p0, p1;            // Line endpoints; Dimension definition points (Ordinate: the feature, leader end)
     Vec2 center;            // Arc/Circle center; Text/Dimension/Unsupported anchor
+    // Dimension: the center or vertex it measures from (radius, diameter, angular, arc length).
+    Vec2 dimCenter;
+    bool hasDimCenter = false;
+    std::shared_ptr<const DimPlace> dimPlace;  // linear, aligned and angular dimensions; shared so copies stay cheap
     double radius = 0;
     double a0 = 0, a1 = 0;  // Arc start/end, CCW, normalized to [0, 2pi)
     // Annotation payload.
@@ -112,6 +134,9 @@ struct Primitive {
 };
 
 Primitive transformed(const Primitive& p, const Transform2D& t);
+
+// The point a primitive is found by in spatial lookups: a line's midpoint, otherwise its center.
+inline Vec2 keyPoint(const Primitive& p) { return p.kind == PrimKind::Line ? p.midpoint() : p.center; }
 
 // Hatch region helpers.
 bool hatchContains(const Primitive& hatch, Vec2 q);

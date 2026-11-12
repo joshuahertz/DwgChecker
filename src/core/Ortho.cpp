@@ -1,5 +1,7 @@
 #include "Ortho.h"
 
+#include "Dsu.h"
+
 #include <QFile>
 #include <QHash>
 #include <QJsonArray>
@@ -122,13 +124,6 @@ ViewSet ViewSet::rebindTo(const Drawing& ref) const {
 }
 
 namespace {
-
-struct Dsu {
-    std::vector<int> p;
-    explicit Dsu(int n) : p(n) { std::iota(p.begin(), p.end(), 0); }
-    int find(int x) { while (p[x] != x) x = p[x] = p[p[x]]; return x; }
-    void unite(int a, int b) { a = find(a); b = find(b); if (a != b) p[std::max(a, b)] = std::min(a, b); }
-};
 
 bool isCore(const Primitive& p) {
     return isGeometric(p.kind) && (p.ltClass == LtClass::Visible || p.ltClass == LtClass::Hidden || p.ltClass == LtClass::Other);
@@ -324,7 +319,8 @@ bool loadSidecar(const QString& path, const Drawing& ref, ViewSet* out, QString*
     return true;
 }
 
-std::vector<AlignmentCheck> orthoChecks(const ViewSet& vs, const std::vector<const Transform2D*>& viewT, double alignTol) {
+std::vector<AlignmentCheck> orthoChecks(const ViewSet& vs, const std::vector<const Transform2D*>& viewT, double alignTol,
+                                        bool withText) {
     std::vector<AlignmentCheck> out;
     const int fi = vs.indexOfName(ViewName::Front);
     if (fi < 0 || !viewT[fi]) return out;
@@ -345,13 +341,13 @@ std::vector<AlignmentCheck> orthoChecks(const ViewSet& vs, const std::vector<con
             if (vertical) {
                 const double d = tf.tx - tv.tx;  // student view shifted right by d relative to front
                 al.passed = std::fabs(d) <= alignTol;
-                if (!al.passed)
+                if (!al.passed && withText)
                     al.text = QStringLiteral("%1 is not aligned with the Front view: shifted %2 %3")
                                   .arg(vs.label(v), QString::number(std::fabs(d), 'f', 3), d > 0 ? "right" : "left");
             } else {
                 const double d = tf.ty - tv.ty;
                 al.passed = std::fabs(d) <= alignTol;
-                if (!al.passed)
+                if (!al.passed && withText)
                     al.text = QStringLiteral("%1 is not aligned with the Front view: shifted %2 %3")
                                   .arg(vs.label(v), QString::number(std::fabs(d), 'f', 3), d > 0 ? "up" : "down");
             }
@@ -369,7 +365,7 @@ std::vector<AlignmentCheck> orthoChecks(const ViewSet& vs, const std::vector<con
             const bool useY = std::fabs(dRef.y) >= std::fabs(dRef.x);
             const double r = useY ? dRef.y : dRef.x, s = useY ? dStu.y : dStu.x;
             ar.passed = (r > 0) == (s > 0) && std::fabs(s) > 0;
-            if (!ar.passed) {
+            if (!ar.passed && withText) {
                 auto side = [&](double val) {
                     return useY ? (val > 0 ? QStringLiteral("above") : QStringLiteral("below"))
                                 : (val > 0 ? QStringLiteral("right of") : QStringLiteral("left of"));
@@ -460,7 +456,7 @@ OrthoResolution resolveViews(const std::vector<Primitive>& ref, const ViewSet& v
         for (int v = 0; v < nv; ++v)
             if (pick[v] >= 0) ts[v] = &res.candidates[v][pick[v]].T;
         sc.failed = 0;
-        for (const auto& c : orthoChecks(vs, ts, alignTol)) sc.failed += c.applicable && !c.passed;
+        for (const auto& c : orthoChecks(vs, ts, alignTol, false)) sc.failed += c.applicable && !c.passed;  // no text (D76)
         return sc;
     };
     std::vector<int> pick(nv, -1), best(nv, -1);

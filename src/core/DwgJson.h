@@ -38,6 +38,10 @@ public:
 
     // Parses JSON text. Falls back to a sanitized copy (nan/inf tokens) if strict parsing fails.
     bool parse(const QByteArray& json, QString* error);
+    // Whether the text had nan/inf numbers; they read as null, and the canonicalizer leaves out
+    // the objects that have one (hasNull) rather than put them at 0.
+    bool hadNonFinite() const { return m_nonFinite; }
+    static bool hasNull(const QJsonValue& v);  // a null anywhere in it (arrays and objects searched)
     // Build from an already-parsed root object (used by tests).
     bool setRoot(const QJsonObject& root, QString* error);
 
@@ -85,6 +89,7 @@ private:
 
     QJsonObject m_root;
     QJsonObject m_header;
+    bool m_nonFinite = false;
     std::vector<QJsonObject> m_objects;
     QHash<quint64, int> m_byHandle;
     QHash<quint64, Layer> m_layers;

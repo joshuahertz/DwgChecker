@@ -21,6 +21,10 @@ public:
     QGraphicsItem* addPrimitive(const dc::Primitive& p, const QColor& color, double width = 1.5,
                                 const dc::Transform2D& t = dc::Transform2D::identity());
     void addBox(const dc::BBox& b, const QColor& color, const QString& label = QString());
+    // Replaces what is drawn with the whole file as AutoCAD shows it: every item in its own
+    // color and linetype, in its draw order, on model space's dark or light background. The
+    // zoom and pan stay. Used by the preview and the detail view's file tabs.
+    void showAsDrawn(const dc::Drawing* d, bool dark);
 
     // Fits the given box (drawing coordinates) with a margin.
     void zoomTo(const dc::BBox& b, double marginFraction = 0.25);

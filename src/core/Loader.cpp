@@ -7,6 +7,16 @@
 #include <QProcess>
 #include <QTemporaryDir>
 
+#include <memory>
+#include <vector>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace dc {
 
 QByteArray sha256File(const QString& path, qint64* size) {
@@ -22,6 +32,39 @@ static bool isAscii(const QString& s) {
     for (QChar c : s)
         if (c.unicode() > 0x7e) return false;
     return true;
+}
+
+// An ASCII name dwgread (narrow fopen) can open `path` by: the path itself, or on Windows its
+// short 8.3 form when the volume has them; empty when neither is ASCII.
+static QString asciiAlias(const QString& path) {
+    if (isAscii(QDir::toNativeSeparators(path))) return path;
+#ifdef Q_OS_WIN
+    const std::wstring w = QDir::toNativeSeparators(path).toStdWString();
+    std::vector<wchar_t> buf(32768);
+    const DWORD n = GetShortPathNameW(w.c_str(), buf.data(), static_cast<DWORD>(buf.size()));
+    if (n > 0 && n < buf.size()) {
+        const QString s = QString::fromWCharArray(buf.data(), static_cast<qsizetype>(n));
+        if (isAscii(s)) return QDir::fromNativeSeparators(s);
+    }
+#endif
+    return {};
+}
+
+// Where to stage a file when the system's temporary folder is not ASCII either (a Windows user
+// name with accents): a folder of the app's own under ProgramData. One per user (named by a
+// hash of the home folder), so that it is the user's own and writable: a folder another
+// account created first may not be. Empty if that fails too.
+static QString asciiStagingRoot() {
+    const QString user = QString::fromLatin1(
+        QCryptographicHash::hash(QDir::homePath().toUtf8(), QCryptographicHash::Sha1).toHex().left(12));
+#ifdef Q_OS_WIN
+    const QString root = QDir::fromNativeSeparators(qEnvironmentVariable("ProgramData", QStringLiteral("C:/ProgramData"))) +
+                         QStringLiteral("/DwgChecker/staging-") + user;
+#else
+    const QString root = QStringLiteral("/tmp/DwgChecker-staging-") + user;
+#endif
+    if (!isAscii(root) || !QDir().mkpath(root)) return {};
+    return root;
 }
 
 static QString tail(const QByteArray& b, int n = 400) {
@@ -127,10 +170,25 @@ LoadOutcome DwgReadLoader::load(const QString& path) const {
     if (!QFileInfo::exists(path)) { r.error = QStringLiteral("file not found"); return r; }
 
     QTemporaryDir tmp;
-    QString file = path;
-    if (!isAscii(QDir::toNativeSeparators(path))) {
-        // dwgread opens files with narrow fopen(); stage non-ASCII paths under an ASCII name.
-        file = tmp.path() + "/input.dwg";
+    std::unique_ptr<QTemporaryDir> staging;  // only when the system's temporary folder is not ASCII
+    QString file = asciiAlias(path);
+    if (file.isEmpty()) {
+        // dwgread opens files with narrow fopen(); stage non-ASCII paths under an ASCII name, in
+        // a folder whose own path is ASCII (D76).
+        QString dir = tmp.isValid() ? asciiAlias(tmp.path()) : QString();
+        if (dir.isEmpty()) {
+            const QString root = asciiStagingRoot();
+            if (!root.isEmpty()) {
+                staging = std::make_unique<QTemporaryDir>(root + QStringLiteral("/dc-XXXXXX"));
+                if (staging->isValid()) dir = staging->path();
+            }
+        }
+        if (dir.isEmpty()) {
+            r.error = QStringLiteral("the path has non-ASCII characters, which dwgread cannot open, and no folder with an "
+                                     "ASCII path was found to copy it to; move the file to a folder such as C:\\Grading");
+            return r;
+        }
+        file = dir + "/input.dwg";
         if (!QFile::copy(path, file)) { r.error = QStringLiteral("could not stage file with non-ASCII path"); return r; }
     }
 

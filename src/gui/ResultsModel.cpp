@@ -61,6 +61,13 @@ QColor studentRowColor() {
     return blendColors(pal.color(QPalette::Base), pal.color(QPalette::Highlight), 0.12);
 }
 
+// The flag column's sort key: the level, then the pair's score. The score is at most 100
+// (Duplicates caps it), so the levels never mix.
+int flagSortKey(const BatchOutput& b, const CopyFlag& f) {
+    const double score = f.pairIndex >= 0 ? std::clamp(b.dups.pairs[f.pairIndex].score, 0.0, 100.0) : 0.0;
+    return static_cast<int>(f.level) * 1000 + static_cast<int>(score);
+}
+
 QString flagTooltip(const CopyFlag& f) {
     QString t = f.level == Strength::Info ? QString() : f.text;
     if (!f.tooltip.isEmpty()) t += (t.isEmpty() ? QString() : QStringLiteral("\n\n")) + f.tooltip;
@@ -197,7 +204,7 @@ QVariant ResultsModel::groupData(int gi, int column, int role) const {
         switch (column) {
         case ColName:
         case ColAcad: return g.identity.name.toLower() + g.key.toLower();
-        case ColFlag: return static_cast<int>(f.level) * 1000 + (f.pairIndex >= 0 ? static_cast<int>(m_batch->dups.pairs[f.pairIndex].score) : 0);
+        case ColFlag: return flagSortKey(*m_batch, f);
         case ColCorrectness: return g.correctness;
         case ColErrors: {
             int n = 0;
@@ -258,7 +265,7 @@ QVariant ResultsModel::fileData(int fi, int column, int role, bool subrow) const
             if (subrow) return r.matched() ? r.refIndex : 1000 + fi;  // subrows stay in solution-drawing order
             return r.identity.name.toLower() + r.identity.fileName.toLower();
         case ColAcad: return r.identity.fileName.toLower();
-        case ColFlag: return static_cast<int>(f.level) * 1000 + (f.pairIndex >= 0 ? static_cast<int>(m_batch->dups.pairs[f.pairIndex].score) : 0);
+        case ColFlag: return flagSortKey(*m_batch, f);
         case ColCorrectness: return r.ok() && r.matched() ? r.result.correctness : -1.0;
         case ColErrors: return errorCount(r);
         }

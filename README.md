@@ -92,8 +92,8 @@ all of this.
 
 ## Using it
 
-**GUI.** A splash screen shows while the app starts (at least a second; a click
-closes it). The steps and Settings sit in a column on the left, and the results
+**GUI.** A splash screen shows while the app starts (1.5 s, then the main window
+takes its place; a click on it shows the main window at once). The steps and Settings sit in a column on the left, and the results
 fill the right side (drag the divider between them to resize). The app opens
 with nothing chosen and walks through four numbered steps: (1) click the first
 card to choose the reference (solution) drawing; (2) check the **location
@@ -120,7 +120,9 @@ for cheating detection. Only the settings that apply are shown: "Wrong location
 (in absolute mode)" and "Allow rotation / mirrored (in relative mode)" when a
 drawing uses that mode, the Orthographic views group for Orthographic mode, and
 the dimension and hatch checks only for solutions that have dimensions or
-hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
+hatching. The tolerances default to 0.000001 (drawing units, and degrees); number
+fields take a decimal point whatever the system's language (1e-6 works too), and a
+tolerance must be above 0. Then:
 - **Several drawings per assignment:** choose all the solution drawings on the
   first card (select several in the dialog, or drop several). Each student's
   files (grouped by the name and Canvas user id in the file name) are matched one
@@ -144,7 +146,11 @@ hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
   cheating** icon (red = strong evidence, amber = weaker; hover for the details),
   the student, the correctness, a summary of the errors such as "2 shifted, 1
   missing, 1 extra", and an **Open in AutoCAD** link (opened as read-only by
-  default). The **Possible cheating** tab lists the pairs of files and the
+  default). Two students' files with the same account name are red: a name in
+  one file's LastSavedBy or Author that is also in the other's LastSavedBy or
+  Author. One student's files saved under different account names
+  are amber (names shared by much of the class, such as a lab account, never
+  count). The **Possible cheating** tab lists the pairs of files and the
   evidence. A student with several files gets a lightly shaded row with their
   overall score (and "2 / 3 drawings" under the name when some are missing).
   Under it is one row per solution drawing, labeled **Drawing 1**, **Drawing 2**, …
@@ -175,10 +181,15 @@ hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
 - Orthographic mode: use **Edit views…** (step 2) to confirm how the reference
   splits into views. Name a view **Ignored** to leave it out of grading, such as
   a title block or notes: it is still found in each drawing, so a student's copy
-  of it is not extra, but nothing in it counts. A stray item near a graded view
+  of it is not extra, but nothing in it counts. The graded views are matched
+  first, and an Ignored view takes only what they leave. A stray item near a graded view
   still counts there, even inside an Ignored border. In the detail view, each view's
   box and title take its status color (grey for an Ignored view). The views are
-  saved next to the reference as `ref.dwg.views.json`.
+  saved next to the reference as `ref.dwg.views.json`, and used by every run
+  until you close the app; without them, each run uses that file, or finds the
+  views again with the current settings. Moving the gap slider splits the
+  drawing again when you let go of it, after asking if you have assigned or named
+  views by hand.
 - **Line colors must match:** each item's color, after ByLayer and ByBlock, must
   be the solution item's. "…allowing a color difference up to" accepts close
   colors: the RGB distance as a share of black to white, so 250,5,5 against
@@ -198,15 +209,32 @@ hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
   card says how many were left out. To require them, untick **Ignore objects on
   turned-off or frozen layers in the solution** (Advanced settings > Reading
   drawings). In student drawings they still count, with a warning, unless you
-  tick the matching option for student drawings.
+  tick the matching option for student drawings. As in AutoCAD, a block inserted
+  on a turned-off layer still shows its objects that are on layers that are on;
+  a frozen layer hides the whole block.
 - Hatching is ignored unless you tick **Check hatches** in Settings (offered only
   when the solution has hatching). It then
   checks that every hatched region of the reference is hatched, however the
   student made the hatch. **…and with the same hatch pattern** (on by default)
-  also requires the same pattern; untick it to accept any pattern.
+  also requires the same pattern; untick it to accept any pattern. The hatch
+  styles fill as in AutoCAD: Normal alternates at each island, Outer stops at the
+  first island, Ignore fills the outer boundary whole.
 - Dimensions are ignored unless you tick **Check dimensions** (offered only when
   the solution has dimensions). Each reference
-  dimension then needs one of the same kind with the same measured value.
+  dimension then needs one of the same kind with the same measured value that
+  measures the same thing; the text and dimension line may sit anywhere:
+  - **Linear or aligned** (either one counts for the other): the same direction,
+    and each point anywhere on the line the solution's point is on that runs
+    parallel to the extension lines: either end or the middle of a side when the
+    width is measured. For a hole's center, any point on its centerline counts
+    instead (the distance is the same), however far the student drew the
+    centerline, and even when the solution has none there. A point on no such
+    line must be the same point.
+    In Orthographic mode the points
+    only need to be on the same lines across the measurement, so a width given in
+    another view counts.
+  - **Angle:** the same vertex and the same two sides, from any points along them.
+  - **Radius or diameter:** the same center. **Arc length:** the same arc.
   **…and the precision they show** (on by default) also requires the same decimal
   places or fraction precision as the reference shows. The style, per-dimension
   overrides, trailing-zero suppression and typed-over text all count. A
@@ -227,8 +255,12 @@ hatching. The tolerances default to 0.000001 (drawing units, and degrees). Then:
   detail view then draws the whole drawing yellow. **Every time** grades every
   item where it was drawn, with a warning that gives the offset. Only translation counts as location: a rotated drawing
   is still wrong in Absolute mode.
-- File → Save/Load settings as JSON keeps a set of settings per assignment.
+- File → Save/Load settings as JSON keeps a set of settings per assignment. A
+  file that is not a settings file is refused, and the settings stay as they were.
   Pre-dumped `.json` files can stand in for `.dwg` files anywhere.
+- In the exported CSV files, a text cell starting with `=`, `+`, `-` or `@` (a file
+  or login name, say) starts with an apostrophe, so a spreadsheet shows it rather
+  than running it as a formula.
 
 ## Test corpus
 

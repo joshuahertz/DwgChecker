@@ -6,6 +6,7 @@
 
 #include "Comparator.h"
 #include "DimText.h"
+#include "Matcher.h"
 #include "Settings.h"
 #include "TestUtil.h"
 
@@ -99,6 +100,9 @@ private slots:
     void unknownOrTypedPrecision();
     void syntheticStyleAndOverride();
     void settingsRoundTrip();
+    void placeMatters();
+    void equivalentDimensions();
+    void dimensionsToAHoleCenter();
 
 private:
     std::shared_ptr<Drawing> ref;
@@ -379,6 +383,133 @@ void TestDims::settingsRoundTrip() {
     a.compare.checkDimPrecision = false;
     QVERIFY(!AppSettings::fromJson(a.toJson()).compare.checkDimPrecision);
     QVERIFY(AppSettings::fromJson(QJsonObject{}).compare.checkDimPrecision);  // missing key: on
+}
+
+void TestDims::placeMatters() {
+    // The same value in another place is not the same dimension (D76).
+    auto linear = [](Vec2 a, Vec2 b) {
+        DocBuilder d;
+        d.line({0, 0}, {4, 0});
+        d.line({0, 2}, {4, 2});
+        d.dimension("LINEAR", 4, a, b);
+        return d.canon();
+    };
+    const Drawing r = linear({0, 0}, {4, 0});
+    const CompareResult flipped = compareDrawings(r, linear({4, 0}, {0, 0}), dimSettings(), nullptr);  // either order
+    QVERIFY2(flipped.pass, qPrintable(dumpErrors(flipped)));
+    const CompareResult moved = compareDrawings(r, linear({0, 2}, {4, 2}), dimSettings(), nullptr);
+    QVERIFY(!moved.pass);
+    QCOMPARE(moved.matched, 2);  // the two lines only
+
+    // Radial: the center decides; the point picked on the circle is free.
+    auto radial = [](Vec2 center, Vec2 onCircle) {
+        DocBuilder d;
+        d.circle({0, 0}, 1);
+        d.circle({5, 0}, 1);
+        d.dimension("RADIUS", 1, center, onCircle, "0", {{"def_pt", pt(center)}, {"first_arc_pt", pt(onCircle)}});
+        return d.canon();
+    };
+    const Drawing rr = radial({0, 0}, {1, 0});
+    const CompareResult otherPoint = compareDrawings(rr, radial({0, 0}, {0, 1}), dimSettings(), nullptr);
+    QVERIFY2(otherPoint.pass, qPrintable(dumpErrors(otherPoint)));
+    const CompareResult otherCircle = compareDrawings(rr, radial({5, 0}, {6, 0}), dimSettings(), nullptr);
+    QVERIFY(!otherCircle.pass);
+    QCOMPARE(otherCircle.matched, 2);
+}
+
+void TestDims::equivalentDimensions() {
+    // A dimension that measures the same thing from other points counts (D78). Two 4 x 2 plates,
+    // the second 10 above the first, as a top view sits above a front view; the width 4 of the
+    // first, measured from its bottom corners.
+    auto drawing = [](const QString& type, double value, Vec2 a, Vec2 b, const QJsonObject& extra = {}) {
+        DocBuilder d;
+        for (double y0 : {0.0, 10.0}) {
+            d.line({0, y0}, {4, y0});
+            d.line({4, y0}, {4, y0 + 2});
+            d.line({4, y0 + 2}, {0, y0 + 2});
+            d.line({0, y0 + 2}, {0, y0});
+        }
+        d.dimension(type, value, a, b, "0", extra);
+        return d.canon();
+    };
+    auto dimIn = [](const Drawing& d) {
+        for (const auto& p : d.prims)
+            if (p.kind == PrimKind::Dimension) return p;
+        return Primitive{};
+    };
+    MatchCriteria edges;  // Absolute and Relative mode: on the same edges
+    edges.linTol = 1e-6;
+    edges.angTol = CompareSettings{}.angTol;
+    MatchCriteria lines = edges;  // Orthographic mode: on the same lines across, anywhere
+    lines.dimLinesAnywhere = true;
+    const Primitive width = dimIn(drawing("LINEAR", 4, {0, 0}, {4, 0}));
+    QVERIFY(width.dimPlace && width.dimPlace->hasEdge0 && width.dimPlace->hasEdge1);
+    auto matches = [&](const Drawing& d, const MatchCriteria& c) { return geometryMatches(width, dimIn(d), c); };
+
+    // The top corners, or the middle of the sides in either order: the same width.
+    QVERIFY(matches(drawing("LINEAR", 4, {0, 2}, {4, 2}), edges));
+    QVERIFY(matches(drawing("LINEAR", 4, {4, 1}, {0, 1}), edges));
+    // An aligned dimension straight across stands for the linear one.
+    QVERIFY(matches(drawing("ALIGNED", 4, {0, 1}, {4, 1}), edges));
+    // The other plate's sides: the same lines across but other edges. Orthographic mode takes it
+    // (a width given in another view); the other modes do not.
+    QVERIFY(!matches(drawing("LINEAR", 4, {0, 10}, {4, 10}), edges));
+    QVERIFY(matches(drawing("LINEAR", 4, {0, 10}, {4, 10}), lines));
+    // The same value measured in another direction is another dimension.
+    QVERIFY(!matches(drawing("LINEAR", 4, {0, 0}, {0, 4}, {{"dim_rotation", kPi / 2}}), lines));
+    // A point on no line across (here the middle of the bottom edge) must be the same point.
+    const Primitive half = dimIn(drawing("LINEAR", 2, {0, 0}, {2, 0}));
+    QVERIFY(half.dimPlace && half.dimPlace->hasEdge0 && !half.dimPlace->hasEdge1);
+    QVERIFY(geometryMatches(half, dimIn(drawing("LINEAR", 2, {0, 2}, {2, 0})), edges));
+    QVERIFY(!geometryMatches(half, dimIn(drawing("LINEAR", 2, {0, 2}, {2, 2})), edges));
+
+    // Angles: the same vertex and the same two sides, from any points along them.
+    auto corner = [](Vec2 a, Vec2 b) {
+        DocBuilder d;
+        d.line({-3, 0}, {3, 0});
+        d.line({0, 0}, {0, 3});
+        d.dimension("ANG3PT", kPi / 2, a, b, "0", {{"center_pt", pt(0, 0)}});
+        return d.canon();
+    };
+    const Primitive angle = dimIn(corner({1, 0}, {0, 1}));
+    QVERIFY(angle.dimPlace);
+    QVERIFY(geometryMatches(angle, dimIn(corner({0, 2.5}, {2, 0})), edges));
+    QVERIFY(!geometryMatches(angle, dimIn(corner({-1, 0}, {0, 1})), edges));  // the other right angle at that vertex
+}
+
+void TestDims::dimensionsToAHoleCenter() {
+    // A distance to a hole's center may be given from any point on its centerline, however far
+    // the student drew it, and also when the solution has no centerline there (user decision).
+    // A 4 x 2 plate with a hole at (3, 1); the width from the left side to the hole's center.
+    auto drawing = [](bool centerline, Vec2 to) {
+        DocBuilder d;
+        d.layer("CL", "CENTER");
+        d.line({0, 0}, {4, 0});
+        d.line({4, 0}, {4, 2});
+        d.line({4, 2}, {0, 2});
+        d.line({0, 2}, {0, 0});
+        d.circle({3, 1}, 0.25);
+        if (centerline) d.line({3, 0.6}, {3, 1.4}, "CL");  // a short center mark
+        d.dimension("LINEAR", 3, {0, 0}, to);
+        return d.canon();
+    };
+    auto dimIn = [](const Drawing& d) {
+        for (const auto& p : d.prims)
+            if (p.kind == PrimKind::Dimension) return p;
+        return Primitive{};
+    };
+    MatchCriteria edges;  // Absolute and Relative mode
+    edges.linTol = 1e-6;
+    edges.angTol = CompareSettings{}.angTol;
+    for (bool centerline : {true, false}) {
+        const Primitive toCenter = dimIn(drawing(centerline, {3, 1}));
+        QVERIFY(toCenter.dimPlace && toCenter.dimPlace->hasEdge1 && toCenter.dimPlace->edge1Endless);
+        // Beyond the solution's short center mark, or with none drawn: the same distance.
+        QVERIFY2(geometryMatches(toCenter, dimIn(drawing(true, {3, 1.8})), edges), centerline ? "with a center mark" : "without");
+        QVERIFY(geometryMatches(toCenter, dimIn(drawing(false, {3, 2})), edges));
+        // Off the centerline: another distance.
+        QVERIFY(!geometryMatches(toCenter, dimIn(drawing(true, {3.5, 1})), edges));
+    }
 }
 
 QTEST_GUILESS_MAIN(TestDims)

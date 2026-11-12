@@ -56,6 +56,9 @@ struct DupReport {
     std::vector<std::vector<int>> clusters; // groups joined by Strong evidence (size >= 2)
     QStringList notes;                      // probable templates etc.
     std::vector<QStringList> fileNotes;     // per entry (e.g. very small TDINDWG)
+    // Per entry, evidence from the student's own files rather than a pair: several account
+    // names across one student's files (D77). Shown in the file's flag like a pair's signal.
+    std::vector<std::vector<Signal>> fileSignals;
 };
 
 struct BitExactStats {

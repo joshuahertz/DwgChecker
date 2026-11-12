@@ -37,6 +37,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSaveFile>
 #include <QSettings>
 #include <QSortFilterProxyModel>
 #include <QSplitter>
@@ -52,6 +53,8 @@
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <algorithm>
+#include <exception>
 #include <functional>
 
 using namespace dc;
@@ -60,9 +63,18 @@ namespace dcgui {
 
 namespace {
 
-// The reading rules (layers, paper space, ...) as text, to notice when they change.
+// The reading rules the solution drawings are read with (layers, paper space, ..., and what
+// referenceCanon() takes from the matching rules: tolerances, merging by layer or color), as
+// text, to notice when they change.
 QByteArray canonSignature(const AppSettings& s) {
-    return QJsonDocument(s.toJson().value(QStringLiteral("canon")).toObject()).toJson(QJsonDocument::Compact);
+    QJsonObject o = s.toJson().value(QStringLiteral("canon")).toObject();
+    const CanonSettings c = s.referenceCanon();
+    o.insert(QStringLiteral("linTol"), c.linTol);
+    o.insert(QStringLiteral("angTol"), c.angTol);
+    o.insert(QStringLiteral("mergeByLayer"), c.mergeByLayer);
+    o.insert(QStringLiteral("mergeByColor"), c.mergeByColor);
+    o.insert(QStringLiteral("colorTolerance"), c.colorTolerance);
+    return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
 
 const char* const kRecentRefs = "recent/references";
@@ -255,16 +267,29 @@ void MainWindow::buildUi() {
     file->addAction(tr("Save settings as JSON…"), this, [this]() {
         const QString p = QFileDialog::getSaveFileName(this, tr("Save settings"), QString(), tr("JSON (*.json)"));
         if (p.isEmpty()) return;
-        QFile f(p);
-        if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(currentSettings().toJson()).toJson());
+        // Written whole or not at all, and a failure is said (D76).
+        QSaveFile f(p);
+        if (!f.open(QIODevice::WriteOnly) || f.write(currentSettings().toJsonText(false)) < 0 || !f.commit())
+            QMessageBox::warning(this, tr("Save settings"),
+                                 tr("Could not save %1: %2").arg(QDir::toNativeSeparators(p), f.errorString()));
     });
     file->addAction(tr("Load settings from JSON…"), this, [this]() {
         const QString p = QFileDialog::getOpenFileName(this, tr("Load settings"), QString(), tr("JSON (*.json)"));
         if (p.isEmpty()) return;
         QFile f(p);
-        if (!f.open(QIODevice::ReadOnly)) return;
-        const AppSettings s = AppSettings::fromJson(QJsonDocument::fromJson(f.readAll()).object());
-        m_settings->setSettings(s);
+        if (!f.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(this, tr("Load settings"), tr("Could not open %1: %2").arg(QDir::toNativeSeparators(p), f.errorString()));
+            return;
+        }
+        // A file that is not settings changes nothing (it used to reset everything; D76).
+        QString why;
+        const std::optional<AppSettings> s = AppSettings::fromJsonText(f.readAll(), &why);
+        if (!s) {
+            QMessageBox::warning(this, tr("Load settings"),
+                                 tr("%1 was not loaded: %2. The settings are unchanged.").arg(QFileInfo(p).fileName(), why));
+            return;
+        }
+        applySettings(*s);
         storeQuizSettings();
     });
     file->addSeparator();
@@ -334,15 +359,31 @@ void MainWindow::buildUi() {
         }
     });
     m_table->viewport()->setCursor(Qt::PointingHandCursor);  // every cell opens something
-    connect(m_table->header(), &QHeaderView::sectionResized, m_table, [this]() { m_table->doItemsLayout(); });
+    // The rows' heights follow the column widths: laid out again once a drag pauses, not for
+    // every pixel of it (D76).
+    m_relayout = new QTimer(this);
+    m_relayout->setSingleShot(true);
+    m_relayout->setInterval(60);
+    connect(m_relayout, &QTimer::timeout, m_table, [this]() { m_table->doItemsLayout(); });
+    connect(m_table->header(), &QHeaderView::sectionResized, m_relayout, qOverload<>(&QTimer::start));
 }
 
 AppSettings MainWindow::currentSettings() const { return m_settings->settings(); }
 
+void MainWindow::applySettings(const AppSettings& s) {
+    m_settings->setSettings(s);  // signals blocked: the card's reading is checked here
+    if (!m_refCard->paths().isEmpty() && canonSignature(currentSettings()) != m_refCanonSig) updateRefInfo();
+}
+
+void MainWindow::closePreviews() {
+    for (const QPointer<QDialog>& d : std::as_const(m_previews))
+        if (d) d->close();
+    m_previews.clear();
+}
+
 void MainWindow::loadState() {
     QSettings q;
-    const AppSettings s = AppSettings::fromJson(QJsonDocument::fromJson(q.value("settings/json").toByteArray()).object());
-    m_settings->setSettings(s);
+    m_settings->setSettings(AppSettings::fromJsonText(q.value("settings/json").toByteArray()).value_or(AppSettings{}));
     m_refCard->setRecent(q.value(kRecentRefs).toStringList());
     m_dirCard->setRecent(q.value(kRecentDirs).toStringList());
     // The app opens with nothing chosen: step 1 is next. Recent choices are one click away.
@@ -355,7 +396,7 @@ void MainWindow::loadState() {
 
 void MainWindow::saveState() const {
     QSettings q;
-    q.setValue("settings/json", QJsonDocument(currentSettings().toJson()).toJson(QJsonDocument::Compact));
+    q.setValue("settings/json", currentSettings().toJsonText());
     q.setValue("window/geometry", saveGeometry());
     q.setValue("window/splitter", m_split->saveState());
 }
@@ -403,12 +444,14 @@ struct RefSummary {
 // "inches  ·  42 objects, 2 dimensions; ignoring 51 objects on turned-off or frozen layers",
 // or "inches" and then a line per drawing ("Part A – 42 objects, …") when there are several.
 // Read in the background; `progress(i, n, name)` is called before reading drawing i of n.
+// A newer read sets `cancel`: this one then stops before its next drawing (D76).
 RefSummary describeReferences(const QStringList& paths, const AppSettings& s,
-                              const std::function<void(int, int, const QString&)>& progress) {
+                              const std::function<void(int, int, const QString&)>& progress, const std::atomic_bool& cancel) {
     AutoLoader loader(s.loader);
     RefSummary out;
     QStringList lines, units;
     for (const QString& path : paths) {
+        if (cancel) return out;  // superseded: nobody reads the result
         progress(static_cast<int>(lines.size()), static_cast<int>(paths.size()), QFileInfo(path).completeBaseName());
         QString err;
         const auto d = loadDrawing(path, loader, s.referenceCanon(), &err);
@@ -443,6 +486,64 @@ RefSummary describeReferences(const QStringList& paths, const AppSettings& s,
     return out;
 }
 
+// What the submissions card says ("33 drawings from 30 students"). Scanned in the background,
+// so that a large folder, or one on a streaming drive, never holds up the window (D76).
+struct DirSummary {
+    int files = 0;
+    QString text;
+    bool problem = false;
+};
+
+// The submissions in a folder: a solution drawing kept in the same folder is not one.
+QStringList submissionFiles(const QString& dir, const QStringList& refs) {
+    QStringList files = findSubmissionFiles(dir);
+    files.removeIf([&](const QString& f) {
+        return std::any_of(refs.cbegin(), refs.cend(), [&](const QString& r) { return samePath(f, r); });
+    });
+    return files;
+}
+
+// The card's line for those files; no I/O, so Run can describe the files it just found
+// rather than scan the folder twice (D76).
+DirSummary describeFiles(const QStringList& files, const QString& identityRegex) {
+    DirSummary out;
+    const int n = static_cast<int>(files.size());
+    out.files = n;
+    // Files are grouped by student as in a run (name + Canvas user id).
+    const IdentityParser idp(identityRegex);
+    QSet<QString> students;
+    for (const QString& f : files) students.insert(studentKey(idp.parse(f)));
+    const bool json = n > 0 && files.front().endsWith(QStringLiteral(".json"), Qt::CaseInsensitive);
+    const QString what = json ? countText(n, QObject::tr("JSON dump"), QObject::tr("JSON dumps"))
+                              : countText(n, QObject::tr("drawing"), QObject::tr("drawings"));
+    if (n == 0) {
+        out.text = QObject::tr("no drawings in this folder");
+        out.problem = true;
+    } else if (students.size() < n) {
+        out.text = QObject::tr("%1 from %2").arg(what, countText(static_cast<int>(students.size()), QObject::tr("student"),
+                                                                 QObject::tr("students")));
+    } else {
+        out.text = QObject::tr("%1 found").arg(what);
+    }
+    return out;
+}
+
+DirSummary describeFolder(const QString& dir, const QStringList& refs, const QString& identityRegex) {
+    return describeFiles(submissionFiles(dir, refs), identityRegex);
+}
+
+// What an exception in a background task says; it is caught there, since QFuture::result()
+// would throw it again in the window's slot and end the app (D76).
+QString exceptionText(std::exception_ptr e) {
+    try {
+        std::rethrow_exception(e);
+    } catch (const std::exception& x) {
+        return QString::fromLocal8Bit(x.what());
+    } catch (...) {
+        return QObject::tr("unknown error");
+    }
+}
+
 }  // namespace
 
 void MainWindow::referenceChanged() {
@@ -454,9 +555,7 @@ void MainWindow::referenceChanged() {
     m_pendingPreview.clear();
     m_refDrawings.clear();
     m_refSummaries.clear();
-    for (const QPointer<QDialog>& d : std::as_const(m_previews))
-        if (d) d->close();
-    m_previews.clear();
+    closePreviews();
     m_showRef->setVisible(paths.size() == 1);
     m_refReadable = 0;
     m_settings->setSolutionDrawings(paths);  // several: each gets its own mode and checks
@@ -468,10 +567,9 @@ void MainWindow::referenceChanged() {
         updateDirInfo();
         return;
     }
-    const QByteArray saved = QSettings().value(quizKey(paths)).toByteArray();
-    if (!saved.isEmpty()) {
-        const AppSettings s = AppSettings::fromJson(QJsonDocument::fromJson(saved).object());
-        m_settings->setSettings(s);
+    const std::optional<AppSettings> saved = AppSettings::fromJsonText(QSettings().value(quizKey(paths)).toByteArray());
+    if (saved) {
+        m_settings->setSettings(*saved);  // the drawings are read below with these rules
         m_refCard->setCaptionNote(paths.size() > 1 ? tr("settings saved for these reference solutions")
                                                    : tr("settings saved for this reference solution"));
         log(tr("loaded the settings saved for %1").arg(m_refCard->paths().size() > 1 ? tr("this set of drawings")
@@ -509,8 +607,11 @@ void MainWindow::updateRefInfo() {
     // over the card, which has its own pointing hand, and the mouse is usually there.
     const int read = ++m_refRead;
     m_refReading = true;
+    if (m_refCancel) *m_refCancel = true;  // an earlier read still running stops at its next drawing
+    m_refCancel = std::make_shared<std::atomic_bool>(false);
     m_refDrawings.clear();  // read again with the current reading rules
     m_refSummaries.clear();
+    closePreviews();  // they show the drawings as read with the old rules (D76)
     m_refCard->setDetail(paths.size() > 1 ? tr("reading %1 drawings…").arg(paths.size()) : tr("reading…"));
     m_refCard->showProgress(0, static_cast<int>(paths.size()));
     if (!m_busyCursor) {
@@ -552,11 +653,20 @@ void MainWindow::updateRefInfo() {
         updateSteps();
         if (!pending.isEmpty()) previewDrawing(pending);
     });
-    w->setFuture(QtConcurrent::run([paths, s, progress]() { return describeReferences(paths, s, progress); }));
+    w->setFuture(QtConcurrent::run([paths, s, progress, cancel = m_refCancel]() {
+        try {
+            return describeReferences(paths, s, progress, *cancel);
+        } catch (...) {
+            RefSummary r;
+            r.text = QObject::tr("could not read the drawings: %1").arg(exceptionText(std::current_exception()));
+            return r;
+        }
+    }));
 }
 
 void MainWindow::endRefRead() {
-    ++m_refRead;  // a read still running no longer updates the card
+    ++m_refRead;  // a read still running no longer updates the card...
+    if (m_refCancel) *m_refCancel = true;  // ...and stops before its next drawing
     m_refReading = false;
     m_pendingPreview.clear();
     m_refCard->hideProgress();
@@ -594,31 +704,48 @@ void MainWindow::previewDrawing(const QString& refPath) {
 
 void MainWindow::updateDirInfo() {
     const QString dir = m_dirCard->path();
-    m_dirCount = 0;
+    const int scan = ++m_dirScan;  // a scan still running no longer updates the card
     if (dir.isEmpty()) {
+        m_dirCount = 0;
+        m_dirScanned.clear();
         m_dirCard->setDetail(tr("The folder with the students' drawings; a Canvas download works as-is (or drop it here)"));
         updateSteps();
         return;
     }
     if (!QFileInfo(dir).isDir()) {
+        m_dirCount = 0;
+        m_dirScanned.clear();
         m_dirCard->setDetail(tr("folder not found"), true);
         updateSteps();
         return;
     }
-    QStringList files = findSubmissionFiles(dir);
-    for (const QString& r : m_refCard->paths()) files.removeAll(QFileInfo(r).absoluteFilePath());
-    const int n = static_cast<int>(files.size());
-    m_dirCount = n;
-    // Files are grouped by student as in a run (name + Canvas user id).
-    const IdentityParser idp(currentSettings().identityRegex);
-    QSet<QString> students;
-    for (const QString& f : files) students.insert(studentKey(idp.parse(f)));
-    const bool json = n > 0 && files.front().endsWith(QStringLiteral(".json"), Qt::CaseInsensitive);
-    const QString what = json ? countText(n, tr("JSON dump"), tr("JSON dumps")) : countText(n, tr("drawing"), tr("drawings"));
-    if (n == 0) m_dirCard->setDetail(tr("no drawings in this folder"), true);
-    else if (students.size() < n) m_dirCard->setDetail(tr("%1 from %2").arg(what, countText(students.size(), tr("student"), tr("students"))));
-    else m_dirCard->setDetail(tr("%1 found").arg(what));
-    updateSteps();
+    // Scanned in the background (D76). The same folder keeps its count meanwhile; a new one
+    // waits for its own.
+    if (!samePath(dir, m_dirScanned)) {
+        m_dirCount = 0;
+        m_dirCard->setDetail(tr("looking for drawings…"));
+        updateSteps();
+    }
+    auto* w = new QFutureWatcher<DirSummary>(this);
+    connect(w, &QFutureWatcherBase::finished, this, [this, w, scan, dir]() {
+        const DirSummary res = w->result();
+        w->deleteLater();
+        if (scan != m_dirScan) return;
+        m_dirScanned = dir;
+        m_dirCount = res.files;
+        m_dirCard->setDetail(res.text, res.problem);
+        updateSteps();
+    });
+    w->setFuture(QtConcurrent::run([dir, refs = m_refCard->paths(), regex = currentSettings().identityRegex]() {
+        try {
+            return describeFolder(dir, refs, regex);
+        } catch (...) {
+            DirSummary r;
+            r.text = QObject::tr("could not read the folder: %1").arg(exceptionText(std::current_exception()));
+            r.problem = true;
+            return r;
+        }
+    }));
 }
 
 void MainWindow::updateSteps() {
@@ -659,7 +786,7 @@ void MainWindow::updateSteps() {
 void MainWindow::storeQuizSettings() {
     const QStringList refs = m_refCard->paths();
     if (refs.isEmpty()) return;
-    QSettings().setValue(quizKey(refs), QJsonDocument(currentSettings().toJson()).toJson(QJsonDocument::Compact));
+    QSettings().setValue(quizKey(refs), currentSettings().toJsonText());
     m_refCard->setCaptionNote(refs.size() > 1 ? tr("settings saved for these reference solutions")
                                               : tr("settings saved for this reference solution"));
 }
@@ -700,7 +827,6 @@ void MainWindow::probeParser() {
 void MainWindow::run() {
     if (m_watcher.isRunning()) return;
     const QStringList refs = m_refCard->paths();
-    const QString ref = m_refCard->path();
     const QString dir = m_dirCard->path();
     if (refs.isEmpty()) { QMessageBox::warning(this, tr("Run"), tr("Choose the reference drawing first.")); return; }
     for (const QString& r : refs)
@@ -709,20 +835,32 @@ void MainWindow::run() {
     AppSettings s = currentSettings();
     s.loader.dwgreadPath = platform::findDwgRead();
     auto loader = std::make_shared<AutoLoader>(s.loader);
+    BatchInput in;
+    in.refPaths = refs;
+    in.studentPaths = submissionFiles(dir, refs);
+    in.templatePaths = s.duplicates.templateFiles;
+    in.settings = s;
+    // The views confirmed in the editor, for every drawing whose own mode is Orthographic (the
+    // run looks them up per drawing), whatever the mode shown for the set (D76).
+    in.views = m_confirmedViews;
+    if (in.studentPaths.isEmpty()) { QMessageBox::warning(this, tr("Run"), tr("No .dwg files in %1.").arg(dir)); return; }
+    // dwgread is needed unless every file is a JSON dump: any solution, submission or template (D76).
+    auto isDwg = [](const QString& p) { return !p.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive); };
+    const bool needsDwgRead = std::any_of(refs.cbegin(), refs.cend(), isDwg) ||
+                              std::any_of(in.studentPaths.cbegin(), in.studentPaths.cend(), isDwg) ||
+                              std::any_of(in.templatePaths.cbegin(), in.templatePaths.cend(), isDwg);
     QString why;
-    if (!loader->dwgRead().isUsable(&why) && !ref.endsWith(".json", Qt::CaseInsensitive)) {
+    if (needsDwgRead && !loader->dwgRead().isUsable(&why)) {
         QMessageBox::warning(this, tr("Run"), tr("dwgread is not available: %1").arg(why));
         return;
     }
-    BatchInput in;
-    in.refPaths = refs;
-    in.studentPaths = findSubmissionFiles(dir);
-    for (const QString& r : refs) in.studentPaths.removeAll(QFileInfo(r).absoluteFilePath());
-    in.templatePaths = s.duplicates.templateFiles;
-    in.settings = s;
-    if (s.compare.mode == Mode::Orthographic) in.views = m_viewsByRef;
-    if (in.studentPaths.isEmpty()) { QMessageBox::warning(this, tr("Run"), tr("No .dwg files in %1.").arg(dir)); return; }
-    updateDirInfo();
+    {  // the card from the files just found, not a second scan of the folder
+        ++m_dirScan;  // a scan still running no longer updates the card
+        const DirSummary found = describeFiles(in.studentPaths, s.identityRegex);
+        m_dirScanned = dir;
+        m_dirCount = found.files;
+        m_dirCard->setDetail(found.text, found.problem);
+    }
     storeQuizSettings();
     saveState();
 
@@ -749,7 +887,16 @@ void MainWindow::run() {
             },
             Qt::QueuedConnection);
     };
-    m_watcher.setFuture(QtConcurrent::run([in, loader, progress, this]() { return runBatch(in, *loader, progress, &m_cancel); }));
+    m_watcher.setFuture(QtConcurrent::run([in, loader, progress, this]() {
+        try {
+            return runBatch(in, *loader, progress, &m_cancel);
+        } catch (...) {
+            BatchOutput out;
+            out.ok = false;
+            out.error = QObject::tr("The run stopped on an error: %1").arg(exceptionText(std::current_exception()));
+            return out;
+        }
+    }));
 }
 
 void MainWindow::cancel() {
@@ -773,9 +920,6 @@ void MainWindow::onFinished() {
     for (const QString& l : out.log) log(l);
     for (const auto& r : out.students)
         if (!r.ok()) log(tr("%1: %2").arg(QFileInfo(r.path).fileName(), r.loadError));
-    if (out.hasViews)  // keep the auto/sidecar views for the editor
-        for (int k = 0; k < static_cast<int>(out.refPaths.size()); ++k)
-            if (!m_viewsByRef.contains(out.refPaths[k])) m_viewsByRef.insert(out.refPaths[k], out.views[k]);
     int processed = 0;
     for (const auto& r : out.students) processed += r.ok();
     const int failed = static_cast<int>(out.students.size()) - processed;
@@ -822,15 +966,19 @@ void MainWindow::editViews(const QString& chosen) {
         QApplication::restoreOverrideCursor();
         if (!ref) { QMessageBox::warning(this, tr("Views"), tr("Could not read the reference: %1").arg(err)); return; }
     }
+    // Views confirmed earlier, else what a run would use now: the sidecar, or found with the
+    // current settings.
     QString note;
-    const auto known = m_viewsByRef.constFind(refPath);
+    const auto known = m_confirmedViews.constFind(refPath);
     const ViewSet initial = resolveReferenceViews(*ref, refPath, s.compare,
-                                                  known != m_viewsByRef.cend() ? std::optional<ViewSet>(*known) : std::nullopt, &note);
+                                                  known != m_confirmedViews.cend() ? std::optional<ViewSet>(*known) : std::nullopt, &note);
     log(note);
     ViewEditorDialog dlg(ref, refPath, initial, this);
     if (dlg.exec() == QDialog::Accepted) {
-        m_viewsByRef.insert(refPath, dlg.viewSet());
-        log(tr("views saved to %1").arg(QDir::toNativeSeparators(sidecarPath(refPath))));
+        m_confirmedViews.insert(refPath, dlg.viewSet());
+        log(dlg.savedToSidecar() ? tr("views saved to %1").arg(QDir::toNativeSeparators(sidecarPath(refPath)))
+                                 : tr("views kept for this session only: %1 could not be written")
+                                       .arg(QDir::toNativeSeparators(sidecarPath(refPath))));
     }
 }
 

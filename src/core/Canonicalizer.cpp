@@ -3,6 +3,7 @@
 #include "Color.h"
 
 #include "MetaExtractor.h"
+#include "Dsu.h"
 #include "SpatialGrid.h"
 
 #include <QFileInfo>
@@ -105,6 +106,7 @@ public:
     // Counters turned into warnings by finish().
     QMap<QString, int> unsupported;
     int nonUniform = 0, tilted = 0, zCount = 0, hiddenLayerCount = 0, xrefs = 0, tooDeep = 0, minsertNoCounts = 0;
+    int nonFinite = 0;
     QSet<QString> hiddenLayers;
     double zMax = 0;
 
@@ -132,6 +134,9 @@ public:
                              : QStringLiteral("%1 objects are on turned-off or frozen layers (%2) and were included")
                                    .arg(hiddenLayerCount).arg(which));
         }
+        if (nonFinite)
+            D.addWarning(WarnKind::Load, QStringLiteral("%1 objects have unreadable numbers (nan or inf from the parser) and "
+                                                        "were left out").arg(nonFinite));
         if (xrefs) D.addWarning(WarnKind::Xref, QStringLiteral("%1 external references were not loaded").arg(xrefs));
         if (tooDeep) D.addWarning(WarnKind::Other, QStringLiteral("%1 block references nested too deeply (recursive block?)").arg(tooDeep));
         if (minsertNoCounts)
@@ -249,6 +254,10 @@ private:
     bool layerHidden(const QString& layer) const {
         const auto* l = J.layerByName(layer);
         return l && (l->frozen() || l->off());
+    }
+    bool layerFrozen(const QString& layer) const {
+        const auto* l = J.layerByName(layer);
+        return l && l->frozen();
     }
 
     Primitive proto(const QJsonObject& o, const QString& type, const QString& layer, const QString& ltype,
@@ -387,10 +396,18 @@ private:
             "DWFUNDERLAY", "DGNUNDERLAY", "LIGHT", "CAMERA", "SUN", "GEOPOSITIONMARKER", "VERTEX_2D", "VERTEX_3D",
             "VERTEX_MESH", "VERTEX_PFACE", "VERTEX_PFACE_FACE", "PROXY_ENTITY", "SECTIONOBJECT"};
         if (ignored.contains(type)) return;
+        if (J.hadNonFinite() && DwgJson::hasNull(o)) {  // a nan read as null (DwgJson::parse)
+            ++nonFinite;
+            return;
+        }
 
         const QString layer = effLayer(o, c);
         if (layerSkipped(layer)) return;
-        if (layerHidden(layer)) {
+        // A block on a turned-off layer still shows its objects that are on other layers, as in
+        // AutoCAD; those on layer 0 take the block's layer and are hidden with it (effLayer). A
+        // frozen layer hides the whole block (D76).
+        const bool block = type == "INSERT" || type == "MINSERT";
+        if (block ? layerFrozen(layer) : layerHidden(layer)) {
             ++hiddenLayerCount;
             hiddenLayers.insert(layer);
             if (S.skipHiddenLayers) return;
@@ -489,6 +506,53 @@ private:
                 p.p0 = c.M.apply(DwgJson::vec3(o.value("def_pt"))).xy();
                 p.p1 = o.contains("first_arc_pt") ? c.M.apply(DwgJson::vec3(o.value("first_arc_pt"))).xy() : p.p0;
             }
+            // Where it measures, for matching (Matcher's dimensionPlaceMatches).
+            auto at = [&](const char* key) { return c.M.apply(DwgJson::vec3(o.value(QLatin1StringView(key)))).xy(); };
+            if (o.contains("feature_location_pt")) {  // ORDINATE: the feature, then the leader's end
+                p.p0 = at("feature_location_pt");
+                p.p1 = o.contains("leader_endpt") ? at("leader_endpt") : p.p0;
+            }
+            if (o.contains("center_pt")) {  // ANG3PT, ARC_DIMENSION
+                p.dimCenter = at("center_pt");
+                p.hasDimCenter = true;
+            } else if (p.dimType == "RADIUS" || p.dimType == "LARGE_RADIAL_DIMENSION") {  // def_pt is the center
+                p.dimCenter = at("def_pt");
+                p.hasDimCenter = true;
+            } else if (p.dimType == "DIAMETER" && o.contains("first_arc_pt")) {  // two opposite points on the circle
+                p.dimCenter = (at("def_pt") + at("first_arc_pt")) * 0.5;
+                p.hasDimCenter = true;
+            } else if (o.contains("xline1start_pt") && o.contains("xline2start_pt")) {  // ANG2LN: where the lines meet
+                const Vec2 a = at("xline1start_pt"), b = at("xline2start_pt");
+                const Vec2 da = at("xline1end_pt") - a, db = at("xline2end_pt") - b;
+                const double den = cross(da, db);
+                if (std::fabs(den) > 1e-12 * da.length() * db.length()) {
+                    p.dimCenter = a + da * (cross(b - a, db) / den);
+                    p.hasDimCenter = true;
+                }
+            }
+            // What it measures between (D78): a linear one's direction (its rotation; an aligned
+            // one's from its points), an angular one's two sides. The edges come in postProcess,
+            // once the lines are merged.
+            auto place = std::make_shared<DimPlace>();
+            bool placed = false;
+            if (p.dimType == "LINEAR") {
+                const double rot = DwgJson::num(o, "dim_rotation", 0);
+                place->dir = L.apply({std::cos(rot), std::sin(rot), 0}).xy() - L.apply({0, 0, 0}).xy();
+                placed = true;
+            } else if (p.dimType == "ALIGNED") {
+                place->dir = p.p1 - p.p0;
+                placed = place->dir.length() > 0;
+            } else if (p.dimType == "ANG3PT" && p.hasDimCenter) {
+                place->side0 = p.p0 - p.dimCenter;
+                place->side1 = p.p1 - p.dimCenter;
+                placed = true;
+            } else if (p.dimType == "ANG2LN" && o.contains("xline1end_pt") && o.contains("xline2end_pt")) {
+                place->side0 = at("xline1end_pt") - at("xline1start_pt");
+                place->side1 = at("xline2end_pt") - at("xline2start_pt");
+                place->sidesAreLines = true;
+                placed = true;
+            }
+            if (placed) p.dimPlace = std::move(place);
             D.prims.push_back(std::move(p));
         } else {
             // SPLINE, ELLIPSE, XLINE, RAY, REGION, 3DSOLID, MLINE, 3DFACE, meshes...: reported, never compared (rule 8).
@@ -530,6 +594,24 @@ private:
             if (clean.size() >= 3) loops->push_back(std::move(clean));
         }
         if (loops->empty()) return;
+        if (style == 1 && loops->size() > 2) {
+            // "Outer" fills from the outer boundary to the first island only: loops nested two or
+            // more deep (an island inside an island) are dropped, then the parity rule is right (D76).
+            auto inside = [](const std::vector<Vec2>& l, Vec2 q) {
+                bool in = false;
+                for (size_t i = 0, j = l.size() - 1; i < l.size(); j = i++)
+                    if ((l[i].y > q.y) != (l[j].y > q.y) && q.x < (l[j].x - l[i].x) * (q.y - l[i].y) / (l[j].y - l[i].y) + l[i].x)
+                        in = !in;
+                return in;
+            };
+            std::vector<std::vector<Vec2>> kept;
+            for (size_t a = 0; a < loops->size(); ++a) {
+                int depth = 0;
+                for (size_t b = 0; b < loops->size(); ++b) depth += b != a && inside((*loops)[b], (*loops)[a].front());
+                if (depth <= 1) kept.push_back((*loops)[a]);
+            }
+            *loops = std::move(kept);
+        }
         Primitive p = proto(o, type, layer, ltype, c);
         p.kind = PrimKind::Hatch;
         p.ltClass = LtClass::Visible;
@@ -681,19 +763,47 @@ void compact(std::vector<Primitive>& prims, const std::vector<char>& removed) {
     prims.swap(out);
 }
 
-struct Dsu {
-    std::vector<int> p;
-    explicit Dsu(int n) : p(n) { std::iota(p.begin(), p.end(), 0); }
-    int find(int x) { while (p[x] != x) x = p[x] = p[p[x]]; return x; }
-    void unite(int a, int b) { a = find(a); b = find(b); if (a != b) p[b] = a; }
-};
-
 QString groupKey(const Primitive& p, const CanonSettings& s) {
     QString k = QString::number(static_cast<int>(p.ltClass));
     if (s.mergeByLayer) k += "|" + p.layer.toUpper();
-    if (s.mergeByColor) k += "|" + QString::number(p.rgb);
     return k;
 }
+
+// When colors must match, pieces merge only when their colors are within the color tolerance,
+// as the comparison judges them (D76); an exact RGB key split a segmented edge in near colors.
+bool colorsMerge(const Primitive& a, const Primitive& b, const CanonSettings& s) {
+    return !s.mergeByColor || colorDifference(a.aci, a.rgb, b.aci, b.rgb) <= s.colorTolerance + 1e-9;
+}
+
+// Pieces joined into one primitive (prims[g[i]]): when colors must match, two sets join only when
+// every piece's color is within the tolerance of every other's. Checking just the pair being
+// joined would chain colors drifting past it (0, 4 and 8 % apart with a tolerance of 5; D76).
+struct PieceSets {
+    PieceSets(int n, const std::vector<Primitive>& prims, const std::vector<int>& g, const CanonSettings& s)
+        : dsu(n), members(n), prims(prims), g(g), s(s) {
+        for (int i = 0; i < n; ++i) members[i] = {i};
+    }
+    int find(int x) { return dsu.find(x); }
+    void unite(int a, int b) {
+        a = dsu.find(a);
+        b = dsu.find(b);
+        if (a == b) return;
+        if (s.mergeByColor)
+            for (int x : members[a])
+                for (int y : members[b])
+                    if (!colorsMerge(prims[g[x]], prims[g[y]], s)) return;
+        dsu.unite(a, b);
+        const int root = dsu.find(a), other = root == a ? b : a;
+        members[root].insert(members[root].end(), members[other].begin(), members[other].end());
+        members[other].clear();
+    }
+
+    Dsu dsu;
+    std::vector<std::vector<int>> members;
+    const std::vector<Primitive>& prims;
+    const std::vector<int>& g;
+    const CanonSettings& s;
+};
 
 }  // namespace
 
@@ -747,12 +857,11 @@ void removeStackedDuplicates(std::vector<Primitive>& prims, const CanonSettings&
     for (int i = 0; i < static_cast<int>(prims.size()); ++i) {
         Primitive& p = prims[i];
         if (!isGeometric(p.kind)) continue;
-        const Vec2 key = p.kind == PrimKind::Line ? p.midpoint() : p.center;
+        const Vec2 key = keyPoint(p);
         int dupOf = -1;
         grid.forNear(key, [&](int j) {
             if (dupOf < 0 && prims[j].ltClass == p.ltClass && (!s.mergeByLayer || prims[j].layer == p.layer) &&
-                (!s.mergeByColor || prims[j].rgb == p.rgb) &&
-                sameGeometry(prims[j], p, tol))
+                colorsMerge(prims[j], p, s) && sameGeometry(prims[j], p, tol))
                 dupOf = j;
         });
         if (dupOf >= 0) {
@@ -784,7 +893,7 @@ void mergeCollinearLines(std::vector<Primitive>& prims, const CanonSettings& s) 
         std::vector<int> order(n);
         std::iota(order.begin(), order.end(), 0);
         std::sort(order.begin(), order.end(), [&](int a, int b) { return bb[a].x0 < bb[b].x0; });
-        Dsu dsu(n);
+        PieceSets dsu(n, prims, g, s);
         for (int oi = 0; oi < n; ++oi) {
             const int i = order[oi];
             const Primitive& a = prims[g[i]];
@@ -850,7 +959,7 @@ void mergeCocircularArcs(std::vector<Primitive>& prims, const CanonSettings& s) 
         const int n = static_cast<int>(g.size());
         if (n < 2) continue;
         SpatialGrid grid(4 * tol);
-        Dsu dsu(n);
+        PieceSets dsu(n, prims, g, s);
         for (int i = 0; i < n; ++i) {
             const Primitive& a = prims[g[i]];
             grid.forNear(a.center, [&](int j) {
@@ -941,12 +1050,60 @@ void mergeCocircularArcs(std::vector<Primitive>& prims, const CanonSettings& s) 
     compact(prims, rm);
 }
 
+// The edges a linear or aligned dimension measures from (D78): for each extension-line origin,
+// the longest line of the drawing through it that runs parallel to the extension lines (across
+// the measurement). A dimension from other points on those edges measures the same distance.
+// A centerline counts along its whole length (its length is free, as in matching), and so does
+// the line across through a circle's or arc's center, drawn or not: a distance to a hole's
+// center may be given from any point on its centerline (user decision).
+static void findDimensionEdges(std::vector<Primitive>& prims, const CanonSettings& s) {
+    std::vector<int> lines, rounds;
+    for (int i = 0; i < static_cast<int>(prims.size()); ++i) {
+        if (prims[i].kind == PrimKind::Line && prims[i].length() > s.linTol) lines.push_back(i);
+        if (prims[i].kind == PrimKind::Circle || prims[i].kind == PrimKind::Arc) rounds.push_back(i);
+    }
+    for (Primitive& p : prims) {
+        if (p.kind != PrimKind::Dimension || !p.dimPlace || !isLinearDimType(p.dimType)) continue;
+        const Vec2 d = p.dimPlace->dir.normalized();
+        if (d.length() == 0) continue;
+        auto place = std::make_shared<DimPlace>(*p.dimPlace);
+        auto edgeAt = [&](Vec2 q, bool* has, bool* endless, Vec2* a, Vec2* b) {
+            double longest = 0;
+            bool centerline = false;
+            for (int i : lines) {
+                const Primitive& e = prims[i];
+                const double len = e.length();
+                if (pointSegmentDistance(q, e.p0, e.p1) > s.linTol) continue;
+                if (std::fabs(dot((e.p1 - e.p0) / len, d)) > s.angTol + 2 * s.linTol / len) continue;  // not across
+                centerline = centerline || e.ltClass == LtClass::Center;
+                if (len > longest) {
+                    longest = len;
+                    *has = true;
+                    *a = e.p0;
+                    *b = e.p1;
+                }
+            }
+            for (int i : rounds) centerline = centerline || dist(prims[i].center, q) <= s.linTol;
+            if (centerline) {  // the endless line across through q
+                *has = true;
+                *endless = true;
+                *a = q;
+                *b = q + d.perp();
+            }
+        };
+        edgeAt(p.p0, &place->hasEdge0, &place->edge0Endless, &place->edge0a, &place->edge0b);
+        edgeAt(p.p1, &place->hasEdge1, &place->edge1Endless, &place->edge1a, &place->edge1b);
+        p.dimPlace = std::move(place);
+    }
+}
+
 void postProcess(Drawing& d, const CanonSettings& s) {
     normalizeArcs(d.prims, s);
     dropDegenerate(d.prims, s);
     removeStackedDuplicates(d.prims, s);
     mergeCollinearLines(d.prims, s);
     mergeCocircularArcs(d.prims, s);
+    if (s.dimensionEdges) findDimensionEdges(d.prims, s);
 
     std::vector<int> stackedIdx, unsupportedIdx;
     int stackedTotal = 0;
