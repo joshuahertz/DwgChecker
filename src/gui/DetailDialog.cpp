@@ -98,7 +98,7 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
     auto* meta = new QTableWidget(tabs);
     buildMetadata(meta);
     tabs->addTab(meta, tr("Metadata"));
-    tabs->addTab(buildPrimitivesPage(tabs), tr("Primitives"));
+    tabs->addTab(buildPrimitivesPage(tabs), tr("Drawing objects"));
     split->addWidget(tabs);
     // Opens as a 50/50 split of drawing and lists, and keeps that ratio when resized.
     // Equal sizes are scaled to the real width once the dialog is laid out.
@@ -237,12 +237,12 @@ void DetailDialog::updateLegend() {
     if (shown == m_raw)
         text = tr("<b>The student's file</b> (%1) as submitted: its own coordinates, scale and layout, everything in it "
                   "including dimensions, each item in its own color and linetype (hover over one for its layer). "
-                  "Clicking an error or a primitive zooms here too. (wheel: zoom, drag: pan)")
+                  "Clicking an error or a drawing object zooms here too. (wheel: zoom, drag: pan)")
                    .arg(QFileInfo(run.path).fileName().toHtmlEscaped());
     else if (shown == m_refView)
         text = tr("<b>The reference solution</b> (%1) as drawn: everything in it, including dimensions and anything in "
                   "Ignored views, each item in its own color and linetype (hover over one for its layer). Clicking an "
-                  "error or a primitive zooms here too. (wheel: zoom, drag: pan)")
+                  "error or a drawing object zooms here too. (wheel: zoom, drag: pan)")
                    .arg(QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName().toHtmlEscaped());
     else
         text = tr("<span style='color:#afafaf'>■</span> reference &nbsp; <span style='color:#1e9632'>■</span> matched "

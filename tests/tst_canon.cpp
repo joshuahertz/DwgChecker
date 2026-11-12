@@ -60,6 +60,7 @@ private slots:
     // Misc
     void nonZeroZWarning();
     void nanCoordinatesLeftOut();
+    void dimensionLooksAsDrawn();
 };
 
 void TestCanon::bulgeArcs() {
@@ -573,6 +574,46 @@ void TestCanon::drawOrderFollowsSortentsTable() {
 
     const Drawing plain = build(false);  // no table: the file order
     for (int k = 0; k < 3; ++k) QCOMPARE(plain.prims[k].drawOrder, k);
+}
+
+// A dimension keeps how AutoCAD draws it, from its *D block, for the as-drawn views (D87):
+// extension lines and dimension lines as lines, filled arrowheads, an angular one's arc.
+void TestCanon::dimensionLooksAsDrawn() {
+    const auto d = loadFixture("dim_family");
+    QVERIFY(d);
+    const Primitive* dim = nullptr;
+    for (const Primitive& p : d->prims)
+        if (p.kind == PrimKind::Dimension && p.dimType == "LINEAR" && dist(p.p0, {0, 0}) < 1e-9 && dist(p.p1, {4, 0}) < 1e-9) dim = &p;
+    QVERIFY(dim);
+    QVERIFY(dim->dimLook);
+    int lines = 0, fills = 0;
+    for (const DimShape& s : dim->dimLook->shapes) {
+        if (s.fill) {
+            ++fills;
+            QCOMPARE(s.pts.size(), size_t(3));  // a triangle: the SOLID's last two corners are one
+        } else {
+            ++lines;
+            QCOMPARE(s.pts.size(), size_t(2));
+        }
+    }
+    QCOMPARE(lines, 4);  // two extension lines, the dimension line in two parts around the text
+    QCOMPARE(fills, 2);  // two arrowheads
+    const DimShape& ext = dim->dimLook->shapes.front();  // the first extension line, below the 0,0 corner
+    QVERIFY(dist(ext.pts[0], {0, -0.0625}) < 1e-9 && dist(ext.pts[1], {0, -0.78}) < 1e-9);
+    // Every dimension in the file has its look; an angular one's includes its arc.
+    const auto ang = loadFixture("dim_angprec");
+    QVERIFY(ang);
+    bool arc = false;
+    for (const Primitive& p : ang->prims) {
+        if (p.kind != PrimKind::Dimension) continue;
+        QVERIFY(p.dimLook && !p.dimLook->shapes.empty());
+        if (isAngularDimType(p.dimType))
+            for (const DimShape& s : p.dimLook->shapes) arc = arc || (!s.fill && s.pts.size() > 2);
+    }
+    QVERIFY(arc);
+    // Shown only as the file is drawn: a moved copy goes without (D88); unmoved, it keeps it.
+    QVERIFY(!transformed(*dim, Transform2D::translation(10, 5)).dimLook);
+    QVERIFY(transformed(*dim, Transform2D::identity()).dimLook);
 }
 
 QTEST_GUILESS_MAIN(TestCanon)

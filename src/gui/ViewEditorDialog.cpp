@@ -32,7 +32,7 @@ ViewEditorDialog::ViewEditorDialog(DrawingPtr ref, const QString& refPath, const
     setWindowTitle(tr("Reference views"));
     resize(1200, 760);
     auto* lay = new QVBoxLayout(this);
-    auto* help = new QLabel(tr("Confirm how the reference splits into views. Drag with the left button to lasso primitives "
+    auto* help = new QLabel(tr("Confirm how the reference splits into views. Drag with the left button to lasso drawing objects "
                                "(Shift adds to the selection), then assign them to a view. Right-drag pans, the wheel zooms. "
                                "Name a view \"Ignored\" to leave it out of grading, e.g. a title block or notes: it is "
                                "still found in each drawing, so a student's copy of it is not counted as extra."),
@@ -57,7 +57,7 @@ ViewEditorDialog::ViewEditorDialog(DrawingPtr ref, const QString& refPath, const
     sl->addLayout(form);
     m_table = new QTableWidget(side);
     m_table->setColumnCount(3);
-    m_table->setHorizontalHeaderLabels({tr("Color"), tr("Name"), tr("Primitives")});
+    m_table->setHorizontalHeaderLabels({tr("Color"), tr("Name"), tr("Drawing objects")});
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_table->verticalHeader()->setVisible(false);
     sl->addWidget(m_table, 1);
@@ -159,7 +159,8 @@ void ViewEditorDialog::refreshTable() {
         m_table->setItem(v, 2, cnt);
         m_target->addItem(m_vs.label(v), v);
     }
-    m_status->setText(tr("%1 primitives selected").arg(m_selected.size()));
+    m_status->setText(m_selected.size() == 1 ? tr("1 drawing object selected")
+                                             : tr("%1 drawing objects selected").arg(m_selected.size()));
 }
 
 void ViewEditorDialog::redraw() {

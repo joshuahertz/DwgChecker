@@ -24,7 +24,9 @@ public:
     enum class Kind { File, Folder };
     enum class State { Waiting, Active, Done };
     // `fileFilter` (File cards): "Drawings (*.dwg *.json)"; `suffixes`: accepted on drop.
-    // `multiple` (File cards): several files may be chosen at once.
+    // `multiple` (File cards): several files may be chosen at once. A Folder card may take a
+    // file instead (a .zip of the folder): `fileFilter` and `suffixes` say which, browseFile()
+    // chooses one, and one dropped is taken as it is.
     PathCard(Kind kind, int step, const QString& caption, const QString& emptyTitle, const QString& fileFilter,
              const QStringList& suffixes, bool multiple = false, QWidget* parent = nullptr);
 
@@ -50,6 +52,7 @@ public:
     void setState(State s);
     State state() const { return m_state; }
     void browse();
+    void browseFile();  // a Folder card's file instead of a folder (`fileFilter`)
 
 signals:
     void pathsChanged();

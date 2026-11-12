@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "Archive.h"
 #include "AutoCadController.h"
 #include "Canonicalizer.h"
 #include "Csv.h"
@@ -121,7 +122,12 @@ void MainWindow::buildUi() {
         if (m_refCard->paths().size() == 1) previewDrawing(m_refCard->path());
     });
     m_dirCard = new PathCard(PathCard::Kind::Folder, 3, tr("Student submissions"), tr("Click to choose the submissions folder"),
-                             QString(), {}, false, left);
+                             tr("Zip files (*.zip)"), {QStringLiteral("zip")}, false, left);
+    auto* zipBtn = new QToolButton(m_dirCard);  // a .zip instead of the folder (D81)
+    zipBtn->setText(tr("Choose a .zip…"));
+    zipBtn->setToolTip(tr("Grade the drawings in a .zip, such as a Canvas bulk download, without unpacking it first"));
+    m_dirCard->addButton(zipBtn);
+    connect(zipBtn, &QToolButton::clicked, m_dirCard, &PathCard::browseFile);
     // Step 2 (built by the settings panel, which keeps it in step with the other settings):
     // the location mode, chosen for every assignment.
     m_settings = new SettingsPanel(m_acad, left);
@@ -532,6 +538,28 @@ DirSummary describeFolder(const QString& dir, const QStringList& refs, const QSt
     return describeFiles(submissionFiles(dir, refs), identityRegex);
 }
 
+// The same for a .zip, from its directory (nothing is unpacked). Zips inside it are not
+// opened, and the card says so.
+DirSummary describeZip(const QString& zip, const QString& identityRegex) {
+    const ZipListing list = listZipSubmissions(zip);
+    if (!list.error.isEmpty()) return {0, QObject::tr("could not read this .zip: %1").arg(list.error), true};
+    DirSummary out = describeFiles(list.names, identityRegex);
+    if (list.names.isEmpty()) out.text = QObject::tr("no drawings in this .zip");
+    if (list.nestedZips > 0)
+        out.text += QObject::tr("; %1 inside it not opened")
+                        .arg(countText(list.nestedZips, QObject::tr(".zip file"), QObject::tr(".zip files")));
+    return out;
+}
+
+// A .zip that names the submissions: a folder that happens to end in ".zip" is a folder.
+bool isZipFile(const QString& path) { return isZipPath(path) && !QFileInfo(path).isDir(); }
+
+// Tells one .zip from another (or a changed one): its path, size and time.
+QString zipKey(const QString& path) {
+    const QFileInfo fi(path);
+    return QStringLiteral("%1|%2|%3").arg(fi.absoluteFilePath()).arg(fi.size()).arg(fi.lastModified().toMSecsSinceEpoch());
+}
+
 // What an exception in a background task says; it is caught there, since QFuture::result()
 // would throw it again in the window's slot and end the app (D76).
 QString exceptionText(std::exception_ptr e) {
@@ -708,14 +736,16 @@ void MainWindow::updateDirInfo() {
     if (dir.isEmpty()) {
         m_dirCount = 0;
         m_dirScanned.clear();
-        m_dirCard->setDetail(tr("The folder with the students' drawings; a Canvas download works as-is (or drop it here)"));
+        m_dirCard->setDetail(tr("The folder with the students' drawings, or a .zip of them; a Canvas download works as-is, "
+                                "zipped or not (or drop it here)"));
         updateSteps();
         return;
     }
-    if (!QFileInfo(dir).isDir()) {
+    const bool zip = isZipFile(dir);
+    if (zip ? !QFileInfo(dir).isFile() : !QFileInfo(dir).isDir()) {
         m_dirCount = 0;
         m_dirScanned.clear();
-        m_dirCard->setDetail(tr("folder not found"), true);
+        m_dirCard->setDetail(zip ? tr("file not found") : tr("folder not found"), true);
         updateSteps();
         return;
     }
@@ -736,12 +766,13 @@ void MainWindow::updateDirInfo() {
         m_dirCard->setDetail(res.text, res.problem);
         updateSteps();
     });
-    w->setFuture(QtConcurrent::run([dir, refs = m_refCard->paths(), regex = currentSettings().identityRegex]() {
+    w->setFuture(QtConcurrent::run([dir, zip, refs = m_refCard->paths(), regex = currentSettings().identityRegex]() {
         try {
-            return describeFolder(dir, refs, regex);
+            return zip ? describeZip(dir, regex) : describeFolder(dir, refs, regex);
         } catch (...) {
             DirSummary r;
-            r.text = QObject::tr("could not read the folder: %1").arg(exceptionText(std::current_exception()));
+            r.text = (zip ? QObject::tr("could not read the .zip: %1") : QObject::tr("could not read the folder: %1"))
+                         .arg(exceptionText(std::current_exception()));
             r.problem = true;
             return r;
         }
@@ -764,7 +795,7 @@ void MainWindow::updateSteps() {
     m_runBtn->setIcon(QIcon(stepBadge(4, ready ? State::Active : State::Waiting, 24, devicePixelRatioF())));
     m_runBtn->setToolTip(ready     ? tr("Step 4: grade the %1 drawings").arg(m_dirCount)
                          : !refDone ? tr("First choose the reference drawing (step 1)")
-                                    : tr("Next choose the submissions folder (step 3)"));
+                                    : tr("Next choose the submissions folder or .zip (step 3)"));
 
     // The guide shown in Results until the first run: done steps checked, the next one in bold.
     const int next = !refDone ? 1 : !dirDone ? 3 : 4;
@@ -779,7 +810,7 @@ void MainWindow::updateSteps() {
                                          "click the first card on the left.")) +
                      line(2, modeDone, tr("Check the location mode (with several drawings, one for each) in the second box. "
                                           "It is remembered for these reference solutions.")) +
-                     line(3, dirDone, tr("Choose the folder of student submissions: click the third card.")) +
+                     line(3, dirDone, tr("Choose the folder of student submissions, or a .zip of them: click the third card.")) +
                      line(4, false, tr("Click <b>Run</b>. The results appear here; click a row for its details.")));
 }
 
@@ -831,22 +862,44 @@ void MainWindow::run() {
     if (refs.isEmpty()) { QMessageBox::warning(this, tr("Run"), tr("Choose the reference drawing first.")); return; }
     for (const QString& r : refs)
         if (!QFileInfo(r).isFile()) { QMessageBox::warning(this, tr("Run"), tr("File not found: %1").arg(r)); return; }
-    if (!QFileInfo(dir).isDir()) { QMessageBox::warning(this, tr("Run"), tr("Choose the folder of submissions first.")); return; }
+    const bool zip = isZipFile(dir) && QFileInfo(dir).isFile();
+    if (!zip && !QFileInfo(dir).isDir()) {
+        QMessageBox::warning(this, tr("Run"), tr("Choose the submissions folder (or a .zip of it) first."));
+        return;
+    }
     AppSettings s = currentSettings();
     s.loader.dwgreadPath = platform::findDwgRead();
     auto loader = std::make_shared<AutoLoader>(s.loader);
     BatchInput in;
     in.refPaths = refs;
-    in.studentPaths = submissionFiles(dir, refs);
     in.templatePaths = s.duplicates.templateFiles;
     in.settings = s;
     // The views confirmed in the editor, for every drawing whose own mode is Orthographic (the
     // run looks them up per drawing), whatever the mode shown for the set (D76).
     in.views = m_confirmedViews;
-    if (in.studentPaths.isEmpty()) { QMessageBox::warning(this, tr("Run"), tr("No .dwg files in %1.").arg(dir)); return; }
-    // dwgread is needed unless every file is a JSON dump: any solution, submission or template (D76).
+    // From a .zip, the run itself reads and unpacks the drawings into a temporary folder, in the
+    // background, since a zip on a streaming drive may have to be fetched first (D81, D88). The
+    // same zip as last time keeps its folder; the run checks its files are all still there.
+    std::shared_ptr<UnpackedZip> zipUsed;
+    if (!zip) {
+        in.studentPaths = submissionFiles(dir, refs);
+        if (in.studentPaths.isEmpty()) { QMessageBox::warning(this, tr("Run"), tr("No .dwg files in %1.").arg(dir)); return; }
+    } else if (m_zip && m_zip->key == zipKey(dir)) {
+        zipUsed = m_zip;
+    } else {
+        zipUsed = std::make_shared<UnpackedZip>();
+        zipUsed->key = zipKey(dir);
+        zipUsed->dir = std::make_unique<QTemporaryDir>(QDir::temp().filePath(QStringLiteral("DwgChecker-XXXXXX")));
+        if (!zipUsed->dir->isValid()) {
+            QMessageBox::warning(this, tr("Run"), tr("Could not make a temporary folder to unpack %1 into: %2")
+                                                      .arg(QFileInfo(dir).fileName(), zipUsed->dir->errorString()));
+            return;
+        }
+    }
+    // dwgread is needed unless every file is a JSON dump: any solution, submission or template
+    // (D76). A zip is taken to hold drawings: its contents are known only once it is read.
     auto isDwg = [](const QString& p) { return !p.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive); };
-    const bool needsDwgRead = std::any_of(refs.cbegin(), refs.cend(), isDwg) ||
+    const bool needsDwgRead = zip || std::any_of(refs.cbegin(), refs.cend(), isDwg) ||
                               std::any_of(in.studentPaths.cbegin(), in.studentPaths.cend(), isDwg) ||
                               std::any_of(in.templatePaths.cbegin(), in.templatePaths.cend(), isDwg);
     QString why;
@@ -854,13 +907,14 @@ void MainWindow::run() {
         QMessageBox::warning(this, tr("Run"), tr("dwgread is not available: %1").arg(why));
         return;
     }
-    {  // the card from the files just found, not a second scan of the folder
+    if (!zip) {  // the card from the files just found, not a second scan of the folder (a zip's card stays as scanned)
         ++m_dirScan;  // a scan still running no longer updates the card
-        const DirSummary found = describeFiles(in.studentPaths, s.identityRegex);
+        const DirSummary summary = describeFiles(in.studentPaths, s.identityRegex);
         m_dirScanned = dir;
-        m_dirCount = found.files;
-        m_dirCard->setDetail(found.text, found.problem);
+        m_dirCount = summary.files;
+        m_dirCard->setDetail(summary.text, summary.problem);
     }
+    const int submissions = zip ? (samePath(dir, m_dirScanned) ? m_dirCount : 0) : static_cast<int>(in.studentPaths.size());
     storeQuizSettings();
     saveState();
 
@@ -871,10 +925,11 @@ void MainWindow::run() {
     m_dirCard->setEnabled(false);
     m_cancelBtn->setVisible(true);
     m_progress->setVisible(true);
-    m_progress->setRange(0, static_cast<int>(in.studentPaths.size() + in.templatePaths.size() + refs.size()));
+    m_progress->setRange(0, static_cast<int>(submissions + in.templatePaths.size() + refs.size()));
     m_progress->setValue(0);
-    m_status->setText(tr("Reading…"));
-    log(tr("run: %1 submissions, mode %2, parser %3").arg(in.studentPaths.size()).arg(modeName(s.compare.mode), loader->parserVersion()));
+    m_status->setText(zip ? tr("Reading %1…").arg(QFileInfo(dir).fileName()) : tr("Reading…"));
+    log(zip ? tr("run: the submissions in %1, mode %2, parser %3").arg(QFileInfo(dir).fileName(), modeName(s.compare.mode), loader->parserVersion())
+            : tr("run: %1 submissions, mode %2, parser %3").arg(submissions).arg(modeName(s.compare.mode), loader->parserVersion()));
 
     QPointer<MainWindow> self(this);
     auto progress = [self](int done, int total, const QString& what) {
@@ -887,9 +942,39 @@ void MainWindow::run() {
             },
             Qt::QueuedConnection);
     };
-    m_watcher.setFuture(QtConcurrent::run([in, loader, progress, this]() {
+    m_zipNext = zipUsed;
+    m_watcher.setFuture(QtConcurrent::run([in, loader, progress, zipUsed, zipPath = dir, this]() mutable {
         try {
-            return runBatch(in, *loader, progress, &m_cancel);
+            QStringList unpackLog;
+            if (zipUsed) {
+                const QString zipName = QFileInfo(zipPath).fileName();
+                // Unpacked for the last run, every file still there: used as it is. Otherwise
+                // (re)unpacked into its folder, the same names for the same zip.
+                const bool ready = !zipUsed->files.isEmpty() && std::all_of(zipUsed->files.cbegin(), zipUsed->files.cend(),
+                                                                            [](const QString& f) { return QFileInfo::exists(f); });
+                if (ready) {
+                    in.studentPaths = zipUsed->files;
+                    unpackLog << QObject::tr("%1: the files unpacked for the last run").arg(zipName);
+                } else {
+                    unpackLog << QObject::tr("unpacking %1 into %2").arg(zipName, QDir::toNativeSeparators(zipUsed->dir->path()));
+                    const ZipUnpacked u = unpackZipSubmissions(zipPath, zipUsed->dir->path(), &m_cancel, [&](int done, int total) {
+                        progress(done, total, QObject::tr("Unpacking %1…").arg(zipName));
+                    });
+                    if (!u.error.isEmpty() || (u.files.isEmpty() && !u.cancelled)) {
+                        BatchOutput out;
+                        out.ok = false;
+                        out.error = QObject::tr("Could not unpack %1: %2")
+                                        .arg(zipName, !u.error.isEmpty() ? u.error : u.problems.value(0, QObject::tr("no drawings in it")));
+                        return out;
+                    }
+                    zipUsed->files = u.cancelled ? QStringList() : u.files;  // a part unpacked is not used again
+                    in.studentPaths = u.files;
+                    for (const QString& p : u.problems) unpackLog << QObject::tr("not unpacked from %1: %2").arg(zipName, p);
+                }
+            }
+            BatchOutput out = runBatch(in, *loader, progress, &m_cancel);
+            out.log = unpackLog + out.log;
+            return out;
         } catch (...) {
             BatchOutput out;
             out.ok = false;
@@ -911,6 +996,9 @@ void MainWindow::onFinished() {
     updateSteps();
     m_progress->setVisible(false);
     BatchOutput out = m_watcher.result();
+    // The unpacked zip this run used: the results shown keep theirs until these replace them.
+    std::shared_ptr<UnpackedZip> zipUsed = std::move(m_zipNext);
+    m_zipNext.reset();
     if (!out.ok) {
         m_status->setText(tr("Failed"));
         log(out.error);
@@ -934,6 +1022,7 @@ void MainWindow::onFinished() {
     m_batch = std::make_shared<const BatchOutput>(std::move(out));
     m_model->setBatch(m_batch);
     m_dups->setBatch(m_batch);
+    m_zip = std::move(zipUsed);  // none for a folder: the last zip's files go
     m_resultsStack->setCurrentIndex(1);
     m_table->sortByColumn(ColName, Qt::AscendingOrder);  // every new batch starts A to Z by student
     m_table->expandAll();

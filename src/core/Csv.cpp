@@ -34,10 +34,12 @@ CopyFlag copyFlagFor(const BatchOutput& b, int si) {
     // Evidence from the student's own files (several account names, D77): it flags the file when
     // no pair has stronger evidence.
     const Signal* own = nullptr;
+    double ownScore = 0;
     if (si >= 0 && si < static_cast<int>(b.dups.fileSignals.size()))
         for (const Signal& s : b.dups.fileSignals[si]) {
             tips << QStringLiteral("[%1] %2").arg(strengthName(s.strength), s.detail);
             if (!own || s.strength > own->strength) own = &s;
+            ownScore += s.weight;
         }
     if (si >= 0 && si < static_cast<int>(b.dups.fileNotes.size()))
         for (const QString& n : b.dups.fileNotes[si]) tips << QStringLiteral("[note] ") + n;
@@ -46,9 +48,11 @@ CopyFlag copyFlagFor(const BatchOutput& b, int si) {
         f.level = own->strength >= Strength::Strong ? Strength::Strong : Strength::Weak;
         f.text = (f.level == Strength::Strong ? QStringLiteral("⚠ ") : QString()) + own->label;
         f.pairIndex = -1;
+        f.score = std::min(100.0, ownScore);  // as its row in the Possible cheating table
         return f;
     }
     if (!best) return f;
+    f.score = best->score;
     f.level = best->level >= Strength::Strong ? Strength::Strong : Strength::Weak;
     // Partners sharing the same strongest signal.
     const QString label = best->strongestLabel();
@@ -155,27 +159,34 @@ QString resultsCsv(const BatchOutput& b) {
     return out;
 }
 
+// A row per group of students linked by evidence, as in the Possible cheating tab but with
+// every student and file, and informational groups too; one item per line in a cell (D82).
 QString duplicatesCsv(const BatchOutput& b) {
     QString out = header(b);
-    out += QStringLiteral("File A,File B,Level,Score,Signals\n");
-    for (const auto& p : b.dups.pairs) {
-        QStringList sig;
-        for (const auto& s : p.evidence) sig << QStringLiteral("%1 (%2): %3").arg(s.label, strengthName(s.strength), s.detail);
-        out += csvEscape(b.dupEntries[p.a].display) + ',' + csvEscape(b.dupEntries[p.b].display) + ',' + strengthName(p.level) + ',' +
-               QString::number(p.score, 'f', 0) + ',' + csvEscape(sig.join(QStringLiteral("; "))) + '\n';
+    out += QStringLiteral("Students involved,Files involved,Level,Score,Signals,Details\n");
+    const auto& E = b.dupEntries;
+    for (const EvidenceGroup& g : groupEvidence(b.dups, E, true)) {
+        QStringList students = g.students, files, lines, details;
+        if (!g.with.isEmpty()) students << QStringLiteral("with ") + g.with;
+        for (const int i : g.files) files << evidenceFileName(E[i]);
+        for (const auto& l : g.lines) lines << l.text;
+        auto detail = [&](const QString& where, const Signal& s) {
+            details << QStringLiteral("%1: %2 (%3, weight %4): %5")
+                           .arg(where, s.shown(),
+                                strengthName(s.strength), QString::number(s.weight, 'f', 0), s.detail);
+        };
+        for (const int k : g.pairs) {
+            const PairResult& p = b.dups.pairs[k];
+            const QString where = QStringLiteral("%1 / %2").arg(evidenceFileName(E[p.a]), evidenceFileName(E[p.b]));
+            for (const Signal& s : p.evidence) detail(where, s);
+        }
+        for (const Signal& s : g.ownSignals) detail(QStringLiteral("own files"), s);
+        out += csvEscape(students.join('\n')) + ',' + csvEscape(files.join('\n')) + ',' + strengthName(g.level) + ',' +
+               QString::number(g.score, 'f', 0) + ',' + csvEscape(lines.join('\n')) + ',' + csvEscape(details.join('\n')) + '\n';
     }
-    if (!b.dups.notes.isEmpty()) {  // probable templates, several account names in one student's files
+    if (!b.dups.notes.isEmpty()) {  // probable templates, account names shared by much of the class
         out += QStringLiteral("\nNote\n");
         for (const QString& n : b.dups.notes) out += csvEscape(n) + '\n';
-    }
-    if (!b.dups.clusters.empty()) {
-        out += QStringLiteral("\nCluster,Members\n");
-        int k = 1;
-        for (const auto& c : b.dups.clusters) {
-            QStringList names;
-            for (int i : c) names << b.dupEntries[i].display;
-            out += QString::number(k++) + ',' + csvEscape(names.join(QStringLiteral("; "))) + '\n';
-        }
     }
     return out;
 }

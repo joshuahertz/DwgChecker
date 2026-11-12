@@ -12,6 +12,8 @@ struct CopyFlag {
     QString text;                     // "⚠ same fingerprint as smithjane"
     QString tooltip;                  // every signal that fired
     int pairIndex = -1;               // strongest pair in BatchOutput::dups.pairs
+    // For sorting: the strongest pair's score, or the file's own signals' (an old file, D88).
+    double score = 0;
     QString levelText() const;        // none / weak / strong
 };
 

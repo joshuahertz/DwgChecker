@@ -1,18 +1,22 @@
 #pragma once
-// Duplicates tab: flagged pairs with the per-pair signal breakdown, and clusters.
+// Possible cheating tab: a row per group of students linked by evidence (D82), across the whole
+// tab; a click on a row opens a window with every link between them and its signals (D84).
 // Evidence only; nothing is labelled as cheating.
 
 #include "Batch.h"
+#include "Duplicates.h"
 
+#include <QHash>
+#include <QPointer>
 #include <QWidget>
 
 #include <memory>
+#include <vector>
 
 class QCheckBox;
+class QDialog;
 class QLabel;
-class QListWidget;
 class QTableWidget;
-class QTextBrowser;
 
 namespace dcgui {
 
@@ -21,19 +25,19 @@ class DuplicatesTab : public QWidget {
 public:
     explicit DuplicatesTab(QWidget* parent = nullptr);
     void setBatch(std::shared_ptr<const dc::BatchOutput> b);
-    void showPair(int pairIndex);
 
 private:
     void rebuild();
-    void showDetails(int row);
+    void openDetails(int row);  // one window per row; a second click brings it to the front
+    QString detailsHtml(const dc::EvidenceGroup& g) const;
+    void closeDetails();
 
     std::shared_ptr<const dc::BatchOutput> m_batch;
-    QTableWidget* m_pairs;
-    QTextBrowser* m_details;
-    QListWidget* m_clusters;
+    std::vector<dc::EvidenceGroup> m_groups;  // one per row
+    QHash<int, QPointer<QDialog>> m_open;     // by row
+    QTableWidget* m_table;
     QLabel* m_notes;
     QCheckBox* m_showInfo;
-    std::vector<int> m_rowToPair;
 };
 
 }  // namespace dcgui

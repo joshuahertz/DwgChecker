@@ -1,6 +1,8 @@
 // Geometry, matching, alignment, identity, formatting, settings and CSV.
 
 #include "Aligner.h"
+#include "Archive.h"
+#include "Batch.h"
 #include "Color.h"
 #include "Comparator.h"
 #include "Csv.h"
@@ -10,6 +12,7 @@
 #include "StudentIdentity.h"
 #include "TestUtil.h"
 
+#include <QTemporaryDir>
 #include <QtTest>
 
 using namespace dc;
@@ -65,6 +68,9 @@ private slots:
     void alignMirror();
     void identityCanvas();
     void identityFallback();
+    void identityAccentedNames();
+    void zipSubmissions();
+    void zipThatCannotBeRead();
     void formatting();
     void settingsRoundTrip();
     void csvEscaping();
@@ -208,6 +214,114 @@ void TestMisc::identityFallback() {
     const StudentIdentity a = p.parse("C:/subs/My Drawing.dwg");
     QVERIFY(!a.parsed);
     QCOMPARE(a.name, QStringLiteral("My Drawing"));
+}
+
+// A Canvas name with accented letters is still a name, and one student's files group
+// together whether an accent is one character or a letter plus a mark (D80).
+void TestMisc::identityAccentedNames() {
+    const IdentityParser p(AppSettings::defaultIdentityRegex());
+    const StudentIdentity a = p.parse(QStringLiteral(u"C:/subs/garc\u00EDajos\u00E9_123_456_part1.dwg"));
+    const StudentIdentity b = p.parse(QStringLiteral(u"garci\u0301ajose\u0301_LATE_123_457_part2.dwg"));
+    QVERIFY(a.parsed && b.parsed);
+    QCOMPARE(a.name, QStringLiteral(u"garc\u00EDajos\u00E9"));
+    QCOMPARE(b.name, a.name);
+    QCOMPARE(a.uid, QStringLiteral("123"));
+    QCOMPARE(studentKey(a), studentKey(b));
+    QCOMPARE(p.parse(QStringLiteral(u"\u00F8stergaardm\u00E5ns_9_10_x.dwg")).name, QStringLiteral(u"\u00F8stergaardm\u00E5ns"));
+    // Another student's files stay apart.
+    QVERIFY(studentKey(p.parse(QStringLiteral(u"garc\u00EDajos\u00E9_124_458_part1.dwg"))) != studentKey(a));
+
+    // Settings saved with the old a-z default get the new one; a pattern of the user's own stays.
+    const QString oldDefault = QStringLiteral(R"(^(?<name>[a-z]+)_(?:LATE_)?(?<uid>\d+)_(?<sid>\d+)_(?<orig>.+)$)");
+    AppSettings s;
+    s.identityRegex = oldDefault;
+    QCOMPARE(AppSettings::fromJson(s.toJson()).identityRegex, AppSettings::defaultIdentityRegex());
+    s.identityRegex = QStringLiteral("^(?<name>[a-z]+)-");
+    QCOMPARE(AppSettings::fromJson(s.toJson()).identityRegex, s.identityRegex);
+}
+
+// A zip of submissions written by Python's zip writer (fixtures/make_submissions_zip.py):
+// drawings from any folder, names in UTF-8 or in code page 437, Mac clutter and other files
+// left out, nothing written outside the folder, and a damaged file reported (D81).
+void TestMisc::zipSubmissions() {
+    const QString zip = QStringLiteral(DWGCHECK_FIXTURES "/submissions.zip");
+    const ZipListing list = listZipSubmissions(zip);
+    QVERIFY2(list.error.isEmpty(), qPrintable(list.error));
+    QCOMPARE(list.nestedZips, 1);
+    const QStringList names = {QStringLiteral("../evil_1_2_x.dwg"),
+                               QStringLiteral("broken_5_6_b.dwg"),
+                               QStringLiteral("dup/a_1_2_x.dwg"),
+                               QStringLiteral("dup/A_1_2_X.dwg"),
+                               QStringLiteral(u"garc\u00EDajos\u00E9_123_456_part1.dwg"),
+                               QStringLiteral(u"mu\u00F1ozcarlos_7_8_a.dwg"),
+                               QStringLiteral("smithjane_12345_67890_lab3.dwg"),
+                               QStringLiteral("sub/doejohn_111_222_x.DWG")};
+    QCOMPARE(list.names, names);
+
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString dest = tmp.filePath(QStringLiteral("unpacked"));
+    int lastDone = -1, lastTotal = -1;
+    const ZipUnpacked u = unpackZipSubmissions(zip, dest, nullptr, [&](int done, int total) {
+        lastDone = done;
+        lastTotal = total;
+    });
+    QVERIFY2(u.error.isEmpty(), qPrintable(u.error));
+    QVERIFY(!u.cancelled);
+    QCOMPARE(lastDone, 8);
+    QCOMPARE(lastTotal, 8);
+    QCOMPARE(u.problems.size(), 1);  // the damaged one
+    QVERIFY2(u.problems.front().startsWith(QStringLiteral("broken_5_6_b.dwg: ")) && u.problems.front().contains(QStringLiteral("checksum")),
+             qPrintable(u.problems.front()));
+    QCOMPARE(u.files.size(), 7);
+    QCOMPARE(u.files.front(), dest + QStringLiteral("/evil_1_2_x.dwg"));
+    auto body = [](const char* tag) { return (QByteArray("AC1032 ") + tag + ' ').repeated(20); };
+    auto contents = [&](const QString& rel) {
+        QFile f(dest + QLatin1Char('/') + rel);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray("(missing)");
+    };
+    QCOMPARE(contents(QStringLiteral("smithjane_12345_67890_lab3.dwg")), body("smith"));
+    QCOMPARE(contents(QStringLiteral(u"garc\u00EDajos\u00E9_123_456_part1.dwg")), body("garcia"));
+    QCOMPARE(contents(QStringLiteral(u"mu\u00F1ozcarlos_7_8_a.dwg")), body("munoz"));  // stored, not packed
+    QCOMPARE(contents(QStringLiteral("sub/doejohn_111_222_x.DWG")), body("doe"));
+    QCOMPARE(contents(QStringLiteral("evil_1_2_x.dwg")), body("evil"));  // its "../" dropped
+    QVERIFY(!QFileInfo::exists(tmp.filePath(QStringLiteral("evil_1_2_x.dwg"))));
+    QCOMPARE(contents(QStringLiteral("dup/a_1_2_x.dwg")), body("lower"));
+    QCOMPARE(contents(QStringLiteral("dup/A_1_2_X (2).dwg")), body("upper"));  // not written over the first
+    QVERIFY(!QFileInfo::exists(dest + QStringLiteral("/__MACOSX")));
+    QVERIFY(!QFileInfo::exists(dest + QStringLiteral("/readme.txt")));
+    QVERIFY(!QFileInfo::exists(dest + QStringLiteral("/broken_5_6_b.dwg")));
+    // The unpacked names read as the students' (accents and all).
+    const IdentityParser p(AppSettings::defaultIdentityRegex());
+    QCOMPARE(p.parse(u.files.at(3)).name, QStringLiteral(u"garc\u00EDajos\u00E9"));
+    QCOMPARE(p.parse(u.files.at(4)).name, QStringLiteral(u"mu\u00F1ozcarlos"));
+
+    // Cancelled before it starts: nothing written.
+    const std::atomic_bool stop{true};
+    const ZipUnpacked none = unpackZipSubmissions(zip, tmp.filePath(QStringLiteral("cancelled")), &stop);
+    QVERIFY(none.cancelled && none.files.isEmpty());
+}
+
+void TestMisc::zipThatCannotBeRead() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    auto write = [&](const QString& name, const QByteArray& bytes) {
+        const QString path = tmp.filePath(name);
+        QFile f(path);
+        if (f.open(QIODevice::WriteOnly)) f.write(bytes);
+        return path;
+    };
+    QFile fixture(QStringLiteral(DWGCHECK_FIXTURES "/submissions.zip"));
+    QVERIFY(fixture.open(QIODevice::ReadOnly));
+    const QByteArray zip = fixture.readAll();
+    const ZipListing text = listZipSubmissions(write(QStringLiteral("text.zip"), "not a zip at all"));
+    QVERIFY(text.error.contains(QStringLiteral("not a zip")));
+    QVERIFY(text.names.isEmpty());
+    QVERIFY(!listZipSubmissions(write(QStringLiteral("cut.zip"), zip.left(1000))).error.isEmpty());    // end missing
+    QVERIFY(!listZipSubmissions(write(QStringLiteral("shifted.zip"), zip.mid(100))).error.isEmpty());  // start missing
+    QVERIFY(!listZipSubmissions(tmp.filePath(QStringLiteral("absent.zip"))).error.isEmpty());
+    QVERIFY(!unpackZipSubmissions(tmp.filePath(QStringLiteral("text.zip")), tmp.filePath(QStringLiteral("out"))).error.isEmpty());
+    QVERIFY(isZipPath(QStringLiteral("C:/x/Submissions.ZIP")) && !isZipPath(QStringLiteral("C:/x/zip")));
 }
 
 void TestMisc::formatting() {

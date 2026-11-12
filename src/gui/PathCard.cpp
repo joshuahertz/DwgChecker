@@ -256,7 +256,8 @@ void PathCard::refresh() {
     if (m_paths.isEmpty()) {
         m_title->setFullText(m_emptyTitle);
         m_title->setForegroundRole(QPalette::Link);  // reads as something to click
-        setToolTip(m_kind == Kind::Folder ? tr("Click to choose the folder, or drop it here")
+        setToolTip(m_kind == Kind::Folder ? (m_suffixes.isEmpty() ? tr("Click to choose the folder, or drop it here")
+                                                                  : tr("Click to choose the folder, or drop it (or a .zip of it) here"))
                    : m_multiple           ? tr("Click to choose the drawing (or several, for a multi-drawing assignment), or drop them here")
                                           : tr("Click to choose the drawing, or drop it here"));
     } else {
@@ -301,7 +302,7 @@ void PathCard::rebuildMenu() {
 void PathCard::browse() {
     QString start = path();
     if (start.isEmpty() && !m_recent.isEmpty()) start = decode(m_recent.front()).value(0);
-    if (m_kind == Kind::File && !start.isEmpty()) start = QFileInfo(start).absolutePath();
+    if ((m_kind == Kind::File || QFileInfo(start).isFile()) && !start.isEmpty()) start = QFileInfo(start).absolutePath();
     if (m_kind == Kind::Folder) {
         const QString p = QFileDialog::getExistingDirectory(this, m_caption, start);
         if (!p.isEmpty()) setPath(p);
@@ -333,17 +334,25 @@ void PathCard::mouseReleaseEvent(QMouseEvent* e) {
     QFrame::mouseReleaseEvent(e);
 }
 
+void PathCard::browseFile() {
+    QString start = path();
+    if (start.isEmpty() && !m_recent.isEmpty()) start = decode(m_recent.front()).value(0);
+    if (QFileInfo(start).isFile()) start = QFileInfo(start).absolutePath();
+    const QString p = QFileDialog::getOpenFileName(this, m_caption, start, m_filter);
+    if (!p.isEmpty()) setPath(p);
+}
+
 QString PathCard::acceptedPath(const QString& local) const {
     const QFileInfo fi(local);
+    const bool suffixOk = std::any_of(m_suffixes.cbegin(), m_suffixes.cend(),
+                                      [&](const QString& s) { return fi.suffix().compare(s, Qt::CaseInsensitive) == 0; });
     if (m_kind == Kind::Folder) {
         if (fi.isDir()) return fi.absoluteFilePath();
-        if (fi.isFile()) return fi.absolutePath();  // a dropped submission: use its folder
+        if (fi.isFile()) return suffixOk ? fi.absoluteFilePath()  // a .zip of the folder
+                                         : fi.absolutePath();     // a dropped submission: use its folder
         return {};
     }
-    if (!fi.isFile()) return {};
-    for (const QString& s : m_suffixes)
-        if (fi.suffix().compare(s, Qt::CaseInsensitive) == 0) return fi.absoluteFilePath();
-    return {};
+    return fi.isFile() && suffixOk ? fi.absoluteFilePath() : QString();
 }
 
 QStringList PathCard::acceptedPaths(const QList<QUrl>& urls) const {

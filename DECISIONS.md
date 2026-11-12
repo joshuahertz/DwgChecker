@@ -1335,6 +1335,187 @@ other eight are fixed:
 Tests: tst_canon `nearColorsMergeWithinTolerance` (the chain), tst_batch
 (`dimensionEdges` per drawing kind).
 
+**D80. Accented student names group together (user report, 2026-11-11).** One
+student's files were each listed as a different student with one file. The
+default name pattern took the name as `[a-z]+`, and Canvas keeps a name's
+accented letters (garcíajosé), so the file names did not match it and each file
+fell back to its own name. The name is now any letters, marks and digits
+(`[\p{L}\p{M}\p{N}]+`), and the file name is put in composed form (NFC) before
+matching, so an accent stored as a letter plus a mark (as macOS stores names)
+gives the same name. Saved settings hold the old default unless the user changed
+it, so that exact pattern is read as the new default; a pattern of the user's own
+is kept. Tests: tst_misc `identityAccentedNames`.
+
+**D81. Submissions from a .zip (user request, 2026-11-12).** The submissions card
+takes a .zip as well as a folder: its "Choose a .zip…" button, or a zip dropped
+on it (other dropped files still mean their folder). The card counts the drawings
+from the zip's directory without unpacking it. Run unpacks them in the background
+into a temporary folder (`QTemporaryDir`, "DwgChecker-XXXXXX" in the system's
+temp folder) and grades those files, so everything after that (results, Open in
+AutoCAD, possible cheating) works as for a folder. The folder is kept while its
+results are shown, reused when the same zip (same path, size and time) is run
+again, and deleted when another run's results replace them or the app closes; a
+zip unpacked only in part (cancelled) is not reused.
+- **Reader:** `Archive.h/.cpp` in the core, with the zlib in Qt Core
+  (`Qt6::ZlibPrivate` gives its headers), so no new library: stored and Deflate
+  files, Zip64, and the checksum checked for every file. Encrypted files and
+  other compression methods are reported, not unpacked. The end record must be
+  followed by exactly its comment, so a zip stored inside the zip is not taken
+  for the end of it.
+- **What it takes:** as in a folder, the .dwg files, else the .json dumps, but
+  from any folder in the zip, kept in the same folders (a zip made from a folder
+  has one at the top). `__MACOSX/` and `._name` files (Mac resource forks) are
+  skipped. Zips inside the zip are not opened (the card says how many); opening
+  a student's own zip was offered and declined as not needed (user decision).
+- **Names:** UTF-8 when the zip says so or when the name is valid UTF-8 (many
+  tools write UTF-8 without saying so), else code page 437, the format's own (old
+  Windows zips). Backslashes count as folder separators.
+- **Safe paths:** ".." parts and leading separators are dropped and characters
+  Windows refuses become "_" (reserved names like CON get a "_" in front), so no
+  file lands outside the temporary folder. A second file of the same name
+  (ignoring case) gets " (2)".
+- A file that cannot be unpacked is left out and listed in the log; when none can
+  be, or the zip cannot be read, Run says why.
+Tests: tst_misc `zipSubmissions` on `fixtures/submissions.zip`, written by
+Python's own zip writer (`fixtures/make_submissions_zip.py`), with UTF-8 and code
+page 437 names, a subfolder, Mac clutter, "../", a damaged file, two names that
+  differ only in case and a zip inside; `zipThatCannotBeRead` (text, a cut-off zip,
+a zip missing its start, no file).
+
+**D82. Possible cheating as groups of students; "drawing objects" (user request,
+2026-11-12).** The tab listed every pair of files, so two students who copied a
+three-drawing assignment filled many rows (each part, and every account-name pair
+across parts), with the clusters in a list below. Now a row is a group of
+students (`groupEvidence`, in the core, shared with the export): **Students
+involved**, **Files involved** (one per line, six, then "…and N more students /
+files", the whole list on hover), **Level**, **Score**, **Signals** (one per
+line). Clicking a row shows each link in it, file to file, with every signal's
+weight and details.
+- **Who is grouped:** all the pairs between the same two students are one link,
+  at its strongest level. Links are taken strongest level first: a link joins its
+  students into a group of that level, and a weaker link between students
+  already in one group adds its evidence there. A weaker link to anyone else is
+  a row of its own at its level, so a weak link never puts a third student in a
+  strong (red) group. A student linked to a solution drawing or template is a
+  row of their own ("with the solution drawing"): two students who each copied
+  the handout are not linked by it. A student whose own files carry different
+  account names (D77) is a row of one, and no longer a note too.
+- **Level and score:** the group's level is the level it was made at; its score,
+  its strongest pair's (capped at 100, as before).
+- **Signals** say what they are about, in parentheses (`Signal::value`):
+  the shared account name, the creation time (UTC when TDUCREATE is there), the
+  drawing ("Drawing 2", as in the results) for a byte-identical file, the same
+  saved version or fingerprint, "Drawing 2: 45 / 50" for bit-identical drawing
+  objects and "Drawing 2: 3 / 4" for bit-identical views, the layer names, the
+  original file name. Each kind and value is listed once per group; in a group of
+  more than two, a signal that only some share names them.
+- **Export possible cheating** writes the same rows, every student and file, the
+  informational groups too, and each signal's details in a last column; the
+  probable-template notes follow.
+- **"Primitive" is "drawing object"** wherever the app shows it: the detail
+  view's tab and hint, the Edit views dialog, the bit-identical signal, the log,
+  the README. The code keeps its own names (`Primitive`), and this log keeps the
+  word in entries written before.
+Tests: tst_duplicates `groupsOfStudents`, `weakerLinkGetsItsOwnRow`,
+`groupNamesWhoSharesASignal`, `studentWithTheSolutionDrawing`, the one-student
+row in `severalNamesInOneStudentsFiles`, and the creation time's value in
+`corpusSignals`.
+
+**D83. "Same original file name" matches case (user decision, 2026-11-12).** The
+name is the one the student uploaded, the last part of the Canvas file name, which
+keeps its capitals (a DWG does not record its own file name). Copying, emailing or
+zipping a file keeps its name exactly, so names that differ only in case, such as
+"Lab3.dwg" and "lab3.dwg", were typed separately and no longer match. A name
+counts as shared by much of the class only by its exact spelling too. The signal
+stays informational (weight 5). Tests: tst_duplicates `originalNameMatchesCase`.
+
+**D84. Possible cheating table across the tab, details in a window (user request,
+2026-11-12).** The table takes the whole tab and scrolls by pixel (its rows are
+several lines tall, so a row at a time jumped). The details pane beside it is
+gone: a click on a row (or Enter) opens a window with that group's links and
+signals, one window per row, brought to the front when clicked again and closed
+when the table is rebuilt (a new run, or the informational checkbox). A line
+above the table says "See full details by clicking a row." **Files involved**
+names each file as the results do (`evidenceFileLabel`): "smithjane: Drawing 2",
+"smithjane: extra file", "Solution: Drawing 1", "Template: name.dwg", rather than
+the whole Canvas file name, which is on hover, in the window, and in the export.
+Tests: tst_duplicates `studentWithTheSolutionDrawing` (the labels).
+
+**D85. The same creation time needs the same drawing or an account name (user
+rule, 2026-11-12).** "Same creation time" (strong, 60) is now found only for two
+files of the same solution drawing (the same "Drawing N"; a student's file and
+that drawing's solution count too), or for files that share an account name by
+the D77 rule (either field of one in either field of the other, not a name common
+in the class). Two students' files for different drawings can be started at the
+same second in a lab without any copying. Extra files, matched to no drawing,
+need the account name. The account names are now found before the creation time
+for this; the signals and their order are otherwise unchanged. Tests:
+tst_duplicates `creationTimeNeedsSameDrawingOrName`.
+
+**D86. An old file (user request, 2026-11-12).** A student's file created more
+than 2 months before the class's work suggests a file from an earlier semester.
+- **"The class's work"** is the median of the students' files' last-save times
+  (TDUUPDATE, else TDUPDATE), not today, so grading the files again months later
+  flags nothing new, and a file handed in unchanged since an earlier semester is
+  still found. "2 months" is calendar months (`QDateTime::addMonths`), fixed in
+  the code (`kOldFileMonths`).
+- **Not counted:** a creation time a template has, one shared by much of the
+  class (a starting file handed out, by the same 30 % rule), or a solution
+  drawing's (the pair signal "same creation time" says that, strongly).
+- **Strong (red), weight 60** (user decision: as strong as a shared account
+  name; first written as medium, 30), a signal on the file itself (`fileSignals`,
+  id "oldfile"), like different account names (D77). In the Possible cheating table it is the student's
+  own row: "old file, created more than 2 months before the class's work
+  (2025-03-14)". An own row lists each such file's date once.
+Tests: tst_duplicates `oldFileFromAnEarlierSemester` (100 days old: flagged; 30
+days: not; a template's creation time, and one most of the class shares: not).
+
+**D87. Dimensions drawn as AutoCAD draws them in the as-drawn views (user
+request, 2026-11-12).** The views showed a dimension as its value only (D71). The
+views that show a file as drawn, the detail view's **Student's file** and
+**Reference solution** tabs and the solution preview, now also draw its
+extension lines, dimension lines (and arcs, for angular and arc-length
+dimensions) and filled arrowheads. They come from the block AutoCAD keeps for
+each dimension (`*D`, the dimension's `block`; FIELDMAP.md), read with the
+dimension (`Primitive::dimLook`): LINE, ARC, CIRCLE, SOLID (corners 1, 2, 4, 3),
+LWPOLYLINE, and INSERTs of arrowhead blocks, each in its effective color (ByBlock
+is the dimension's). The block's MTEXT is left out (the label shows the value as
+the drawing formats it, D71), and so are its POINTs (definition points). Drawn
+under the label, at the dimension's place in the draw order. Display only: the
+grading never looks at it. The Overlay and the view editor still show the value
+only. A dimension whose block is missing shows its value alone, as before.
+Tests: tst_canon `dimensionLooksAsDrawn` (a linear dimension's four lines and two
+arrowheads, an angular one's arc; D88: a moved copy goes without).
+
+**D88. Fixes from a code review of D80–D87 (user request, 2026-11-12).** Eight
+findings. Two are left as they are, by the user's decision: the red old-file
+alert can fire for a last-year starter file that fewer than 30 % of the class
+used (judged too rare), and a dimension's lines ignore its block's
+`ins_scale` / `ins_rotation` (always identity in the files seen). Six are fixed:
+- **Run reads a zip in the background:** listing its drawings and checking the
+  files of the last unpack were on the window's thread, which froze while a
+  streaming drive fetched the zip (the folder scan left that thread in D76). Run
+  now only decides which unpack folder to use; the run checks and unpacks there.
+  A zip is taken to hold drawings, so dwgread is checked first. A zip with no
+  drawings is reported by the run ("no drawings in it").
+- **Unpacking checks the drive first** (`QStorageInfo`): when the drawings' sizes
+  add up to more than the temporary folder's drive has free, nothing is written
+  and Run says how much is needed. A file that fails to write is removed.
+- **A red flag from a file's own signals sorts by its weight:** `CopyFlag::score`
+  is the strongest pair's score or the file's own signals' (capped at 100), so an
+  old file (60) sorts among the red flags by score rather than as 0.
+- **A moved dimension drops its look** (`transformed()`): only the as-drawn views
+  draw it, unmoved, so copying and moving it for every transformed student
+  drawing was wasted work.
+- **One place chooses a file's creation and save times** (`creationTime`,
+  `saveTime`): the same-creation-time signal, the old-file signal and the
+  class-wide counts can no longer disagree.
+- **One place writes a signal's text** (`signalText`, `Signal::shown()`): the
+  table, the details window and the export.
+- **A row's files are in a fixed order** (found by the tests): they came from a
+  QSet, whose order Qt randomizes per run, and files with the same student and
+  file name were left in that order. They now fall back to the run's order.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

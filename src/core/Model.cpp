@@ -147,6 +147,9 @@ Primitive transformed(const Primitive& p, const Transform2D& t) {
         for (Vec2* e : {&q->edge0a, &q->edge0b, &q->edge1a, &q->edge1b}) *e = t.apply(*e);
         r.dimPlace = std::move(q);
     }
+    // How a dimension is drawn is shown only where a file is shown as drawn, never moved: a
+    // moved copy goes without, rather than copying and moving it for nothing (D88).
+    r.dimLook.reset();
     // Uniform scale of a similarity transform (exactly 1 for rigid ones).
     double sc = std::sqrt(std::fabs(t.det()));
     if (std::fabs(sc - 1.0) < 1e-12) sc = 1.0;

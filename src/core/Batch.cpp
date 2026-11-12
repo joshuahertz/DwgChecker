@@ -214,7 +214,7 @@ BatchOutput runBatch(const BatchInput& in, const IDrawingLoader& loader, const P
         }
         out.refPaths << rp;
         out.refs.push_back(ref);
-        out.log << QStringLiteral("reference: %1 (sha256 %2, %3 primitives)")
+        out.log << QStringLiteral("reference: %1 (sha256 %2, %3 drawing objects)")
                        .arg(rp, QString(ref->meta.sha256.left(16))).arg(ref->prims.size());
         for (const auto& w : ref->warnings)
             if (w.kind == WarnKind::HiddenLayer) out.log << QStringLiteral("%1: %2").arg(QFileInfo(rp).fileName(), w.text);

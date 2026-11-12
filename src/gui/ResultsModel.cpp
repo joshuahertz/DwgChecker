@@ -63,8 +63,8 @@ QColor studentRowColor() {
 
 // The flag column's sort key: the level, then the pair's score. The score is at most 100
 // (Duplicates caps it), so the levels never mix.
-int flagSortKey(const BatchOutput& b, const CopyFlag& f) {
-    const double score = f.pairIndex >= 0 ? std::clamp(b.dups.pairs[f.pairIndex].score, 0.0, 100.0) : 0.0;
+int flagSortKey(const CopyFlag& f) {
+    const double score = std::clamp(f.score, 0.0, 100.0);  // a pair's, or the file's own signals' (D88)
     return static_cast<int>(f.level) * 1000 + static_cast<int>(score);
 }
 
@@ -90,7 +90,7 @@ void ResultsModel::setBatch(std::shared_ptr<const BatchOutput> b) {
             double bestScore = -1;
             for (int f : g.files) {
                 const CopyFlag& cf = m_flags[f];
-                const double score = cf.pairIndex >= 0 ? m_batch->dups.pairs[cf.pairIndex].score : 0;
+                const double score = cf.score;
                 if (cf.level > best.level || (cf.level == best.level && score > bestScore)) {
                     best = cf;
                     bestScore = score;
@@ -204,7 +204,7 @@ QVariant ResultsModel::groupData(int gi, int column, int role) const {
         switch (column) {
         case ColName:
         case ColAcad: return g.identity.name.toLower() + g.key.toLower();
-        case ColFlag: return flagSortKey(*m_batch, f);
+        case ColFlag: return flagSortKey(f);
         case ColCorrectness: return g.correctness;
         case ColErrors: {
             int n = 0;
@@ -265,7 +265,7 @@ QVariant ResultsModel::fileData(int fi, int column, int role, bool subrow) const
             if (subrow) return r.matched() ? r.refIndex : 1000 + fi;  // subrows stay in solution-drawing order
             return r.identity.name.toLower() + r.identity.fileName.toLower();
         case ColAcad: return r.identity.fileName.toLower();
-        case ColFlag: return flagSortKey(*m_batch, f);
+        case ColFlag: return flagSortKey(f);
         case ColCorrectness: return r.ok() && r.matched() ? r.result.correctness : -1.0;
         case ColErrors: return errorCount(r);
         }

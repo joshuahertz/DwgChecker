@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(DwgChecker VERSION 0.1.0 DESCRIPTION "Grades CAD assignments against a reference DWG" LANGUAGES CXX)
+project(DwgChecker VERSION 0.2.0 DESCRIPTION "Grades CAD assignments against a reference DWG" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ option(DWGCHECK_BUILD_TESTS "Build the unit tests"        ON)
 set(DWGCHECK_DWGREAD "" CACHE FILEPATH
     "dwgread executable to bundle next to the app (output of scripts/build_dwgread.sh)")
 
-set(_qt_components Core)
+set(_qt_components Core ZlibPrivate)  # ZlibPrivate: zlib headers for reading zips (D81)
 if(DWGCHECK_BUILD_GUI)
   list(APPEND _qt_components Gui Widgets Concurrent)
 endif()

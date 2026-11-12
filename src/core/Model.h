@@ -79,6 +79,19 @@ struct DimPlace {
     bool edge0Endless = false, edge1Endless = false;
 };
 
+// How a dimension is drawn: the lines, arcs and arrowheads of the block AutoCAD keeps for it
+// (*D), for the views that show a file as drawn (D87). Display only, never compared; its text
+// is the dimension's label instead.
+struct DimShape {
+    std::vector<Vec2> pts;  // a polyline (a line is two points, an arc flattened), or a filled polygon
+    bool fill = false;      // a filled arrowhead (SOLID)
+    int aci = 7;            // its effective color, as for a primitive
+    quint32 rgb = 0xFFFFFF;
+};
+struct DimLook {
+    std::vector<DimShape> shapes;
+};
+
 struct Primitive {
     PrimKind kind = PrimKind::Unsupported;
     // Geometry, 2D WCS.
@@ -88,6 +101,7 @@ struct Primitive {
     Vec2 dimCenter;
     bool hasDimCenter = false;
     std::shared_ptr<const DimPlace> dimPlace;  // linear, aligned and angular dimensions; shared so copies stay cheap
+    std::shared_ptr<const DimLook> dimLook;    // how it is drawn, when the file has its block (D87); not kept by transformed()
     double radius = 0;
     double a0 = 0, a1 = 0;  // Arc start/end, CCW, normalized to [0, 2pi)
     // Annotation payload.

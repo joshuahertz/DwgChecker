@@ -12,7 +12,9 @@ StudentIdentity IdentityParser::parse(const QString& fileName) const {
     id.name = QFileInfo(id.fileName).completeBaseName();
     id.late = id.fileName.contains(QStringLiteral("_LATE_"));
     if (!m_re.isValid()) return id;
-    const auto m = m_re.match(id.fileName);
+    // Composed form, so an accent stored as a separate mark (as macOS stores names) reads
+    // as the same name and groups with the student's other files (D80).
+    const auto m = m_re.match(id.fileName.normalized(QString::NormalizationForm_C));
     if (!m.hasMatch()) return id;
     const QString name = m.captured(QStringLiteral("name"));
     if (name.isEmpty()) return id;

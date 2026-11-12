@@ -553,10 +553,105 @@ private:
                 placed = true;
             }
             if (placed) p.dimPlace = std::move(place);
+            readDimLook(o, c, p);
             D.prims.push_back(std::move(p));
         } else {
             // SPLINE, ELLIPSE, XLINE, RAY, REGION, 3DSOLID, MLINE, 3DFACE, meshes...: reported, never compared (rule 8).
             emitUnsupported(proto(o, type, layer, ltype, c), o, c.M);
+        }
+    }
+
+    // How a dimension is drawn (D87): the lines, arcs and filled arrowheads of its *D block,
+    // in the dimension's own coordinates, each in its effective color (ByBlock is the
+    // dimension's). Its text and definition points are left out: the label is drawn instead.
+    void readDimLook(const QJsonObject& o, const Ctx& c, Primitive& p) const {
+        const DwgJson::Block* blk = J.block(DwgJson::href(o.value("block")));
+        if (!blk) return;
+        Ctx n;
+        n.M = c.M * Affine3::translation(blk->base * -1.0);
+        n.insLayer = p.layer;
+        n.insLtype = p.ltypeName;
+        n.insAci = p.aci;
+        n.insRgb = p.rgb;
+        n.insColorByLayer = p.colorByLayer;
+        n.insLtByLayer = p.ltByLayer;
+        n.top = c.top;
+        n.depth = c.depth + 1;
+        auto look = std::make_shared<DimLook>();
+        lookOf(blk->entities, n, *look);
+        if (!look->shapes.empty()) p.dimLook = std::move(look);
+    }
+
+    void lookOf(const std::vector<quint64>& entities, const Ctx& c, DimLook& look) const {
+        for (const quint64 h : entities) {
+            const QJsonObject* op = J.object(h);
+            if (!op) continue;
+            const QJsonObject& o = *op;
+            const QString type = J.typeOf(o);
+            const QString layer = effLayer(o, c);
+            const EffColor col = effColor(o, layer, c);
+            const Vec3 ext = DwgJson::vec3(o.value("extrusion"), {0, 0, 1});
+            const Affine3 L = c.M * Affine3::ocsToWcs(ext);
+            DimShape s;
+            s.aci = col.aci;
+            s.rgb = col.rgb;
+            if (type == "LINE") {
+                s.pts = {c.M.apply(DwgJson::vec3(o.value("start"))).xy(), c.M.apply(DwgJson::vec3(o.value("end"))).xy()};
+            } else if (type == "ARC" || type == "CIRCLE") {
+                const Vec3 ctr = DwgJson::vec3(o.value("center"));
+                const double r = DwgJson::num(o, "radius");
+                const double a0 = type == "CIRCLE" ? 0.0 : DwgJson::num(o, "start_angle");
+                double sweep = type == "CIRCLE" ? kTwoPi : DwgJson::num(o, "end_angle") - a0;
+                while (sweep <= 0) sweep += kTwoPi;
+                const int steps = arcSteps(sweep);
+                for (int k = 0; k <= steps; ++k) {
+                    const double a = a0 + sweep * k / steps;
+                    s.pts.push_back(L.apply({ctr.x + r * std::cos(a), ctr.y + r * std::sin(a), ctr.z}).xy());
+                }
+            } else if (type == "SOLID") {  // corners in the order 1, 2, 4, 3; a triangle repeats the last
+                const double elev = DwgJson::num(o, "elevation", 0);
+                for (const char* k : {"corner1", "corner2", "corner4", "corner3"}) {
+                    const Vec2 q = DwgJson::vec2(o.value(QLatin1StringView(k)));
+                    const Vec2 w = L.apply({q.x, q.y, elev}).xy();
+                    if (s.pts.empty() || dist(s.pts.back(), w) > 1e-12) s.pts.push_back(w);
+                }
+                if (s.pts.size() > 1 && dist(s.pts.front(), s.pts.back()) <= 1e-12) s.pts.pop_back();
+                s.fill = s.pts.size() >= 3;
+            } else if (type == "LWPOLYLINE") {
+                const double elev = DwgJson::num(o, "elevation", 0);
+                const QJsonArray pts = o.value("points").toArray();
+                const QJsonArray bul = o.value("bulges").toArray();
+                const bool closed = (DwgJson::integer(o, "flag", 0) & 512) != 0;
+                std::vector<Vec2> v;
+                for (const auto& pv : pts) v.push_back(DwgJson::vec2(pv));
+                const int nv = static_cast<int>(v.size());
+                std::vector<Vec2> flat;
+                for (int i = 0; i < nv; ++i) {
+                    flat.push_back(v[i]);
+                    if (i + 1 < nv || closed) flattenBulge(flat, v[i], v[(i + 1) % nv], i < bul.size() ? bul.at(i).toDouble() : 0.0);
+                }
+                if (closed && nv > 0) flat.push_back(v.front());
+                for (Vec2 q : flat) s.pts.push_back(L.apply({q.x, q.y, elev}).xy());
+            } else if (type == "INSERT" && c.depth < 8) {  // an arrowhead block (_ArchTick, _Dot, ...)
+                const DwgJson::Block* b = J.block(DwgJson::href(o.value("block_header")));
+                if (!b) continue;
+                const Vec3 ins = DwgJson::vec3(o.value("ins_pt"));
+                const Vec3 sc = DwgJson::vec3(o.value("scale"), {1, 1, 1});
+                Ctx n;
+                n.M = c.M * Affine3::ocsToWcs(ext) * Affine3::translation(ins) * Affine3::rotationZ(DwgJson::num(o, "rotation", 0)) *
+                      Affine3::scale(sc.x, sc.y, sc.z) * Affine3::translation(b->base * -1.0);
+                n.insLayer = layer;
+                n.insAci = col.aci;
+                n.insRgb = col.rgb;
+                n.insColorByLayer = col.byLayer;
+                n.top = c.top;
+                n.depth = c.depth + 1;
+                lookOf(b->entities, n, look);
+                continue;
+            } else {
+                continue;  // MTEXT (the label is drawn instead), POINT (definition points), ...
+            }
+            if (s.pts.size() >= 2) look.shapes.push_back(std::move(s));
         }
     }
 

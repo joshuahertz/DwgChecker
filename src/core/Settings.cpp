@@ -42,9 +42,14 @@ static Severity parseSeverity(const QString& s, Severity def) {
     return def;
 }
 
+// Canvas keeps a name's accented letters (garcíajosé), so the name is any letters, marks
+// and digits, not just a-z (D80).
 QString AppSettings::defaultIdentityRegex() {
-    return QStringLiteral(R"(^(?<name>[a-z]+)_(?:LATE_)?(?<uid>\d+)_(?<sid>\d+)_(?<orig>.+)$)");
+    return QStringLiteral(R"(^(?<name>[\p{L}\p{M}\p{N}]+)_(?:LATE_)?(?<uid>\d+)_(?<sid>\d+)_(?<orig>.+)$)");
 }
+
+// The default before D80, which every saved settings file holds unless the user changed it.
+static const char* const kOldIdentityRegex = R"(^(?<name>[a-z]+)_(?:LATE_)?(?<uid>\d+)_(?<sid>\d+)_(?<orig>.+)$)";
 
 CanonSettings AppSettings::effectiveCanon() const {
     CanonSettings c = canon;
@@ -186,7 +191,8 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
     s.loader.odaConverterPath = l.value("odaConverterPath").toString(s.loader.odaConverterPath);
 
     s.identityRegex = o.value("identityRegex").toString(s.identityRegex);
-    if (s.identityRegex.isEmpty()) s.identityRegex = defaultIdentityRegex();
+    if (s.identityRegex.isEmpty() || s.identityRegex == QLatin1String(kOldIdentityRegex))
+        s.identityRegex = defaultIdentityRegex();
     // Before version 2 the pattern check was off by default and was saved as off
     // whenever hatches were off, so a stored "false" says nothing about a choice.
     if (o.value("version").toInt(1) < 2) s.compare.checkHatchPattern = CompareSettings{}.checkHatchPattern;

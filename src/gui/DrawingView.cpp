@@ -61,8 +61,29 @@ void DrawingView::showAsDrawn(const Drawing* d, bool dark) {
     clearDrawing();
     setBackgroundBrush(dark ? kModelSpaceDark : kModelSpaceLight);
     if (!d) return;
-    for (const Primitive& p : d->prims)  // stacked in AutoCAD's draw order
-        if (QGraphicsItem* it = addPrimitive(p, drawingColor(p, dark), 1.5)) it->setZValue(asDrawnZ(p));
+    for (const Primitive& p : d->prims) {  // stacked in AutoCAD's draw order
+        QGraphicsItem* it = addPrimitive(p, drawingColor(p, dark), 1.5);
+        if (!it) continue;
+        it->setZValue(asDrawnZ(p));
+        // A dimension's lines, arcs and arrowheads, as AutoCAD draws them (D87), under its label.
+        if (p.kind != PrimKind::Dimension || !p.dimLook) continue;
+        for (const DimShape& s : p.dimLook->shapes) {
+            const QColor color = s.aci == 7 ? (dark ? QColor(Qt::white) : QColor(Qt::black)) : QColor(static_cast<QRgb>(s.rgb));
+            QPolygonF poly;
+            for (const Vec2 q : s.pts) {
+                poly << toScene(q);
+                m_extent.add(q);
+            }
+            QPainterPath path;
+            path.addPolygon(poly);
+            if (s.fill) path.closeSubpath();
+            QPen pen(color, 1.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+            pen.setCosmetic(true);
+            QGraphicsItem* part = scene()->addPath(path, pen, s.fill ? QBrush(color) : QBrush(Qt::NoBrush));
+            part->setZValue(p.drawOrder);
+            part->setToolTip(it->toolTip());
+        }
+    }
 }
 
 QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& color, double width, const Transform2D& t) {

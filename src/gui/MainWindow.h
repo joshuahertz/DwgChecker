@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QMainWindow>
 #include <QPointer>
+#include <QTemporaryDir>
 
 #include <atomic>
 #include <map>
@@ -98,9 +99,18 @@ private:
     std::map<QString, QString> m_refSummaries;
     QString m_pendingPreview;  // clicked while still being read: opens when the read ends
     QHash<QString, QPointer<QDialog>> m_previews;  // one open preview per drawing
-    int m_dirCount = 0;     // drawings in the chosen folder
+    int m_dirCount = 0;     // drawings in the chosen folder (or .zip)
     int m_dirScan = 0;      // counts scans of the folder (in the background); only the latest updates the card
     QString m_dirScanned;   // the folder m_dirCount is for
+    // A .zip of submissions, unpacked by a run into a temporary folder (D81). The results shown
+    // use m_zip's files, so it is kept until another run's results replace them; m_zipNext is
+    // the one the running run uses (m_zip again when the same zip is run twice).
+    struct UnpackedZip {
+        QString key;  // the zip's path, size and time
+        std::unique_ptr<QTemporaryDir> dir;
+        QStringList files;  // empty until fully unpacked
+    };
+    std::shared_ptr<UnpackedZip> m_zip, m_zipNext;
     QTimer* m_relayout = nullptr;  // lays the results out again once a column drag pauses
     QToolButton* m_settingsToggle = nullptr;
     QScrollArea* m_settingsArea = nullptr;

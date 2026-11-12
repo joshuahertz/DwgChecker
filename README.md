@@ -99,9 +99,10 @@ with nothing chosen and walks through four numbered steps: (1) click the first
 card to choose the reference (solution) drawing; (2) check the **location
 mode** (Absolute, Relative or Orthographic; with several drawings, one for each),
 which is remembered for those reference solutions; (3) click the third card to
-choose the submissions folder; (4) click **Run**. The next step is outlined,
+choose the submissions folder, or its **Choose a .zip…** button for a zip of
+them (a Canvas bulk download as it comes); (4) click **Run**. The next step is outlined,
 finished steps get a check, and Run is enabled once a reference and a
-submissions folder are chosen: the location mode always has a value (the
+submissions folder (or zip) are chosen: the location mode always has a value (the
 default, or the one remembered), so step 2 needs a change only when that value
 is wrong. You can also drop the file or folder on a card, or pick one from its
 **Recent** button. While the solution drawings are read (a few seconds each),
@@ -110,7 +111,12 @@ several) and the cursor shows the app is busy; the window stays usable. The
 reference card then shows what was read
 ("inches · 42 objects, 2 dimensions; ignoring 51 objects on turned-off or frozen
 layers", or a line per drawing), and the submissions card shows how many
-drawings it found (Canvas bulk downloads work as-is). Settings are remembered for
+drawings it found (Canvas bulk downloads work as-is, zipped or not). A zip is
+unpacked by Run, in the background and after checking the drive has room for it,
+into a temporary folder, which is deleted when the next run's
+results replace these or the app closes; its drawings may be in any folder in the
+zip, Mac `__MACOSX` clutter is skipped, a damaged file is listed in the log, and a
+zip inside the zip is not opened (the card says how many). Settings are remembered for
 each reference solution (or set of them), so choosing it again brings back its
 settings. Check Settings and click **Run**. Settings shows the everyday
 **Matching rules** (tolerance, what must match: linetypes, line colors with an
@@ -125,7 +131,8 @@ fields take a decimal point whatever the system's language (1e-6 works too), and
 tolerance must be above 0. Then:
 - **Several drawings per assignment:** choose all the solution drawings on the
   first card (select several in the dialog, or drop several). Each student's
-  files (grouped by the name and Canvas user id in the file name) are matched one
+  files (grouped by the name and Canvas user id in the file name; accented names
+  work too) are matched one
   to one to the solution drawings, choosing the assignment with the best total
   fit, wherever the files were drawn (an Absolute-mode drawing in the wrong place
   still finds its drawing, with a warning that gives the offset). A drawing with
@@ -150,8 +157,25 @@ tolerance must be above 0. Then:
   one file's LastSavedBy or Author that is also in the other's LastSavedBy or
   Author. One student's files saved under different account names
   are amber (names shared by much of the class, such as a lab account, never
-  count). The **Possible cheating** tab lists the pairs of files and the
-  evidence. A student with several files gets a lightly shaded row with their
+  count). The same creation time counts only for two files of the same drawing,
+  or with an account name in common. A file created more than 2 months before
+  the class's files were last saved (the middle of them, so grading again later
+  changes nothing) is red: perhaps a file from an earlier semester. A creation
+  time that a template, a solution drawing or much of the class has does not
+  count. The **Possible cheating** tab has a row per group of students linked
+  by evidence, strongest first, across the whole tab: the students involved, the
+  files involved, named as in the results ("smithjane: Drawing 2", "Solution:
+  Drawing 1"; hover for the file names), six of each, then "…and N more", the
+  level, the score and the signals, each with
+  what it is about in parentheses: the shared account name, the creation time,
+  "Drawing 2: 45 / 50" bit-identical drawing objects. In a group of three or
+  more, a signal only some of them share names them. A weaker link to another
+  student is a row of its own at that level, so it never makes that student look
+  as involved as the others. A student linked to a solution drawing or template
+  is a row of their own ("with the solution drawing"), and so is a student whose
+  own files carry different account names. Click a row for a window with each
+  link (file to file) and every signal's details. **Export possible cheating**
+  writes the same rows with every student and file (by file name). A student with several files gets a lightly shaded row with their
   overall score (and "2 / 3 drawings" under the name when some are missing).
   Under it is one row per solution drawing, labeled **Drawing 1**, **Drawing 2**, …
   in the order of the first card, which sorts the drawings by name. Hover over
@@ -170,12 +194,14 @@ tolerance must be above 0. Then:
   with their name and score above the box. **Student's file** shows the file as
   submitted: its own coordinates, scale and layout (Orthographic views not
   moved, a wrong scale not undone). **Reference solution** shows the solution as
-  drawn. Both show everything in the file, dimensions and Ignored views
-  included, each item in its own color and linetype, stacked in AutoCAD's draw
-  order (DRAWORDER), on AutoCAD's dark background or white. Clicking an error or a primitive zooms all three tabs: in
+  drawn. Both show everything in the file, dimensions (with their extension
+  lines, dimension lines and arrowheads, as AutoCAD draws them; the Overlay
+  shows a dimension as its value only) and Ignored views included, each item in
+  its own color and linetype, stacked in AutoCAD's draw
+  order (DRAWORDER), on AutoCAD's dark background or white. Clicking an error or a drawing object zooms all three tabs: in
   the student's file to the student's item, or to where a missing one should be,
   and in the solution to the same place as the overlay. Then the full discrepancy list (click an error to zoom to it), metadata side
-  by side, and a **Primitives** tab. That tab lists everything the checker extracted from the
+  by side, and a **Drawing objects** tab. That tab lists everything the checker extracted from the
   student's or the reference's file, with layer, linetype, match status and
   source entity, which helps when a file grades unexpectedly.
 - Orthographic mode: use **Edit views…** (step 2) to confirm how the reference
