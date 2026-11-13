@@ -90,7 +90,7 @@ endif()
 function(dwgcheck_windeployqt target)
   if(WIN32 AND TARGET Qt6::windeployqt)
     add_custom_command(TARGET ${target} POST_BUILD
-      COMMAND Qt6::windeployqt $<IF:$<CONFIG:Debug>,--debug,--release> --verbose 0 ${ARGN}
+      COMMAND Qt6::windeployqt $<IF:$<CONFIG:Debug>,--debug,--release> --verbose 0 --no-translations ${ARGN}
       COMMENT "windeployqt: deploying the Qt runtime into the build folder"
       VERBATIM)
   endif()

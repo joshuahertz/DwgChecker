@@ -1599,6 +1599,45 @@ where it exists it is used as before; elsewhere `find_package(ZLIB)` takes the
 system zlib, the one QtCore itself links there (the macOS SDK's; on Ubuntu the
 `zlib1g-dev` headers, added to CI). The code is unchanged: `<zlib.h>` either way.
 
+**D94. Windows App Certification Kit findings on the MSIX (user report,
+2026-11-13).** Overall "passed with warnings".
+- **High-DPI warning, fixed:** DwgChecker.exe now carries an application manifest
+  (`src/gui/resources/DwgChecker.manifest`, merged by the MSVC linker) declaring
+  Per-Monitor V2 DPI awareness (with `true/pm` for older Windows) and Windows 10/11
+  support. Qt 6 already ran that way, but it asks for it in code at startup, which
+  the kit cannot see; declared, Windows applies it before the first window, so
+  nothing changes on screen.
+- **"Blocked executables", left as it is:** the test is about Windows S mode,
+  where an app may start only its own programs. DwgChecker starts its own dwgread
+  (allowed) and AutoCAD (not on S mode, where AutoCAD cannot be installed
+  anyway). The rest are Qt's own references to process APIs (QProcess,
+  QDesktopServices) and short strings such as "cmd" or "reg" found inside
+  binaries, not calls. `build_dwgread.sh` stays in the package's license folder:
+  it is part of LibreDWG's corresponding source (D63). Microsoft says entries that
+  are part of the app can be ignored.
+- **Qt's translations are no longer deployed** (`NO_TRANSLATIONS`, and
+  `--no-translations` for the build folder): the app is in English and loads
+  none of them; `qt_sv.qm` was one of the flagged files. The package is smaller.
+
+**D95. dwgread's patches and build script linked, not bundled (user decision,
+2026-11-13).** GPLv3 section 6(d) lets software conveyed from a network server
+point to its Corresponding Source on another server, with clear directions next
+to it, as long as the source stays available. The LibreDWG release was already a
+link (D63); now the rest is too: NOTICES.txt links DWG Checker's repository at
+the commit the package was built from (`<repo>/tree/<commit>`, and the zip of
+that tree), where `third_party/` holds the version file and patches and
+`scripts/` the build script. The package's `libredwg-source/` folder, and with it
+`build_dwgread.sh` (a "blocked executables" entry, D94), is gone.
+- The repository and commit come from git at configure time: "origin" when it is
+  on GitHub (or `DWGCHECK_SOURCE_URL`), and `git rev-parse HEAD`. A new commit or
+  checkout configures again (CMAKE_CONFIGURE_DEPENDS on .git/HEAD and
+  .git/logs/HEAD), so the link follows it. CI builds from a fresh checkout.
+- Without a git checkout or a GitHub origin, the files are bundled as before.
+- The link only serves when the repository is public, and the commit must stay
+  there (no history rewritten past a released commit). A local build with
+  uncommitted changes to the patches would link the committed ones: release
+  packages come from CI.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is
