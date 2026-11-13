@@ -1,6 +1,7 @@
 # dwgcore: all comparison logic. Depends on QtCore only (no GUI, no widgets),
-# so the unit tests exercise exactly what the GUI runs. Zips are read with the zlib
-# that QtCore uses (Qt6::ZlibPrivate: Qt's own copy, inside QtCore, or the system's).
+# so the unit tests exercise exactly what the GUI runs. Zips are read with zlib: Qt's
+# own copy inside QtCore where Qt has one (Qt6::ZlibPrivate, Windows), else the
+# system's (Linux, macOS), the one QtCore itself uses there (D81, D93).
 add_library(dwgcore STATIC
   Geometry.h Geometry.cpp
   Model.h Model.cpp
@@ -27,7 +28,13 @@ add_library(dwgcore STATIC
   Format.h Format.cpp
 )
 target_include_directories(dwgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(dwgcore PUBLIC Qt6::Core PRIVATE Qt6::ZlibPrivate)
+if(TARGET Qt6::ZlibPrivate)
+  set(_dwgcore_zlib Qt6::ZlibPrivate)
+else()
+  find_package(ZLIB REQUIRED)
+  set(_dwgcore_zlib ZLIB::ZLIB)
+endif()
+target_link_libraries(dwgcore PUBLIC Qt6::Core PRIVATE ${_dwgcore_zlib})
 target_compile_definitions(dwgcore PUBLIC
   DWGCHECK_VERSION="${PROJECT_VERSION}"
   DWGCHECK_LIBREDWG_VERSION="${DWGCHECK_LIBREDWG_VERSION}")

@@ -11,14 +11,17 @@ option(DWGCHECK_BUILD_TESTS "Build the unit tests"        ON)
 set(DWGCHECK_DWGREAD "" CACHE FILEPATH
     "dwgread executable to bundle next to the app (output of scripts/build_dwgread.sh)")
 
-set(_qt_components Core ZlibPrivate)  # ZlibPrivate: zlib headers for reading zips (D81)
+set(_qt_components Core)
 if(DWGCHECK_BUILD_GUI)
   list(APPEND _qt_components Gui Widgets Concurrent)
 endif()
 if(DWGCHECK_BUILD_TESTS)
   list(APPEND _qt_components Test)
 endif()
-find_package(Qt6 6.4 REQUIRED COMPONENTS ${_qt_components})
+# ZlibPrivate: the zlib inside QtCore, where Qt carries its own (Windows), for reading zips
+# (D81). Linux and macOS Qt use the system zlib and have no such package: src/core then
+# takes the system's (D93).
+find_package(Qt6 6.4 REQUIRED COMPONENTS ${_qt_components} OPTIONAL_COMPONENTS ZlibPrivate)
 # Also puts every executable (the app and the tests) in the top of the build folder.
 qt_standard_project_setup()
 

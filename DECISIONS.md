@@ -1591,6 +1591,14 @@ findings, all fixed:
   else 0 %, 20 %, … 100 % at the band edges.
 Tests: tst_misc `classSummaryColorScale`.
 
+**D93. zlib on Linux and macOS (CI report, 2026-11-13).** D81 took zlib from
+`Qt6::ZlibPrivate`, which only Qt builds that carry their own zlib provide (the
+Windows one). The Linux and macOS Qt use the system's zlib and have no such
+package, so configuring failed there. ZlibPrivate is now an optional Qt component:
+where it exists it is used as before; elsewhere `find_package(ZLIB)` takes the
+system zlib, the one QtCore itself links there (the macOS SDK's; on Ubuntu the
+`zlib1g-dev` headers, added to CI). The code is unchanged: `<zlib.h>` either way.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

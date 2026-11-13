@@ -66,8 +66,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The same Qt as on Windows and macOS (Ubuntu's own packages are Qt 6.4); its
-      # OpenGL / xkbcommon build dependencies come from apt.
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libvulkan-dev
+      # OpenGL / xkbcommon build dependencies come from apt, and zlib's headers for
+      # reading zips (D93).
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libvulkan-dev zlib1g-dev
       - uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
