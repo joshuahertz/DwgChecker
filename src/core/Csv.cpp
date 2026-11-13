@@ -1,5 +1,7 @@
 #include "Csv.h"
 
+#include "ClassSummary.h"
+
 #include <QDateTime>
 #include <QFileInfo>
 
@@ -187,6 +189,40 @@ QString duplicatesCsv(const BatchOutput& b) {
     if (!b.dups.notes.isEmpty()) {  // probable templates, account names shared by much of the class
         out += QStringLiteral("\nNote\n");
         for (const QString& n : b.dups.notes) out += csvEscape(n) + '\n';
+    }
+    return out;
+}
+
+QString classSummaryCsv(const BatchOutput& b) {
+    QString out = header(b);
+    auto pct = [](double v) { return QStringLiteral("%1%").arg(v, 0, 'f', 1); };
+    if (b.multipleRefs()) {  // all the drawings first, as in the tab (D90)
+        const ClassOverall o = summarizeClass(b);
+        out += QStringLiteral("\nAll drawings\nStudents,Handed in every drawing,Mean,Median,Lowest,Highest\n");
+        out += QStringLiteral("%1,%2,%3,%4,%5,%6\n")
+                   .arg(o.students)
+                   .arg(o.complete)
+                   .arg(pct(o.mean), pct(o.median), o.scores.empty() ? QString() : pct(o.scores.front()),
+                        o.scores.empty() ? QString() : pct(o.scores.back()));
+    }
+    for (int k = 0; k < static_cast<int>(b.refs.size()); ++k) {
+        const DrawingSummary s = summarizeDrawing(b, k);
+        out += QStringLiteral("\nDrawing %1,%2\n").arg(k + 1).arg(csvEscape(QFileInfo(b.refPaths.value(k)).fileName()));
+        out += QStringLiteral("Graded,No readable file,Mean,Median,Lowest,Highest,With errors\n");
+        out += QStringLiteral("%1,%2,%3,%4,%5,%6,%7\n")
+                   .arg(s.graded)
+                   .arg(s.noFile)
+                   .arg(pct(s.mean), pct(s.median), s.scores.empty() ? QString() : pct(s.scores.front()),
+                        s.scores.empty() ? QString() : pct(s.scores.back()))
+                   .arg(s.withErrors);
+        out += QStringLiteral("Errors by type\nType of error,Number of students,Total number of errors\n");
+        for (const ErrorKindCount& e : s.kinds) out += csvEscape(e.label) + QStringLiteral(",%1,%2\n").arg(e.students).arg(e.times);
+        out += QStringLiteral("Errors by location\nLocation (part of the solution),Number of students,Out of,Types of error\n");
+        for (const SolutionPartCount& p : s.parts) {
+            if (p.missed == 0) break;
+            out += csvEscape(describePart(b, k, p.prim)) + QStringLiteral(",%1,%2,").arg(p.missed).arg(p.compared) +
+                   csvEscape(describeHow(p)) + '\n';
+        }
     }
     return out;
 }

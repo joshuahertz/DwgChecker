@@ -149,7 +149,9 @@ tolerance must be above 0. Then:
   still being read opens when it is read. With a single solution drawing, the
   **Show drawing** button on the reference card opens the same window. A setting that only some drawings use names them underneath, e.g.
   "Only for Q10Problem 1_1-6 (Absolute mode)".
-- Results tab, one row per student, sorted A to Z after each run: a **Possible
+- Three tabs show the results: **Individual results**, **Class-wide summary** and
+  **Possible cheating**.
+- **Individual results**, one row per student, sorted A to Z after each run: a **Possible
   cheating** icon (red = strong evidence, amber = weaker; hover for the details),
   the student, the correctness, a summary of the errors such as "2 shifted, 1
   missing, 1 extra", and an **Open in AutoCAD** link (opened as read-only by
@@ -182,6 +184,23 @@ tolerance must be above 0. Then:
   the Student header or a row for the drawing's and the file's names. A student with several files has a subrow per
   solution drawing (and per extra file); click the student to fold them. Click a
   file's row for the detail view, or the link to open the file in AutoCAD.
+- **Class-wide summary.** With several solution drawings, a line about all of
+  them comes first (students, how many handed in every drawing, the overall
+  scores), then a button per drawing to choose one. For that drawing: the number
+  graded and the mean, median, lowest and highest scores, a bar chart of how many
+  scored 0–10 %, 10–20 %, … 90–100 %, and two tables built alike. **Errors by
+  type**: each type of error ("missing", "shifted", "wrong layer"…), the number of
+  students who had it at least once, and the total number of errors; "all errors"
+  heads it. **Errors by location**: each part of the solution at least one student
+  missed ("line 2.500 long on HIDDEN (Front view)"), the number of students who
+  missed it, and the types of error ("8 missing, 4 shifted"). Beside them the
+  solution is drawn in color: green where every student got a part right, yellow
+  for the most commonly missed parts (even when fewer than half missed them), red
+  for parts more than half the class missed, gray where nothing was graded; the
+  table rows are tinted the same way. Hover over a part for its figures. Click a
+  type of error to color the drawing by that type, or a location to zoom to it;
+  **Zoom to all** below the drawing shows it whole again. **Export class summary
+  CSV…** writes the same figures.
 - **Help > Show log** (Ctrl+L) lists the parser version, AutoCAD found, why
   any file could not be read, and how long choosing and reading the solution
   drawings took.

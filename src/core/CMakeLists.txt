@@ -22,6 +22,7 @@ add_library(dwgcore STATIC
   StudentIdentity.h StudentIdentity.cpp
   Archive.h Archive.cpp
   Batch.h Batch.cpp
+  ClassSummary.h ClassSummary.cpp
   Csv.h Csv.cpp
   Format.h Format.cpp
 )

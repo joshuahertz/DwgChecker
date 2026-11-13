@@ -1516,6 +1516,81 @@ used (judged too rare), and a dimension's lines ignore its block's
   QSet, whose order Qt randomizes per run, and files with the same student and
   file name were left in that order. They now fall back to the run's order.
 
+**D89. A Class-wide summary tab (user request, 2026-11-12).** The results now have
+three tabs: **Individual results** (renamed from Results), **Class-wide summary**
+(new) and **Possible cheating**. The summary takes one solution drawing at a time
+(`summarizeDrawing`, in the core, so the export and the tests share it):
+- **Who counts:** each student's file graded against that drawing. A student with
+  none (or none readable) is counted apart ("2 with no readable file"). Extra
+  files are not graded, so they are not counted.
+- **Scores:** number graded, mean, median, lowest, highest, how many have errors,
+  and bars per 10 % band (100 % goes with 90–100). With several drawings, a
+  second line gives the mean and median of the students' overall scores.
+- **Most common errors:** each kind by its results label ("missing", "shifted",
+  "wrong layer"…), with how many students had it at least once and how many times
+  in all; failing errors only (warnings are not errors), most students first,
+  ties in the order the results list them. "Any error" heads the table.
+- **Parts most often missed:** for each part of the solution that was graded
+  (its status is not NotCompared), how many of the graded files did not get it
+  right (Missing, NearMiss or WrongAttribute), and how (the kinds of error that
+  name it, once per file). Described for a person (`describePart`: kind, size,
+  layer, view). Parts no one missed are left out of the table.
+- **The solution in color:** each part from green through orange to red by the
+  share of graded files that missed it, gray where nothing was graded (an Ignored
+  view, a check that is off). Choosing a kind of error colors by that kind; a kind
+  that names only the students' own items ("extra") cannot, and the note says so.
+  A part chosen in the table is zoomed to.
+- **Export class summary CSV…** (button and File menu) writes the same figures for
+  every drawing.
+Tests: tst_misc `classSummaryCounts` (scores, kinds and ties, parts and the
+warning that is not an error, a part graded for no one, the CSV).
+
+**D90. The Class-wide summary, refined (user requests, 2026-11-12).**
+- **Order with several drawings:** a line about all of them first (students, how
+  many handed in every drawing, the overall score's mean, median, lowest and
+  highest: `summarizeClass`, shared with the export), then a button per drawing
+  (larger, plainer than the drop-down list it replaces), then that drawing's
+  figures under its own heading.
+- **Two tables built alike:** **Errors by type** (Type of error / Number of
+  students (out of N) / Total number of errors; "all errors", in bold, heads it)
+  and **Errors by location** (Location (part of the solution) / Number of
+  students (out of N) / Types of error). The count is a plain number; a location
+  some files were not graded on (an unfound view) says "(of M)".
+- **Colors:** green where every student got a part right, yellow for the most
+  commonly missed (the highest share at or under half, so the commonest mistakes
+  show even when fewer than half made them), in between for fewer, red past half
+  ("missed by most"). The note above the drawing gives the share that is yellow.
+  Both tables' rows are tinted the same way, with dark text, which a dark theme's
+  white text made unreadable on the light tints.
+- **Zoom to all** below the drawing.
+- The export follows: "All drawings" first, then per drawing "Errors by type" and
+  "Errors by location" under the same column names.
+Tests: tst_misc `classSummaryCounts` (D90: the all-drawings figures).
+
+**D91. A recent .zip is not grayed out (user report, 2026-11-12).** The
+submissions card's Recent list enabled an entry only when it was a folder, from
+before the card took a .zip (D81), so a zip that was still there showed as
+missing. An entry is now available when it is a folder or a file the card takes
+(`PathCard::suffixAccepted`, shared with what may be dropped on the card).
+
+**D92. Fixes from a code review of D89–D91 (user request, 2026-11-12).** Five
+findings, all fixed:
+- **"View not found" names the view's parts** (the error's `refPrims`). The parts
+  of a view a student left out already had their own "missing" errors, but the
+  view's error named none, so the class summary took it for an error about the
+  students' own drawings and could not color by it. It now counts on those parts
+  ("3 missing, 3 view not found"), and in the detail view clicking it zooms to
+  where the view belongs.
+- **Each part is described once per drawing** in the summary tab, not again for
+  every tooltip each time a type of error is chosen.
+- **One helper tints a table row with dark text** (`GuiUtil.h`, `tintRow`), used
+  by the Possible cheating and Class-wide summary tables.
+- **The color rule is in the core** (`commonMissRate`, `missLevel`), so it is
+  tested; the tab only maps its levels to green, yellow and red.
+- **The score chart's labels never overlap:** under each band when they fit,
+  else 0 %, 20 %, … 100 % at the band edges.
+Tests: tst_misc `classSummaryColorScale`.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

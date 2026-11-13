@@ -286,7 +286,9 @@ void PathCard::rebuildMenu() {
         bool exists = true;
         for (const QString& p : ps) {
             tips << QDir::toNativeSeparators(p);
-            exists = exists && (m_kind == Kind::File ? QFileInfo(p).isFile() : QFileInfo(p).isDir());
+            // Still there: a File card's file, a Folder card's folder or the .zip it took (D91).
+            const QFileInfo f(p);
+            exists = exists && (m_kind == Kind::File ? f.isFile() : f.isDir() || (f.isFile() && suffixAccepted(f)));
         }
         a->setToolTip(tips.join(QLatin1Char('\n')));
         a->setEnabled(exists);
@@ -342,10 +344,14 @@ void PathCard::browseFile() {
     if (!p.isEmpty()) setPath(p);
 }
 
+bool PathCard::suffixAccepted(const QFileInfo& fi) const {
+    return std::any_of(m_suffixes.cbegin(), m_suffixes.cend(),
+                       [&](const QString& s) { return fi.suffix().compare(s, Qt::CaseInsensitive) == 0; });
+}
+
 QString PathCard::acceptedPath(const QString& local) const {
     const QFileInfo fi(local);
-    const bool suffixOk = std::any_of(m_suffixes.cbegin(), m_suffixes.cend(),
-                                      [&](const QString& s) { return fi.suffix().compare(s, Qt::CaseInsensitive) == 0; });
+    const bool suffixOk = suffixAccepted(fi);
     if (m_kind == Kind::Folder) {
         if (fi.isDir()) return fi.absoluteFilePath();
         if (fi.isFile()) return suffixOk ? fi.absoluteFilePath()  // a .zip of the folder

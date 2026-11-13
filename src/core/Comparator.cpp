@@ -574,10 +574,12 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                                (fails ? QString() : QStringLiteral("warning: ")) + c.text, c.view, {}, {}, fails,
                                !fails ? QString() : c.isArrangement ? QStringLiteral("wrong view arrangement") : QStringLiteral("misaligned view")});
         }
+        // A view not found names its parts (D92): the detail view zooms to where it belongs, and
+        // the class summary counts it as an error on those parts of the solution.
         for (const auto& vr : r.views)
             if (!vr.found && vr.refCount > 0 && !vr.ignored)
-                eChecks.push_back({ErrCat::Alignment, vr.label + QStringLiteral(": view not found in the drawing"), vr.view, {}, {}, true,
-                                   QStringLiteral("view not found")});
+                eChecks.push_back({ErrCat::Alignment, vr.label + QStringLiteral(": view not found in the drawing"), vr.view,
+                                   groups[vr.view].refIdx, {}, true, QStringLiteral("view not found")});
     }
 
     // ---- Warnings ----

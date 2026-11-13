@@ -3,6 +3,7 @@
 #include "Aligner.h"
 #include "Archive.h"
 #include "Batch.h"
+#include "ClassSummary.h"
 #include "Color.h"
 #include "Comparator.h"
 #include "Csv.h"
@@ -71,6 +72,8 @@ private slots:
     void identityAccentedNames();
     void zipSubmissions();
     void zipThatCannotBeRead();
+    void classSummaryCounts();
+    void classSummaryColorScale();
     void formatting();
     void settingsRoundTrip();
     void csvEscaping();
@@ -322,6 +325,111 @@ void TestMisc::zipThatCannotBeRead() {
     QVERIFY(!listZipSubmissions(tmp.filePath(QStringLiteral("absent.zip"))).error.isEmpty());
     QVERIFY(!unpackZipSubmissions(tmp.filePath(QStringLiteral("text.zip")), tmp.filePath(QStringLiteral("out"))).error.isEmpty());
     QVERIFY(isZipPath(QStringLiteral("C:/x/Submissions.ZIP")) && !isZipPath(QStringLiteral("C:/x/zip")));
+}
+
+// The Class-wide summary (D89): scores, kinds of error by students and times, and the parts
+// of the solution by how many students missed them and how.
+void TestMisc::classSummaryCounts() {
+    auto ref = std::make_shared<Drawing>();
+    for (int i = 0; i < 4; ++i) {
+        Primitive p = line({0, double(i)}, {2, double(i)});
+        p.layer = QStringLiteral("VISIBLE");
+        ref->prims.push_back(p);
+    }
+    BatchOutput b;
+    b.refs = {ref};
+    b.refPaths = {QStringLiteral("q.dwg")};
+    b.refModes = {Mode::Relative};
+    using S = PrimStatus;
+    auto add = [&](std::vector<PrimStatus> st, std::vector<ErrorItem> errors, double correctness) {
+        StudentRun r;
+        r.drawing = ref;
+        r.refIndex = 0;
+        r.result.refStatus = std::move(st);
+        r.result.errors = std::move(errors);
+        r.result.correctness = correctness;
+        b.students.push_back(r);
+        StudentGroup g;
+        g.files = {static_cast<int>(b.students.size()) - 1};
+        g.byRef = g.files;
+        b.groups.push_back(g);
+    };
+    auto err = [](const char* label, std::vector<int> refPrims) {
+        ErrorItem e;
+        e.cat = ErrCat::Missing;
+        e.label = QString::fromLatin1(label);
+        e.refPrims = std::move(refPrims);
+        e.failing = true;
+        return e;
+    };
+    // Prim 3 is graded for no one (say, in an Ignored view).
+    add({S::Matched, S::Matched, S::Matched, S::NotCompared}, {}, 100);
+    add({S::Missing, S::NearMiss, S::Matched, S::NotCompared}, {err("missing", {0}), err("shifted", {1}), err("extra", {})}, 40);
+    ErrorItem warning = err("", {2});
+    warning.failing = false;  // warnings are not errors
+    add({S::Missing, S::Matched, S::Matched, S::NotCompared}, {err("missing", {0}), warning}, 70);
+    StudentGroup none;  // a student with no file for the drawing
+    none.byRef = {-1};
+    b.groups.push_back(none);
+
+    const DrawingSummary s = summarizeDrawing(b, 0);
+    QCOMPARE(s.graded, 3);
+    QCOMPARE(s.noFile, 1);
+    QCOMPARE(s.scores, (std::vector<double>{40, 70, 100}));
+    QCOMPARE(s.mean, 70.0);
+    QCOMPARE(s.median, 70.0);
+    QCOMPARE(s.withErrors, 2);
+    QCOMPARE(s.errorCount, 4);
+    QCOMPARE(s.kinds.size(), size_t(3));
+    QCOMPARE(s.kinds[0].label, QStringLiteral("missing"));
+    QCOMPARE(s.kinds[0].students, 2);
+    QCOMPARE(s.kinds[0].times, 2);
+    QVERIFY(s.kinds[0].onSolution);
+    QCOMPARE(s.kinds[1].label, QStringLiteral("shifted"));  // a tie with "extra": the results' order
+    QCOMPARE(s.kinds[2].label, QStringLiteral("extra"));
+    QVERIFY(!s.kinds[2].onSolution);  // the students' own items
+    QCOMPARE(s.parts.size(), size_t(3));  // prim 3 was graded for no one
+    QCOMPARE(s.parts[0].prim, 0);
+    QCOMPARE(s.parts[0].missed, 2);
+    QCOMPARE(s.parts[0].compared, 3);
+    QCOMPARE(s.parts[0].count(QStringLiteral("missing")), 2);
+    QCOMPARE(describeHow(s.parts[0]), QStringLiteral("2 missing"));
+    QCOMPARE(s.parts[1].prim, 1);
+    QCOMPARE(s.parts[1].missed, 1);
+    QCOMPARE(s.parts[2].prim, 2);
+    QCOMPARE(s.parts[2].missed, 0);  // the warning on it is not an error
+    QCOMPARE(s.partOf, (std::vector<int>{0, 1, 2, -1}));
+    QCOMPARE(describePart(b, 0, 0), QStringLiteral("line 2.000 long on VISIBLE"));
+
+    // All the drawings: here one, so each student's overall score is that drawing's (D90).
+    b.groups[0].correctness = 100;
+    b.groups[1].correctness = 40;
+    b.groups[2].correctness = 70;
+    const ClassOverall o = summarizeClass(b);
+    QCOMPARE(o.students, 4);
+    QCOMPARE(o.complete, 3);  // the fourth has no file
+    QCOMPARE(o.scores, (std::vector<double>{0, 40, 70, 100}));
+    QCOMPARE(o.median, 55.0);
+
+    const QString csv = classSummaryCsv(b);
+    QVERIFY2(csv.contains(QStringLiteral("\nmissing,2,2\n")), qPrintable(csv));
+    QVERIFY2(csv.contains(QStringLiteral("\nline 2.000 long on VISIBLE,2,3,2 missing\n")), qPrintable(csv));
+    QVERIFY(!csv.contains(QStringLiteral("line 2.000 long on VISIBLE,0,")));  // parts no one missed are left out
+}
+
+// The summary's colors (D90, D92): green for none, up to yellow at the most common share at
+// or under half, red past half.
+void TestMisc::classSummaryColorScale() {
+    QCOMPARE(commonMissRate({0, 0.1, 0.3, 0.6, 0.9}), 0.3);  // past half is red, not "most common"
+    QCOMPARE(commonMissRate({0, 0}), 0.5);                     // no one missed anything
+    QCOMPARE(commonMissRate({0.7, 1.0}), 0.5);                 // every miss is by most of the class
+    QCOMPARE(commonMissRate({0.5}), 0.5);                      // exactly half is not past half
+    QCOMPARE(missLevel(0, 0.3), 0.0);
+    QCOMPARE(missLevel(0.15, 0.3), 0.5);
+    QCOMPARE(missLevel(0.3, 0.3), 1.0);  // the most commonly missed: yellow
+    QCOMPARE(missLevel(0.45, 0.3), 1.0);
+    QCOMPARE(missLevel(0.5, 0.5), 1.0);
+    QCOMPARE(missLevel(0.51, 0.3), 2.0);  // missed by most: red
 }
 
 void TestMisc::formatting() {

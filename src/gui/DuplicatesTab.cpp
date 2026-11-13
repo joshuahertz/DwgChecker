@@ -1,5 +1,7 @@
 #include "DuplicatesTab.h"
 
+#include "GuiUtil.h"
+
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -113,11 +115,10 @@ void DuplicatesTab::rebuild() {
         if (g.students.size() > kListed) items[0]->setToolTip(g.students.join(QLatin1Char('\n')));
         items[1]->setToolTip(names.join(QLatin1Char('\n')));
         for (int c = 0; c < items.size(); ++c) {
-            items[c]->setBackground(levelColor(g.level));
-            items[c]->setForeground(QColor(20, 20, 20));
             items[c]->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
             m_table->setItem(row, c, items[c]);
         }
+        tintRow(m_table, row, levelColor(g.level));
     }
     m_table->resizeColumnsToContents();
     m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);

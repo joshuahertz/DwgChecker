@@ -10,6 +10,8 @@ qt_add_executable(DwgChecker WIN32 MACOSX_BUNDLE
   MainWindow.h MainWindow.cpp
   SettingsPanel.h SettingsPanel.cpp
   ResultsModel.h ResultsModel.cpp
+  ClassSummaryTab.h ClassSummaryTab.cpp
+  GuiUtil.h
   DuplicatesTab.h DuplicatesTab.cpp
   PathCard.h PathCard.cpp
   DetailDialog.h DetailDialog.cpp

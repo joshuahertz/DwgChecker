@@ -75,6 +75,8 @@ QString flagTooltip(const CopyFlag& f) {
 }
 }  // namespace
 
+QColor scoreColor(double percent) { return correctnessColor(percent); }
+
 void ResultsModel::setBatch(std::shared_ptr<const BatchOutput> b) {
     beginResetModel();
     m_batch = std::move(b);

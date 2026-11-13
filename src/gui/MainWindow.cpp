@@ -2,6 +2,7 @@
 
 #include "Archive.h"
 #include "AutoCadController.h"
+#include "ClassSummaryTab.h"
 #include "Canonicalizer.h"
 #include "Csv.h"
 #include "DetailDialog.h"
@@ -233,7 +234,20 @@ void MainWindow::buildUi() {
     exportRow->addWidget(tableHint, 1);
     exportRow->addWidget(exportBtn);
     rl->addLayout(exportRow);
-    m_tabs->addTab(resultsPage, tr("Results"));
+    m_tabs->addTab(resultsPage, tr("Individual results"));
+
+    // The class as a whole (D89): scores, the most common errors, the parts most often missed.
+    auto* sumPage = new QWidget(m_tabs);
+    auto* sl = new QVBoxLayout(sumPage);
+    m_summary = new ClassSummaryTab(sumPage);
+    sl->addWidget(m_summary, 1);
+    auto* sumExportRow = new QHBoxLayout;
+    auto* sumExport = new QPushButton(tr("Export class summary CSV…"), sumPage);
+    sumExportRow->addStretch();
+    sumExportRow->addWidget(sumExport);
+    sl->addLayout(sumExportRow);
+    connect(sumExport, &QPushButton::clicked, this, &MainWindow::exportSummary);
+    m_tabs->addTab(sumPage, tr("Class-wide summary"));
 
     auto* dupPage = new QWidget(m_tabs);
     auto* dl = new QVBoxLayout(dupPage);
@@ -268,6 +282,7 @@ void MainWindow::buildUi() {
     // ---- Menu ----
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(tr("Export results CSV…"), this, &MainWindow::exportResults);
+    file->addAction(tr("Export class summary CSV…"), this, &MainWindow::exportSummary);
     file->addAction(tr("Export possible cheating CSV…"), this, &MainWindow::exportDuplicates);
     file->addSeparator();
     file->addAction(tr("Save settings as JSON…"), this, [this]() {
@@ -1021,6 +1036,7 @@ void MainWindow::onFinished() {
     m_details.clear();
     m_batch = std::make_shared<const BatchOutput>(std::move(out));
     m_model->setBatch(m_batch);
+    m_summary->setBatch(m_batch);
     m_dups->setBatch(m_batch);
     m_zip = std::move(zipUsed);  // none for a folder: the last zip's files go
     m_resultsStack->setCurrentIndex(1);
@@ -1090,6 +1106,17 @@ void MainWindow::exportDuplicates() {
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(this, tr("Export"), f.errorString()); return; }
     f.write(QByteArray("\xEF\xBB\xBF"));
     f.write(duplicatesCsv(*m_batch).toUtf8());
+    log(tr("exported %1").arg(QDir::toNativeSeparators(p)));
+}
+
+void MainWindow::exportSummary() {
+    if (!m_batch) { QMessageBox::information(this, tr("Export"), tr("Run a batch first.")); return; }
+    const QString p = QFileDialog::getSaveFileName(this, tr("Export class summary"), QStringLiteral("class_summary.csv"), tr("CSV (*.csv)"));
+    if (p.isEmpty()) return;
+    QFile f(p);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) { QMessageBox::warning(this, tr("Export"), f.errorString()); return; }
+    f.write(QByteArray("\xEF\xBB\xBF"));
+    f.write(classSummaryCsv(*m_batch).toUtf8());
     log(tr("exported %1").arg(QDir::toNativeSeparators(p)));
 }
 

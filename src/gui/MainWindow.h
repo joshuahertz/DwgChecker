@@ -33,6 +33,7 @@ namespace dcgui {
 
 class AutoCadController;
 class DetailDialog;
+class ClassSummaryTab;
 class DuplicatesTab;
 class PathCard;
 class StepBox;
@@ -65,6 +66,7 @@ private:
     void previewDrawing(const QString& refPath);
     void exportResults();
     void exportDuplicates();
+    void exportSummary();
     void openDetail(int student, int errorIndex = -1);
     void openInAutoCad(int student);
     // Top cards.
@@ -128,6 +130,7 @@ private:
     ResultsModel* m_model = nullptr;
     QSortFilterProxyModel* m_proxy = nullptr;
     ResultsDelegate* m_delegate = nullptr;
+    ClassSummaryTab* m_summary = nullptr;
     DuplicatesTab* m_dups = nullptr;
     QDialog* m_logWindow = nullptr;
     QPlainTextEdit* m_log = nullptr;

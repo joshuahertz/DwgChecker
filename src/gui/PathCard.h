@@ -5,6 +5,7 @@
 // be dropped on it; a small "Recent" button lists recent entries. The current step
 // is outlined in the highlight color.
 
+#include <QFileInfo>
 #include <QFrame>
 #include <QUrl>
 
@@ -66,6 +67,8 @@ protected:
 
 private:
     QString acceptedPath(const QString& local) const;
+    // Whether the card takes this file by its suffix (a File card's drawings, a Folder card's .zip).
+    bool suffixAccepted(const QFileInfo& fi) const;
     QStringList acceptedPaths(const QList<QUrl>& urls) const;
     void rebuildMenu();
     void refresh();

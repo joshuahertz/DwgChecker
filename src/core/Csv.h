@@ -25,5 +25,7 @@ QString csvEscape(const QString& s);
 // Columns: File, Copy flag, Correctness, Errors (joined by "; ").
 QString resultsCsv(const BatchOutput& b);
 QString duplicatesCsv(const BatchOutput& b);
+// The Class-wide summary tab's figures, per solution drawing (D89).
+QString classSummaryCsv(const BatchOutput& b);
 
 }  // namespace dc

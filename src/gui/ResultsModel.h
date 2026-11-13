@@ -31,6 +31,9 @@ enum ResultsRole {
     HasChildrenRole    // bool: a student row with subrows
 };
 
+// The color for a correctness: red at 0 % through yellow to green at 100 % (light, for dark text).
+QColor scoreColor(double percent);
+
 class ResultsModel : public QAbstractItemModel {
     Q_OBJECT
 public:
