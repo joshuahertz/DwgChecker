@@ -2,32 +2,24 @@
 // Platform-specific services behind small interfaces. Implementations live in
 // platform/win and platform/mac; everything else is platform independent.
 
-#include <QList>
 #include <QString>
 
 #include <memory>
 
 namespace dc::platform {
 
-struct AutoCadInstall {
-    QString name;     // "AutoCAD 2026 - English"
-    QString year;     // "2026"
-    QString release;  // "R25.1" (Windows registry) or bundle version (macOS)
-    QString exe;      // acad.exe / acadlt.exe, or the .app bundle on macOS
-    QString progId;   // COM ProgID (Windows, full AutoCAD only)
-    bool lt = false;
-    QString key() const { return exe; }  // stored in QSettings
-};
-
+// AutoCAD (D96): a file is opened only in the full AutoCAD, already running. The app never
+// starts AutoCAD, so AutoCAD always runs as the user started it, outside the app's Store
+// package: its own settings and files stay its own, and the package needs no restricted
+// capability. AutoCAD LT is not supported (it cannot be driven by another program on
+// Windows). The same on every platform and in every build (Store, zip, macOS).
 class IAutoCadLauncher {
 public:
     virtual ~IAutoCadLauncher() = default;
-    // Installed versions, newest first.
-    virtual QList<AutoCadInstall> detect() const = 0;
-    // Opens `file` in the given AutoCAD (reusing a running instance where possible).
-    virtual bool open(const AutoCadInstall& install, const QString& file, QString* error) = 0;
-    // Builds an install record for a user-picked executable / bundle.
-    virtual AutoCadInstall fromUserPath(const QString& path) const = 0;
+    // The running full AutoCAD, for messages ("AutoCAD 25.1"), or empty when none is running.
+    virtual QString runningAutoCad() const = 0;
+    // Opens `file` read-only in the running AutoCAD; false, with *error, when that fails.
+    virtual bool openInRunning(const QString& file, QString* error) = 0;
 };
 
 std::unique_ptr<IAutoCadLauncher> createAutoCadLauncher();
@@ -40,8 +32,13 @@ QString bundledDwgReadPath();
 // made without a dwgread to bundle.
 QString findDwgRead();
 
-// Protect the evidence: copies `file` into a per-session temp folder (read-only) and
-// returns the copy, so saving in AutoCAD can never rewrite the submission.
+// Where the read-only copies opened in AutoCAD go: Documents/DWG Checker/Opened in AutoCAD
+// (D96). Other programs see that folder from every build; a Store-installed app's AppData
+// and temp files are its own, and AutoCAD could not open a copy there.
+QString evidenceFolder();
+// Protects the evidence: copies `file` into evidenceFolder() (read-only) and returns the
+// copy, so saving in AutoCAD can never rewrite the submission. Copies older than a week, and
+// the temp folder earlier versions used, are removed first.
 QString makeEvidenceCopy(const QString& file, QString* error);
 
 }  // namespace dc::platform

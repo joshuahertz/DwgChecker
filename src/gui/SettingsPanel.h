@@ -26,8 +26,6 @@ class QToolButton;
 
 namespace dcgui {
 
-class AutoCadController;
-
 // What a solution drawing contains, as far as Settings cares: a check for dimensions or
 // hatches is shown only for a drawing that has some. Unknown (not read yet) counts as yes.
 struct DrawingContent {
@@ -38,7 +36,7 @@ struct DrawingContent {
 class SettingsPanel : public QWidget {
     Q_OBJECT
 public:
-    SettingsPanel(AutoCadController* acad, QWidget* parent = nullptr);
+    explicit SettingsPanel(QWidget* parent = nullptr);
     void setSettings(const dc::AppSettings& s);
     // The chosen solution drawings: with two or more, each gets its own mode and checks.
     void setSolutionDrawings(const QStringList& paths);
@@ -48,7 +46,6 @@ public:
     // What each solution drawing contains, by AppSettings::drawingKey (once they are read).
     void setDrawingContents(const std::map<QString, DrawingContent>& byKey);
     dc::AppSettings settings() const;
-    void refreshAutoCad();
 
 signals:
     void changed();
@@ -79,7 +76,6 @@ private:
     void rebuildDrawingRows();
     void applyDrawingLayout();
 
-    AutoCadController* m_acad;
     QComboBox* m_mode;
     QWidget* m_drawingsBox;  // the Solution drawings table, in step 2
     QWidget* m_modeStep;
@@ -147,8 +143,6 @@ private:
     QLineEdit* m_identity;
     QSpinBox* m_timeout;
     QLineEdit* m_oda;
-    QComboBox* m_acadCombo;
-    QCheckBox* m_protect;
 };
 
 }  // namespace dcgui

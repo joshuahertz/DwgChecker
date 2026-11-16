@@ -6,17 +6,15 @@
   Identity and PublisherDisplayName are the values Partner Center gives the app (Product
   identity page) and must match them exactly. The Store signs the package after upload.
 
-  Write virtualization is off: the app starts AutoCAD, or hands a running AutoCAD a copy of
-  the submission in %TEMP%, so its own and AutoCAD's new AppData files and HKCU settings must
-  go where they go for an unpackaged app, not into a per-package store that AutoCAD can't
-  see. This needs the restricted capability unvirtualizedResources and Windows 10 1903.
+  Only runFullTrust (a desktop app). Windows keeps the app's AppData and registry writes in
+  its package, as for any Store desktop app: the copies opened in AutoCAD go to Documents,
+  which AutoCAD can see, and the app never starts AutoCAD (D96).
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap desktop6 rescap">
+  IgnorableNamespaces="uap rescap">
 
   <Identity Name="13710gruepr.DWGChecker"
             Publisher="CN=06F1A065-BAE3-4E3B-878B-6C4471EB60C4"
@@ -27,12 +25,10 @@
     <DisplayName>DWG Checker</DisplayName>
     <PublisherDisplayName>gruepr</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
-    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
@@ -51,6 +47,5 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
-    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>

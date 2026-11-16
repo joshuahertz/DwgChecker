@@ -1,12 +1,10 @@
-// Windows: find AutoCAD through the registry and open files through COM when an
-// instance is already running (fast), otherwise launch acad.exe.
+// Windows: open a file in the AutoCAD that is already running, through its COM automation
+// (Documents.Open, read-only). The app never starts AutoCAD (D96): an AutoCAD started from
+// the Store version would run inside its package.
 //
-// Registry layout (verified on AutoCAD 2026):
-//   HKLM\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:409
-//     AcadLocation = C:\Program Files\Autodesk\AutoCAD 2026\
-//     ProductName  = AutoCAD 2026 - English
-// COM ProgIDs registered: AutoCAD.Application.25.1, AutoCAD.Application.25 (no
-// version-independent ProgID on that machine).
+// COM ProgIDs registered by AutoCAD 2026: AutoCAD.Application.25.1 and AutoCAD.Application.25
+// (no version-independent ProgID on that machine), so every release's ProgIDs are tried.
+// AutoCAD LT has no COM automation and is not supported: only the full AutoCAD is found.
 //
 // COM is used through raw IDispatch (ActiveQt is not part of every Qt kit); the
 // behaviour is the same as QAxObject::dynamicCall.
@@ -14,11 +12,7 @@
 #include "../Platform.h"
 
 #include <QCoreApplication>
-#include <QDir>
-#include <QFileInfo>
-#include <QProcess>
-#include <QRegularExpression>
-#include <QSettings>
+#include <QStringList>
 #include <QThread>
 
 #include <algorithm>
@@ -33,17 +27,6 @@ QString bundledDwgReadPath() {
 }
 
 namespace {
-
-QString yearFromRelease(const QString& rel) {
-    static const QList<QPair<QString, QString>> map = {
-        {"R22.0", "2018"}, {"R23.0", "2019"}, {"R23.1", "2020"}, {"R24.0", "2021"}, {"R24.1", "2022"},
-        {"R24.2", "2023"}, {"R24.3", "2024"}, {"R25.0", "2025"}, {"R25.1", "2026"}};
-    for (const auto& [r, y] : map)
-        if (r == rel) return y;
-    return {};
-}
-
-double releaseNumber(const QString& rel) { return rel.mid(1).toDouble(); }
 
 class ComScope {
 public:
@@ -71,89 +54,56 @@ HRESULT invoke(IDispatch* d, const wchar_t* name, WORD flags, std::vector<VARIAN
     return hr;
 }
 
+// The COM ProgIDs AutoCAD registers, newest first: AutoCAD.Application.25.1, .25, ... back to
+// 2018 (R22), and the version-independent one some installs have.
+QStringList progIds() {
+    QStringList ids;
+    for (int major = 30; major >= 22; --major) {
+        for (int minor = 3; minor >= 0; --minor) ids << QStringLiteral("AutoCAD.Application.%1.%2").arg(major).arg(minor);
+        ids << QStringLiteral("AutoCAD.Application.%1").arg(major);
+    }
+    ids << QStringLiteral("AutoCAD.Application");
+    return ids;
+}
+
+// The running AutoCAD's Application object (AddRef'd), or null when none is running.
+IDispatch* runningApplication() {
+    for (const QString& pid : progIds()) {
+        CLSID clsid;
+        if (FAILED(CLSIDFromProgID(reinterpret_cast<LPCOLESTR>(pid.utf16()), &clsid))) continue;  // not installed
+        IUnknown* unk = nullptr;
+        if (FAILED(GetActiveObject(clsid, nullptr, &unk)) || !unk) continue;  // installed, not running
+        IDispatch* app = nullptr;
+        unk->QueryInterface(IID_IDispatch, reinterpret_cast<void**>(&app));
+        unk->Release();
+        if (app) return app;
+    }
+    return nullptr;
+}
+
 class WinLauncher : public IAutoCadLauncher {
 public:
-    QList<AutoCadInstall> detect() const override {
-        QList<AutoCadInstall> out;
-        for (const QString& root : {QStringLiteral("AutoCAD"), QStringLiteral("AutoCAD LT")}) {
-            QSettings reg(QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Autodesk\\") + root, QSettings::Registry64Format);
-            for (const QString& rel : reg.childGroups()) {
-                if (!rel.startsWith('R')) continue;
-                reg.beginGroup(rel);
-                for (const QString& prod : reg.childGroups()) {
-                    if (!prod.startsWith(QStringLiteral("ACAD"), Qt::CaseInsensitive)) continue;
-                    reg.beginGroup(prod);
-                    const QString loc = reg.value(QStringLiteral("AcadLocation")).toString();
-                    const QString pname = reg.value(QStringLiteral("ProductName")).toString();
-                    reg.endGroup();
-                    if (loc.isEmpty()) continue;
-                    AutoCadInstall i;
-                    i.release = rel;
-                    i.name = pname.isEmpty() ? root + " " + rel : pname;
-                    const QString acad = QDir(loc).filePath(QStringLiteral("acad.exe"));
-                    const QString acadlt = QDir(loc).filePath(QStringLiteral("acadlt.exe"));
-                    if (QFileInfo::exists(acad)) i.exe = acad;
-                    else if (QFileInfo::exists(acadlt)) { i.exe = acadlt; i.lt = true; }
-                    else continue;
-                    i.lt = i.lt || root.endsWith(QStringLiteral("LT"));
-                    const auto ym = QRegularExpression(QStringLiteral("(20\\d\\d)")).match(i.name);
-                    i.year = ym.hasMatch() ? ym.captured(1) : yearFromRelease(rel);
-                    if (!i.lt) i.progId = QStringLiteral("AutoCAD.Application.") + rel.mid(1);
-                    if (std::none_of(out.begin(), out.end(), [&](const AutoCadInstall& o) { return o.exe == i.exe; }))
-                        out << i;
-                }
-                reg.endGroup();
-            }
-        }
-        std::sort(out.begin(), out.end(), [](const AutoCadInstall& a, const AutoCadInstall& b) {
-            if (a.lt != b.lt) return !a.lt;  // full AutoCAD before LT of the same age
-            return releaseNumber(a.release) > releaseNumber(b.release);
-        });
-        return out;
+    QString runningAutoCad() const override {
+        ComScope com;
+        IDispatch* app = runningApplication();
+        if (!app) return {};
+        QString name = QStringLiteral("AutoCAD");
+        VARIANT v;
+        VariantInit(&v);
+        if (SUCCEEDED(invoke(app, L"Version", DISPATCH_PROPERTYGET, {}, &v)) && v.vt == VT_BSTR && v.bstrVal)
+            name += QLatin1Char(' ') + QString::fromWCharArray(v.bstrVal).section(QLatin1Char(' '), 0, 0);  // "25.1s (LMS Tech)" -> 25.1s
+        VariantClear(&v);
+        app->Release();
+        return name;
     }
 
-    AutoCadInstall fromUserPath(const QString& path) const override {
-        AutoCadInstall i;
-        i.exe = path;
-        i.lt = QFileInfo(path).fileName().compare(QStringLiteral("acadlt.exe"), Qt::CaseInsensitive) == 0;
-        i.name = QFileInfo(path).dir().dirName();
-        const auto ym = QRegularExpression(QStringLiteral("(20\\d\\d)")).match(i.name);
-        i.year = ym.hasMatch() ? ym.captured(1) : QString();
-        if (!i.lt) i.progId = QStringLiteral("AutoCAD.Application");
-        return i;
-    }
-
-    bool open(const AutoCadInstall& inst, const QString& file, QString* error) override {
-        const QString native = QDir::toNativeSeparators(QFileInfo(file).absoluteFilePath());
-        if (!inst.lt && openViaCom(inst, native)) return true;
-        // No running instance (or LT, which has no COM automation): start a new session.
-        if (!QProcess::startDetached(inst.exe, {native})) {
-            if (error) *error = QStringLiteral("could not start %1").arg(inst.exe);
+    bool openInRunning(const QString& file, QString* error) override {
+        ComScope com;
+        IDispatch* app = runningApplication();
+        if (!app) {
+            if (error) *error = QStringLiteral("AutoCAD is not running");
             return false;
         }
-        return true;
-    }
-
-private:
-    bool openViaCom(const AutoCadInstall& inst, const QString& file) const {
-        ComScope com;
-        QStringList progIds;
-        if (!inst.progId.isEmpty()) progIds << inst.progId;
-        if (inst.release.size() > 1) progIds << QStringLiteral("AutoCAD.Application.") + inst.release.mid(1).section('.', 0, 0);
-        progIds << QStringLiteral("AutoCAD.Application");
-        progIds.removeDuplicates();
-        IDispatch* app = nullptr;
-        for (const QString& pid : progIds) {
-            CLSID clsid;
-            if (FAILED(CLSIDFromProgID(reinterpret_cast<LPCOLESTR>(pid.utf16()), &clsid))) continue;
-            IUnknown* unk = nullptr;
-            if (FAILED(GetActiveObject(clsid, nullptr, &unk)) || !unk) continue;
-            unk->QueryInterface(IID_IDispatch, reinterpret_cast<void**>(&app));
-            unk->Release();
-            if (app) break;
-        }
-        if (!app) return false;
-
         bool ok = false;
         VARIANT docs;
         VariantInit(&docs);
@@ -169,7 +119,7 @@ private:
             VariantClear(&path);
             VariantClear(&docs);
         }
-        if (ok) {
+        if (ok) {  // bring AutoCAD to the front
             VARIANT vis, hwnd;
             VariantInit(&vis); VariantInit(&hwnd);
             vis.vt = VT_BOOL;
@@ -185,6 +135,8 @@ private:
                 }
                 VariantClear(&hwnd);
             }
+        } else if (error) {
+            *error = QStringLiteral("AutoCAD did not open the file (it may be busy with a command: press Esc there and try again)");
         }
         app->Release();
         return ok;

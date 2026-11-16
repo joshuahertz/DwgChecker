@@ -131,7 +131,7 @@ void MainWindow::buildUi() {
     connect(zipBtn, &QToolButton::clicked, m_dirCard, &PathCard::browseFile);
     // Step 2 (built by the settings panel, which keeps it in step with the other settings):
     // the location mode, chosen for every assignment.
-    m_settings = new SettingsPanel(m_acad, left);
+    m_settings = new SettingsPanel(left);
     m_modeBox = new StepBox(2, m_settings->modeStepWidget(), left);
     lay->addWidget(m_refCard);
     lay->addWidget(m_modeBox);
@@ -865,9 +865,8 @@ void MainWindow::probeParser() {
     QString err;
     const QString v = DwgReadLoader::probeVersion(exe, &err);
     log(v.isEmpty() ? tr("dwgread at %1 is not usable: %2").arg(exe, err) : tr("parser: %1 at %2").arg(v, QDir::toNativeSeparators(exe)));
-    const auto inst = m_acad->current();
-    log(inst.exe.isEmpty() ? tr("AutoCAD: not detected (you will be asked to locate it when opening a file)")
-                           : tr("AutoCAD: %1 (%2)").arg(inst.name, QDir::toNativeSeparators(inst.exe)));
+    log(tr("Open in AutoCAD: a read-only copy, in %1, opened in the AutoCAD that is running")
+            .arg(QDir::toNativeSeparators(platform::evidenceFolder())));
 }
 
 void MainWindow::run() {

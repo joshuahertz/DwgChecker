@@ -1,4 +1,4 @@
-# dwgplatform: finding/launching AutoCAD and locating dwgread. All
+# dwgplatform: opening files in a running AutoCAD and locating dwgread. All
 # platform-specific code is in win/ and mac/.
 add_library(dwgplatform STATIC Platform.h Platform.cpp)
 target_include_directories(dwgplatform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

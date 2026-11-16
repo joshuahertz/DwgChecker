@@ -18,7 +18,7 @@ parser's JSON is in [FIELDMAP.md](FIELDMAP.md).
 |---|---|
 | `src/core/` | `dwgcore`, all comparison logic, **QtCore only** |
 | `src/gui/` | `DwgChecker` Qt Widgets app |
-| `src/platform/{win,mac}/` | AutoCAD discovery/launching and dwgread location |
+| `src/platform/{win,mac}/` | opening files in a running AutoCAD, and dwgread location |
 | `tests/` | QtTest suites; `fixtures/` = dwgread JSON of the corpus |
 | `tests/corpus/` | the test DWGs and the AutoCAD scripts that generate them |
 | `third_party/` | pinned LibreDWG version and local patches |
@@ -154,8 +154,11 @@ tolerance must be above 0. Then:
 - **Individual results**, one row per student, sorted A to Z after each run: a **Possible
   cheating** icon (red = strong evidence, amber = weaker; hover for the details),
   the student, the correctness, a summary of the errors such as "2 shifted, 1
-  missing, 1 extra", and an **Open in AutoCAD** link (opened as read-only by
-  default). Two students' files with the same account name are red: a name in
+  missing, 1 extra", and an **Open in AutoCAD** link. It opens a read-only copy of
+  the file (in Documents\DWG Checker\Opened in AutoCAD, cleared after a week) in
+  the AutoCAD that is already running; start AutoCAD first, since the app never
+  starts it. This needs the full version of AutoCAD: AutoCAD LT can't be used,
+  since it can't be controlled by other programs. Two students' files with the same account name are red: a name in
   one file's LastSavedBy or Author that is also in the other's LastSavedBy or
   Author. One student's files saved under different account names
   are amber (names shared by much of the class, such as a lab account, never
@@ -201,7 +204,7 @@ tolerance must be above 0. Then:
   type of error to color the drawing by that type, or a location to zoom to it;
   **Zoom to all** below the drawing shows it whole again. **Export class summary
   CSV…** writes the same figures.
-- **Help > Show log** (Ctrl+L) lists the parser version, AutoCAD found, why
+- **Help > Show log** (Ctrl+L) lists the parser version, where copies opened in AutoCAD go, why
   any file could not be read, and how long choosing and reading the solution
   drawings took.
 - Detail view: the drawing in three tabs: **Overlay**, **Student's file** and
@@ -330,6 +333,7 @@ when no dwgread is configured.
   test suites first run in CI or on your machine. Run `ctest` before relying on
   results.
 - COM attach to a running AutoCAD has not been verified against AutoCAD 2018
-  (spec M6). LT versions always start a new session (LT has no COM automation).
+  (spec M6). Open in AutoCAD needs the full AutoCAD; AutoCAD LT is not supported
+  (D96).
 - MINSERT needs patch `0001`, because dwgread 0.14's JSON omits the array size.
 - Splines, ellipses and other curves are reported as unsupported, not compared (v1).

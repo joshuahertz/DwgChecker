@@ -358,7 +358,8 @@ here, and built executables cannot run here, see D33).
 **D31. Registry layout** (AutoCAD 2026): `AcadLocation` and `ProductName` sit
 under `HKLM\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:409`, the subkey with the
 locale suffix, not `ACAD-9101` itself. The `AutoCAD LT` root is also scanned.
-LT has no COM automation, so LT always launches `acadlt.exe`.
+LT has no COM automation, so LT always launches `acadlt.exe`. (Superseded by D96:
+no registry scan or launching; the full AutoCAD only, found running through COM.)
 
 **D32. QtCore-only core.** The batch runs in parallel on a `QThreadPool` (QtCore),
 so the unit tests exercise the same code without any GUI. The GUI launches the
@@ -875,7 +876,8 @@ signs it after upload.
   build/msix/AppxManifest.xml; the Store owns the fourth part. Every Store
   update needs a higher version, so bump `project()` VERSION before uploading.
 - **A full-trust desktop app** (`runFullTrust`), x64, Windows 10 1903 or later.
-- **Write virtualization is off** (`desktop6:FileSystemWriteVirtualization` and
+- **Write virtualization is off** (superseded by D96: Microsoft denied the capability)
+  (`desktop6:FileSystemWriteVirtualization` and
   `RegistryWriteVirtualization` disabled, restricted capability
   `unvirtualizedResources`, hence 1903). By default a packaged app's new files
   in AppData, including %TEMP%, and its HKCU writes go to a per-package store
@@ -887,8 +889,8 @@ signs it after upload.
   nothing is removed on uninstall. Both restricted capabilities need a short
   justification in the Store submission.
 - **Not handled:** an AutoCAD started by the app still runs with DWG Checker's
-  package identity (no breakaway from the package). That's untested; it is the
-  first thing to try in a Store-installed copy.
+  package identity (no breakaway from the package). (D96: the app no longer starts
+  AutoCAD.)
 - **Store images:** make_icon.ps1 now draws the icon at any size and offset (its
   app icons are byte-identical to before) and also writes packaging/windows/Assets:
   StoreLogo and Square44x44Logo at scale-100/200 and the Start tile at
@@ -1637,6 +1639,41 @@ that tree), where `third_party/` holds the version file and patches and
   there (no history rewritten past a released commit). A local build with
   uncommitted changes to the patches would link the committed ones: release
   packages come from CI.
+
+**D96. Open in AutoCAD only in a running AutoCAD; no restricted capability
+beyond runFullTrust (Store review and user decisions, 2026-11-16).** Microsoft
+denied `unvirtualizedResources` (D64). It was there only so that AutoCAD could
+see the copies the app made in %TEMP%, and so that an AutoCAD the app started
+would keep its own settings. One way of working now, the same in every build
+(Store, zip, macOS), with no check of which build is running:
+- **The copies go to Documents** (`Documents\DWG Checker\Opened in AutoCAD\<sha>\`,
+  `platform::evidenceFolder()`), a folder AutoCAD can see from every build: a
+  Store app's AppData and temp files are kept in its package. Every open is a
+  read-only copy: the "Open as read-only" switch is gone, and a file opened in
+  place would not be visible to AutoCAD when it came from a zip (unpacked to
+  temp, D81). Copies older than a week, and earlier versions' temp folder, are
+  removed when the next copy is made; one still open in AutoCAD stays.
+- **AutoCAD must already be running:** the app never starts it, so AutoCAD never
+  runs inside DWG Checker's package. Clicking Open in AutoCAD checks first and,
+  with none running, says to start AutoCAD and click again. On Windows the
+  running AutoCAD is found through COM (`GetActiveObject` on every release's
+  ProgID, 2018 on) and opens the copy with Documents.Open, read-only. On macOS
+  the running AutoCAD is found in the process list
+  (`/Applications/Autodesk/…/AutoCAD*.app`), and `open -a` hands it the copy.
+- **The full AutoCAD only (user decision):** AutoCAD LT is not supported. It has
+  no COM automation on Windows, so it is never found there, and on macOS an LT
+  bundle is passed over, so both platforms behave alike. With only LT open, the
+  message is the same as with no AutoCAD: start AutoCAD.
+- **Removed:** AutoCAD detection in the registry or /Applications, the AutoCAD
+  choice and Browse… in Settings (its "Viewing submissions in AutoCAD" group),
+  starting acad.exe or `open -a` with nothing running, the read-only switch, and
+  their stored settings (`autocad/*`, removed at startup).
+- **MSIX manifest:** only `runFullTrust`; write virtualization is back to the
+  default (on), so the Store version keeps its own settings, starting from any
+  the zip version saved. Minimum Windows 10 1809 (Qt 6.9's), since 1903 was
+  needed only for the virtualization switches.
+- **Version 0.3.0** for the resubmission: each Store submission's package needs a
+  version above the previous one's.
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,

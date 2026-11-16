@@ -153,7 +153,7 @@ double SettingsPanel::sciValue(const QLineEdit* e, double def) {
     return ok && e->hasAcceptableInput() ? v : def;
 }
 
-SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget(parent), m_acad(acad) {
+SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     auto check = [this](const QString& text) {
@@ -425,19 +425,6 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
     m_identity->setToolTip(tr("Regular expression that finds the student's name in the file name"));
     fCopy->addRow(tr("Student name pattern"), m_identity);
 
-    // AutoCAD and files.
-    auto* gTools = new QGroupBox(tr("Viewing submissions in AutoCAD"), m_advanced);
-    auto* fTools = new QFormLayout(gTools);
-    m_acadCombo = new QComboBox(this);
-    auto* acadRow = new QWidget(this);
-    auto* ah = new QHBoxLayout(acadRow);
-    ah->setContentsMargins(0, 0, 0, 0);
-    ah->addWidget(m_acadCombo, 1);
-    auto* locate = new QPushButton(tr("Browse…"), acadRow);
-    ah->addWidget(locate);
-    fTools->addRow(tr("AutoCAD"), acadRow);
-    m_protect = check(tr("Open as read-only (protect the evidence)"));
-    fTools->addRow(m_protect);
     m_timeout = new QSpinBox(this);
     m_timeout->setRange(5, 3600);
     m_timeout->setSuffix(tr(" s"));
@@ -451,13 +438,8 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
                          "When dwgread cannot read a submission, the checker reads a copy rewritten by it instead. "
                          "Leave this empty unless some files fail to load."));
     fRead->addRow(tr("ODA File Converter"), withBrowse(m_oda, tr("Locate ODA File Converter"), this));
-    connect(locate, &QPushButton::clicked, this, [this]() {
-        if (m_acad->locate(this)) refreshAutoCad();
-    });
-    connect(m_acadCombo, &QComboBox::activated, this, [this](int i) { m_acad->setCurrentExe(m_acadCombo->itemData(i).toString()); });
-    connect(m_protect, &QCheckBox::toggled, this, [this](bool on) { m_acad->setProtectEvidence(on); });
 
-    for (QGroupBox* g : {gMatch, gRead, gOrtho, gCopy, gTools}) adv->addWidget(g);
+    for (QGroupBox* g : {gMatch, gRead, gOrtho, gCopy}) adv->addWidget(g);
 
     // Advanced starts collapsed, or as it was left.
     const bool open = QSettings().value(kAdvancedKey, false).toBool();
@@ -479,7 +461,6 @@ SettingsPanel::SettingsPanel(AutoCadController* acad, QWidget* parent) : QWidget
             w->installEventFilter(this);
         }
 
-    refreshAutoCad();
     setSettings(AppSettings{});
 }
 
@@ -700,23 +681,6 @@ bool SettingsPanel::eventFilter(QObject* o, QEvent* e) {
         }
     }
     return QWidget::eventFilter(o, e);
-}
-
-void SettingsPanel::refreshAutoCad() {
-    m_acadCombo->clear();
-    const auto cur = m_acad->current();
-    bool listed = false;
-    for (const auto& i : m_acad->installs()) {
-        m_acadCombo->addItem(i.name + (i.lt ? tr(" (LT)") : QString()), i.exe);
-        listed = listed || i.exe == cur.exe;
-    }
-    if (!cur.exe.isEmpty() && !listed) m_acadCombo->addItem(cur.name, cur.exe);
-    if (m_acadCombo->count() == 0) m_acadCombo->addItem(tr("(not found: use Browse)"), QString());
-    const int idx = m_acadCombo->findData(cur.exe);
-    if (idx >= 0) m_acadCombo->setCurrentIndex(idx);
-    m_protect->blockSignals(true);
-    m_protect->setChecked(m_acad->protectEvidence());
-    m_protect->blockSignals(false);
 }
 
 void SettingsPanel::setSettings(const AppSettings& s) {
