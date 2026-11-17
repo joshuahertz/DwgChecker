@@ -31,11 +31,34 @@ double lineEndpointError(const Primitive& r, const Primitive& s) {
     return std::min(dist(r.p0, s.p0) + dist(r.p1, s.p1), dist(r.p0, s.p1) + dist(r.p1, s.p0));
 }
 
+// A circle, or an arc, for an ellipse or an elliptical arc, or the other way round: drawn
+// in the wrong shape (D98).
+bool otherShape(PrimKind r, PrimKind s) {
+    return (r == PrimKind::Circle && s == PrimKind::Ellipse) || (r == PrimKind::Ellipse && s == PrimKind::Circle) ||
+           (r == PrimKind::Arc && s == PrimKind::EllipseArc) || (r == PrimKind::EllipseArc && s == PrimKind::Arc);
+}
+
+// How far apart two ellipses (or an ellipse and a circle: its two axes are its radius) are,
+// for ranking near misses.
+double ellipseScore(const Primitive& r, const Primitive& s) {
+    auto minor = [](const Primitive& p) { return isElliptic(p.kind) ? p.minorRadius : p.radius; };
+    double d = dist(r.center, s.center) + std::fabs(r.radius - s.radius) + std::fabs(minor(r) - minor(s));
+    if (r.kind == PrimKind::Arc || r.kind == PrimKind::EllipseArc)
+        d += (dist(r.arcStart(), s.arcStart()) + dist(r.arcEnd(), s.arcEnd())) / 2;
+    return d;
+}
+
 double matchCost(const Primitive& r, const Primitive& s) {
     switch (r.kind) {
-    case PrimKind::Line: return lineEndpointError(r, s);
+    case PrimKind::Line:
+    case PrimKind::Spline: return lineEndpointError(r, s);
     case PrimKind::Circle: return dist(r.center, s.center) + std::fabs(r.radius - s.radius);
     case PrimKind::Arc: return dist(r.center, s.center) + std::fabs(r.radius - s.radius) + dist(r.arcStart(), s.arcStart());
+    case PrimKind::Ellipse:
+        return dist(r.center, s.center) + std::fabs(r.radius - s.radius) + std::fabs(r.minorRadius - s.minorRadius);
+    case PrimKind::EllipseArc:
+        return dist(r.center, s.center) + std::fabs(r.radius - s.radius) + std::fabs(r.minorRadius - s.minorRadius) +
+               dist(r.arcStart(), s.arcStart());
     case PrimKind::Dimension: return std::fabs(r.measurement - s.measurement) * 1e6 + dist(r.center, s.center);
     default: return 0;
     }
@@ -113,6 +136,9 @@ bool geometryMatches(const Primitive& r, const Primitive& s, const MatchCriteria
     case PrimKind::Arc:
         return dist(r.center, s.center) <= c.linTol && std::fabs(r.radius - s.radius) <= c.linTol &&
                arcAnglesMatch(r, s, c.linTol, c.angTol);
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc: return sameEllipse(r, s, c.linTol, c.angTol);
+    case PrimKind::Spline: return r.spline && s.spline && splinesMatch(*r.spline, *s.spline, c.linTol);
     case PrimKind::Dimension:
         if (!sameDimFamily(r.dimType, s.dimType)) return false;  // linear and aligned stand for each other (D78)
         return std::fabs(r.measurement - s.measurement) <= (isAngularDimType(r.dimType) ? c.angTol : c.linTol) &&
@@ -126,7 +152,8 @@ bool attributesMatch(const Primitive& r, const Primitive& s, const MatchCriteria
     if (c.matchLinetype && r.ltClass != s.ltClass) return false;
     if (c.requireLayer && r.layer.compare(s.layer, Qt::CaseInsensitive) != 0) return false;
     if (c.matchColor && colorDifference(r.aci, r.rgb, s.aci, s.rgb) > c.colorTol + 1e-9) return false;
-    if (c.requireByLayer && !(s.colorByLayer && s.ltByLayer)) return false;
+    if (c.matchLineweight && plottedLineweight(r.lineweight) != plottedLineweight(s.lineweight)) return false;
+    if (c.requireByLayer && !(s.colorByLayer && s.ltByLayer && s.lwByLayer)) return false;
     return true;
 }
 
@@ -134,13 +161,14 @@ void matchInto(const std::vector<Primitive>& ref, const std::vector<int>& refIdx
                const std::vector<int>& stuIdx, const MatchCriteria& c, bool geometryOnly, Matching& m) {
     if (m.refToStu.size() != ref.size() || m.stuToRef.size() != stu.size()) m.reset(ref.size(), stu.size());
     SpatialGrid grid(std::max(4 * c.linTol, 1e-9));
-    std::vector<int> lines, dims;
+    std::vector<int> lines, dims, splines;
     for (int j : stuIdx) {
         if (m.stuToRef[j] >= 0) continue;
         const Primitive& s = stu[j];
         if (isGeometric(s.kind)) grid.insert(keyPoint(s), j);
         if (s.kind == PrimKind::Line) lines.push_back(j);
         if (s.kind == PrimKind::Dimension) dims.push_back(j);
+        if (s.kind == PrimKind::Spline) splines.push_back(j);
     }
     // Strict primitives first, then loose centerlines (which have more freedom).
     std::vector<int> order;
@@ -167,7 +195,11 @@ void matchInto(const std::vector<Primitive>& ref, const std::vector<int>& refIdx
             if (cost < bestCost) { bestCost = cost; best = j; }
         };
         if (r.kind == PrimKind::Dimension) for (int j : dims) consider(j);
-        else if (usesLooseCenterline(r, c)) {
+        else if (r.kind == PrimKind::Spline) {  // the same curve may be sampled anywhere along it: no key point
+            const BBox rb = r.bbox();
+            for (int j : splines)
+                if (rb.gap(stu[j].bbox()) <= c.linTol) consider(j);
+        } else if (usesLooseCenterline(r, c)) {
             const BBox rb = r.bbox();
             for (int j : lines)
                 if (rb.gap(stu[j].bbox()) <= c.linTol) consider(j);
@@ -225,22 +257,29 @@ std::vector<Pairing> pairNearMisses(const std::vector<Primitive>& ref, const std
         for (int j : stuUnmatched) {
             if (stuUsed[j]) continue;
             const Primitive& s = stu[j];
-            if (s.kind != r.kind) continue;
+            if (s.kind != r.kind && !otherShape(r.kind, s.kind)) continue;
             double score = 0;
             switch (r.kind) {
-            case PrimKind::Line: {
+            case PrimKind::Line:
+            case PrimKind::Spline: {
                 score = lineEndpointError(r, s) / 2;
                 if (score > radius) continue;
                 break;
             }
             case PrimKind::Circle:
                 if (dist(r.center, s.center) > radius) continue;
-                score = dist(r.center, s.center) + std::fabs(r.radius - s.radius);
+                score = s.kind != r.kind ? ellipseScore(r, s) : dist(r.center, s.center) + std::fabs(r.radius - s.radius);
                 break;
             case PrimKind::Arc:
                 if (dist(r.center, s.center) > radius) continue;
-                score = dist(r.center, s.center) + std::fabs(r.radius - s.radius) +
-                        (dist(r.arcStart(), s.arcStart()) + dist(r.arcEnd(), s.arcEnd())) / 2;
+                score = s.kind != r.kind ? ellipseScore(r, s)
+                                         : dist(r.center, s.center) + std::fabs(r.radius - s.radius) +
+                                               (dist(r.arcStart(), s.arcStart()) + dist(r.arcEnd(), s.arcEnd())) / 2;
+                break;
+            case PrimKind::Ellipse:
+            case PrimKind::EllipseArc:
+                if (dist(r.center, s.center) > radius) continue;
+                score = ellipseScore(r, s);
                 break;
             case PrimKind::Dimension:
                 if (!sameDimFamily(r.dimType, s.dimType) || dist(r.center, s.center) > radius) continue;
@@ -289,6 +328,35 @@ std::vector<Pairing> pairNearMisses(const std::vector<Primitive>& ref, const std
                 if (std::fabs(r.radius - s.radius) <= c.linTol && std::fabs(r.sweep() - s.sweep()) * r.radius <= c.linTol)
                     turn = angleDiff(r.a0, s.a0);
                 break;
+            case PrimKind::Ellipse:
+            case PrimKind::EllipseArc:
+                if (std::fabs(r.radius - s.radius) > c.linTol || std::fabs(r.minorRadius - s.minorRadius) > c.linTol) break;
+                if (r.kind == PrimKind::Ellipse) {
+                    turn = lineAngleDiff(r.axisAngle, s.axisAngle);
+                } else if (std::fabs(r.sweep() - s.sweep()) * r.radius <= c.linTol) {
+                    // Turned about its center: its start moves round by the same angle.
+                    turn = angleDiff((r.arcStart() - r.center).angle(), (s.arcStart() - s.center).angle());
+                }
+                break;
+            case PrimKind::Spline: {
+                // The same curve, either way round, moved and turned a little: its ends onto the
+                // solution's, then compared whole.
+                const double chord = dist(r.p0, r.p1);
+                if (chord <= c.linTol || std::fabs(r.size() - s.size()) > 2 * c.linTol + 1e-9 * r.size() ||
+                    std::fabs(chord - dist(s.p0, s.p1)) > 2 * c.linTol)
+                    break;
+                for (int ord = 0; ord < 2 && turn < 0; ++ord) {
+                    const Vec2 a = ord ? s.p1 : s.p0, b = ord ? s.p0 : s.p1;
+                    const double th = (r.p1 - r.p0).angle() - (b - a).angle();
+                    if (angleDiff(th, 0) > kDisplacedMaxTurn) continue;
+                    Transform2D T = Transform2D::rotation(th);
+                    const Vec2 moved = T.apply(a);
+                    T.tx = r.p0.x - moved.x;
+                    T.ty = r.p0.y - moved.y;
+                    if (splinesMatch(*r.spline, *transformed(s, T).spline, c.linTol)) turn = angleDiff(th, 0);
+                }
+                break;
+            }
             default: break;
             }
             if (turn < 0 || turn > kDisplacedMaxTurn) continue;

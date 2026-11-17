@@ -112,8 +112,16 @@ tests/corpus/gen/dump_fixtures.ps1 -DwgRead <path to dwgread>
 | `ARC_DIMENSION` | `act_measurement` is the **arc length** (0.785 for the R0.5 quarter arc, `dim_ref`), `xline1_pt`, `xline2_pt`, `center_pt`, `arc_start_param`, `arc_end_param`, `is_partial` | a length, not an angle |
 | `DIMENSION_ANG2LN`, `_ORDINATE` | `act_measurement` *(source only)* | |
 | `HATCH` | see the HATCH section below | read as a filled region; compared only with "check hatches" |
-| `SPLINE` | `degree`, `fit_pts` / `ctrl_pts`, `knots` | Unsupported in v1 |
-| `ELLIPSE` | `center`, `sm_axis`, `axis_ratio`, `start_angle`, `end_angle` | Unsupported in v1 |
+| `SPLINE` | `scenario` 2 (fit points): `fit_pts`, `beg_tan_vec` / `end_tan_vec` (unit, zero for none), `fit_tol` (1e-10 when none), `knotparam` (0 chord, 1 square root, 2 uniform), `degree` 3, **no control points or knots**. `scenario` 1 (control points): `degree`, `knots`, `ctrl_pts: [{x, y, z, w?}]`, `rational`, `weighted`, `periodic`, `closed_b` | **WCS** (D99). AutoCAD's curve through fit points is rebuilt: natural ends (second derivative 0) unless tangents are given; checked against AutoCAD's own control points. A closed one repeats its first fit point at the end and stores the tangent AutoCAD chose there. MIRROR/ROTATE/SCALE rewrite the fit points |
+| spline-fit `POLYLINE_2D` / `_3D` (`flag & 4`) | `curve_type` 5 quadratic, 6 cubic; frame vertices `flag & 16`, AutoCAD's computed vertices `flag & 8` | the uniform B-spline of the frame, clamped (open) or periodic (closed): it goes through the computed vertices (D99) |
+| `linewt` (every entity, and LAYER) | lineweight code: 0 to 23 are 0.00 to 2.11 mm (11 = 0.50 mm, 14 = 0.70 mm), 29 ByLayer, 30 ByBlock, 31 Default. DXF group 370 holds the width itself (hundredths of a mm; −1, −2, −3) | `lw_*` (D100). LWDEFAULT, what Default prints as, is a per-computer setting, not in the file |
+| `LTYPE` | `pattern_len`, `dashes: [{length}]` (negative: a gap, 0: a dot) | `rd_ref` (D101): HIDDEN 0.375 (0.25, −0.125), CENTER 2.0 (gaps 0.25) |
+| every entity's `ltype_scale`; HEADER `LTSCALE`, `PSLTSCALE` | the object's linetype scale, the drawing's | a dash as drawn is its length × LTSCALE × `ltype_scale` (D101) |
+| `HATCH` `deflines: [{angle, pt0, offset, dashes}]` | its pattern's lines, **already scaled and turned** (ANSI31: 45°, spacing 0.125 at scale 1, 0.25 at scale 2); none for a solid fill | the spacing is `offset` across `angle` (D101) |
+| `LAYOUT` | `layout_name`, `block_header` (its paper-space block), `plotsettings.plot_paper_unit` (0 inches, 1 mm), `plotsettings.paper_units` / `drawing_units` | D101 |
+| `VIEWPORT` (in a layout's block) | `width`, `height` (on the sheet), `VIEWCTR`, `VIEWSIZE` (the model height shown), `view_target`, `VIEWDIR`, `VIEWTWIST` | the block's first is the sheet itself; scale = `height` / `VIEWSIZE` (1:2 → 6 / 12) (D101) |
+| a dimension's `*D` block `MTEXT` | `text_height`: its text as drawn, DIMSCALE in (DIMTXT 0.125 × DIMSCALE 2 → 0.25; DIMSCALE 0 in model space acts as 1) | D101 |
+| `ELLIPSE` | `center`, `sm_axis` (major semi-axis from the center), `extrusion`, `axis_ratio`, `start_angle`, `end_angle` (parameters; 0 to 2π for a whole one, the end printed `6.28318530717959`) | **WCS** (D98). The minor semi-axis is `axis_ratio` × (`extrusion` × `sm_axis`). **MIRROR gives an ellipse extrusion −Z** (`ell_mirrored`), unlike an arc; ROTATE3D too (`ell_flipped3d`) |
 | `XLINE` / `RAY` | `point`, `vector` | Unsupported (infinite construction line) |
 | `POINT` | `x`, `y`, `z` | ignored |
 | `SOLID`, `VIEWPORT`, `LEADER`, `MLEADER`, `TOLERANCE`, `WIPEOUT` | — | ignored (annotation / paper space) |

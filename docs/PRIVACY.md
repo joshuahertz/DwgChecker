@@ -48,8 +48,6 @@ anyone else.
   read DWG files.
 - **AutoCAD**, if you use "Open in AutoCAD": the file is opened in your own copy
   of AutoCAD, and Autodesk's privacy policy applies to AutoCAD.
-- **ODA File Converter**, only if you set it up as a fallback for files that can't
-  be read. It runs on your computer under the Open Design Alliance's terms.
 
 ## Microsoft Store and Windows
 

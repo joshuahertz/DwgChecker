@@ -386,7 +386,7 @@ QWidget* DetailDialog::buildPrimitivesPage(QWidget* parent) {
     lay->addWidget(hint);
     m_prims = new QTableWidget(page);
     m_prims->setColumnCount(7);
-    m_prims->setHorizontalHeaderLabels({tr("#"), tr("Kind"), tr("Geometry"), tr("Layer"), tr("Linetype"), tr("Status"), tr("Source")});
+    m_prims->setHorizontalHeaderLabels({tr("#"), tr("Kind"), tr("Geometry"), tr("Layer"), tr("Linetype, lineweight"), tr("Status"), tr("Source")});
     m_prims->verticalHeader()->setVisible(false);
     m_prims->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_prims->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -416,6 +416,7 @@ void DetailDialog::fillPrimitives() {
         const Primitive& p = d->prims[i];
         const PrimStatus st = student ? r.stuStatus[i] : r.refStatus[i];
         QString lt = p.kind == PrimKind::Hatch ? QString() : QStringLiteral("%1 (%2)").arg(p.ltypeName, ltClassName(p.ltClass));
+        if (isGeometric(p.kind)) lt += tr(", lineweight %1").arg(lineweightName(p.lineweight));
         QString src = p.sourceType + QStringLiteral("  ") + p.sourceId;
         if (!p.mergedFrom.isEmpty()) src += tr("  merged with %1").arg(p.mergedFrom.join(", "));
         if (p.stacked > 0) src += tr("  (%1 stacked duplicate(s) removed)").arg(p.stacked);

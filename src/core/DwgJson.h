@@ -22,6 +22,7 @@ public:
         int flag0 = 0;  // 1 frozen, 2 off, 8 locked, 16 plot
         int color = 7;          // ACI number, or -1 for a true color
         quint32 rgb = 0xFFFFFF; // the color as RGB
+        int lineweight = -3;    // hundredths of a mm, or Default (-3): lineweightFromCode
         bool frozen() const { return flag0 & 1; }
         bool off() const { return flag0 & 2; }
         bool locked() const { return flag0 & 8; }
@@ -60,6 +61,9 @@ public:
     const Layer* layer(quint64 handle) const;
     const Layer* layerByName(const QString& name) const;
     QString ltypeName(quint64 handle) const;
+    quint64 ltypeByName(const QString& name) const;  // 0 when there is none (letter case ignored)
+    // Every object of a type ("LAYOUT"...), in file order.
+    std::vector<const QJsonObject*> objectsOfType(const QString& type) const;
     const Block* block(quint64 handle) const;
 
     // Top-level entities in model space / paper space, in file (database) order.

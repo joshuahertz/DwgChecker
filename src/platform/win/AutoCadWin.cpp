@@ -37,7 +37,8 @@ private:
 };
 
 // IDispatch helpers with retry while AutoCAD is busy (RPC_E_CALL_REJECTED).
-HRESULT invoke(IDispatch* d, const wchar_t* name, WORD flags, std::vector<VARIANT> args, VARIANT* result) {
+HRESULT invoke(IDispatch* d, const wchar_t* name, WORD flags, std::vector<VARIANT> args, VARIANT* result,
+               EXCEPINFO* exception = nullptr) {
     DISPID id;
     LPOLESTR n = const_cast<LPOLESTR>(name);
     HRESULT hr = d->GetIDsOfNames(IID_NULL, &n, 1, LOCALE_USER_DEFAULT, &id);
@@ -47,7 +48,7 @@ HRESULT invoke(IDispatch* d, const wchar_t* name, WORD flags, std::vector<VARIAN
     DISPID named = DISPID_PROPERTYPUT;
     if (flags & DISPATCH_PROPERTYPUT) { dp.cNamedArgs = 1; dp.rgdispidNamedArgs = &named; }
     for (int attempt = 0; attempt < 25; ++attempt) {
-        hr = d->Invoke(id, IID_NULL, LOCALE_USER_DEFAULT, flags, &dp, result, nullptr, nullptr);
+        hr = d->Invoke(id, IID_NULL, LOCALE_USER_DEFAULT, flags, &dp, result, exception, nullptr);
         if (hr != RPC_E_CALL_REJECTED && hr != RPC_E_SERVERCALL_RETRYLATER) break;
         QThread::msleep(200);
     }
@@ -81,20 +82,33 @@ IDispatch* runningApplication() {
     return nullptr;
 }
 
+// Why a call into AutoCAD failed, for the user (D97): busy only when it said so; else AutoCAD's
+// own message, else the error code.
+QString failureText(HRESULT hr, EXCEPINFO& ex) {
+    if (ex.pfnDeferredFillIn) ex.pfnDeferredFillIn(&ex);
+    QString text;
+    if (hr == RPC_E_CALL_REJECTED || hr == RPC_E_SERVERCALL_RETRYLATER)
+        text = QStringLiteral("AutoCAD is busy (a command or dialog is open): press Esc there and try again");
+    else if (hr == DISP_E_EXCEPTION && ex.bstrDescription && *ex.bstrDescription)
+        text = QStringLiteral("AutoCAD says: %1").arg(QString::fromWCharArray(ex.bstrDescription).trimmed());
+    else
+        text = QStringLiteral("error 0x%1").arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0'));
+    SysFreeString(ex.bstrSource);
+    SysFreeString(ex.bstrDescription);
+    SysFreeString(ex.bstrHelpFile);
+    ex = EXCEPINFO{};
+    return text;
+}
+
 class WinLauncher : public IAutoCadLauncher {
 public:
+    // Only looks for it: no call into AutoCAD, which could wait on a busy one (D97).
     QString runningAutoCad() const override {
         ComScope com;
         IDispatch* app = runningApplication();
         if (!app) return {};
-        QString name = QStringLiteral("AutoCAD");
-        VARIANT v;
-        VariantInit(&v);
-        if (SUCCEEDED(invoke(app, L"Version", DISPATCH_PROPERTYGET, {}, &v)) && v.vt == VT_BSTR && v.bstrVal)
-            name += QLatin1Char(' ') + QString::fromWCharArray(v.bstrVal).section(QLatin1Char(' '), 0, 0);  // "25.1s (LMS Tech)" -> 25.1s
-        VariantClear(&v);
         app->Release();
-        return name;
+        return QStringLiteral("AutoCAD");
     }
 
     bool openInRunning(const QString& file, QString* error) override {
@@ -105,20 +119,23 @@ public:
             return false;
         }
         bool ok = false;
+        EXCEPINFO ex{};
         VARIANT docs;
         VariantInit(&docs);
-        if (SUCCEEDED(invoke(app, L"Documents", DISPATCH_PROPERTYGET, {}, &docs)) && docs.vt == VT_DISPATCH && docs.pdispVal) {
+        HRESULT hr = invoke(app, L"Documents", DISPATCH_PROPERTYGET, {}, &docs, &ex);
+        if (SUCCEEDED(hr) && docs.vt == VT_DISPATCH && docs.pdispVal) {
             VARIANT path, ro, res;
             VariantInit(&path); VariantInit(&ro); VariantInit(&res);
             path.vt = VT_BSTR;
             path.bstrVal = SysAllocString(reinterpret_cast<const OLECHAR*>(file.utf16()));
             ro.vt = VT_BOOL;
             ro.boolVal = VARIANT_TRUE;  // Documents.Open(Name, ReadOnly = True)
-            ok = SUCCEEDED(invoke(docs.pdispVal, L"Open", DISPATCH_METHOD, {path, ro}, &res));
+            hr = invoke(docs.pdispVal, L"Open", DISPATCH_METHOD, {path, ro}, &res, &ex);
+            ok = SUCCEEDED(hr);
             VariantClear(&res);
             VariantClear(&path);
-            VariantClear(&docs);
         }
+        VariantClear(&docs);
         if (ok) {  // bring AutoCAD to the front
             VARIANT vis, hwnd;
             VariantInit(&vis); VariantInit(&hwnd);
@@ -136,7 +153,9 @@ public:
                 VariantClear(&hwnd);
             }
         } else if (error) {
-            *error = QStringLiteral("AutoCAD did not open the file (it may be busy with a command: press Esc there and try again)");
+            *error = failureText(SUCCEEDED(hr) ? E_UNEXPECTED : hr, ex);
+        } else {
+            failureText(hr, ex);  // frees the strings
         }
         app->Release();
         return ok;

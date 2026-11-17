@@ -85,6 +85,60 @@ and inserted by layer.
 | `color_near.dwg` | the 255,0,0 true color drawn as 250,5,5 (2 % different) |
 | `color_bylayer.dwg` | the same colors and linetypes, every one set by layer (layers RED, HID7, GREEN) |
 
+Ellipse set (D98). A 6 × 3 plate with a whole ellipse 2 × 1 at (1.5,1.5), its
+major axis along (0.8,0.6) (36.87°), and the left half of an ellipse 2 × 1.2 at
+(4.5,1.5) with an upright major axis, from (4.5,2.5) through (3.9,1.5) to
+(4.5,0.5).
+
+| File | What it is |
+|---|---|
+| `ell_ref.dwg` | reference |
+| `ell_translated.dwg`, `ell_rotated37.dwg` | moved by (5.25, 3.125); rotated 37° about the origin |
+| `ell_mirrored.dwg`, `ell_flipped3d.dwg` | MIRROR about the Y axis; ROTATE3D 180° about X (both give the ellipses extrusion −Z) |
+| `ell_redraw.dwg` | lines in another order and direction, each ellipse from the other end of its major axis |
+| `ell_block.dwg` | both drawn as a circle and an arc in blocks inserted at uneven scales |
+| `ell_sizeoff.dwg` | whole ellipse 2 × 0.9 |
+| `ell_shifted.dwg` | whole ellipse at (1.6, 1.5) |
+| `ell_turned.dwg` | whole ellipse turned 10° about its center |
+| `ell_arcangle.dwg` | half ellipse ending at parameter 0.9π |
+| `ell_circle.dwg` | whole ellipse drawn as a circle Ø1.5 |
+
+Spline set (D99). A 6 × 3 plate whose top edge is a spline from (6,3) through
+(4.5,3.4) (3,2.8) (1.5,3.3) to (0,3), and a closed spline through (2,1) (3,1.6)
+(4,1.2) (3.2,0.6) inside it. The core console's SPLINE is the older command (fit
+points, chord knots, no Knots or Method options).
+
+| File | What it is |
+|---|---|
+| `spl_ref.dwg` | reference |
+| `spl_translated.dwg`, `spl_rotated37.dwg`, `spl_mirrored.dwg` | moved by (5.25, 3.125); rotated 37°; MIRROR about the Y axis |
+| `spl_reversed.dwg` | the top edge drawn from (0,3) to (6,3) |
+| `spl_block.dwg` | the part at half size as a block, inserted at scale 2 |
+| `spl_cv.dwg` | both splines remade from AutoCAD's own control points (entget), without fit points |
+| `spl_pointoff.dwg` | the top edge's third point at (3, 2.7) |
+| `spl_fewer.dwg` | the top edge through 4 points (no (3, 2.8)) |
+| `spl_tangent.dwg` | the top edge with end tangents given |
+| `spl_tol.dwg` | the top edge with a fit tolerance of 0.1 (not graded) |
+| `spl_pline.dwg` | the top edge as a spline-fit polyline of the same points (PEDIT Spline) |
+| `spl_shifted.dwg` | the closed spline moved by (0.1, 0) |
+| `spl_fullacad.dwg` | **made by hand in full AutoCAD 2026** (not rebuilt by the script): splines through (0,0) (1,1) (2,0.5) (3,1.5) (4,0) with chord, square-root and uniform knots, and one by control vertices, each 3 higher |
+
+Lineweight set (D100). Four lines 4 long at y = 0…3.
+
+| File | What it is |
+|---|---|
+| `lw_ref.dwg` | on layer THICK (0.50 mm by layer), by layer on OBJECT (Default), 0.35 mm set on the line, and a ByBlock line in a block inserted at 0.70 mm |
+| `lw_wrong.dwg` | the first two lines 0.25 mm set on the line (the first wrong, the second the same as Default) |
+| `lw_bylayer.dwg` | the same lineweights, every one by layer (layers L35, L70) |
+
+Readability set (D101). `rd_ref.dwg`: a 6 × 3 plate with a long hidden line, a
+hidden line 0.25 long (its dash pattern is 0.375), a center line at linetype scale
+0.05, squares hatched ANSI31 at scale 0.1 (dense), 2 (a 0.3 square: sparse) and 1,
+and two dimensions, text 0.18 and 0.04, both with arrows 0.18. Layout1 has one
+viewport showing it all at 1:2. `rd_big.dwg` (D102): sizes too large, on the same
+plate and layout: a hidden line at linetype scale 3 (gaps 0.375), a 2 × 2 square
+hatched ANSI31 at scale 4 (lines 0.5 apart), and a dimension with text and arrows 0.7.
+
 Regenerate everything (a few minutes; it needs a licensed AutoCAD):
 
 ```bash

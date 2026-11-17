@@ -48,6 +48,13 @@ QString fmtDeg(double radians, double other) {
     return fixed(deg, dec) + QChar(0x00B0);
 }
 
+QString fmtAxes(const Primitive& p, const Primitive* o) {
+    // More digits only for an axis that differs: fmtLen would print the same two to 8 places.
+    auto axis = [&](double v, double other) { return o && v != other ? fmtLen(2 * v, 2 * other) : fmtLen(2 * v); };
+    return QStringLiteral("%1 %2 %3")
+        .arg(axis(p.radius, o ? o->radius : 0), QChar(0x00D7), axis(p.minorRadius, o ? o->minorRadius : 0));
+}
+
 QString lineDescriptor(const Primitive& p, bool forLinetypeError) {
     const QString kind = kindName(p.kind);
     switch (p.ltClass) {
@@ -70,6 +77,12 @@ QString describe(const Primitive& p) {
     case PrimKind::Line: return QStringLiteral("%1 %2 long").arg(lineDescriptor(p), fmtLen(p.length()));
     case PrimKind::Circle: return QStringLiteral("%1 %2%3").arg(lineDescriptor(p), QChar(0x00D8), fmtLen(2 * p.radius));
     case PrimKind::Arc: return QStringLiteral("%1 R%2").arg(lineDescriptor(p), fmtLen(p.radius));
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc: return QStringLiteral("%1 %2").arg(lineDescriptor(p), fmtAxes(p));
+    case PrimKind::Spline:
+        if (p.spline && p.spline->from == SplineFrom::FitPoints)
+            return QStringLiteral("%1 through %2 points").arg(lineDescriptor(p)).arg(p.spline->fitCount());
+        return QStringLiteral("%1 %2 long").arg(lineDescriptor(p), fmtLen(p.size()));
     case PrimKind::Dimension: return QStringLiteral("dimension %1").arg(fmtLen(p.measurement));
     case PrimKind::Text: return QStringLiteral("text \"%1\"").arg(p.text.left(30));
     case PrimKind::Hatch: return QStringLiteral("hatch %1").arg(p.text);
@@ -84,6 +97,53 @@ QString describeGeometry(const Primitive& p) {
     case PrimKind::Circle: return QStringLiteral("center %1, radius %2").arg(fmtPt(p.center), fmtLen(p.radius));
     case PrimKind::Arc:
         return QStringLiteral("center %1, radius %2, %3 -> %4").arg(fmtPt(p.center), fmtLen(p.radius), fmtDeg(p.a0), fmtDeg(p.a1));
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc: {
+        QString t = QStringLiteral("center %1, axes %2, major axis at %3").arg(fmtPt(p.center), fmtAxes(p), fmtDeg(p.axisAngle));
+        if (p.kind == PrimKind::EllipseArc) {
+            // From the major axis, as AutoCAD's ELLIPSE asks for them: the angle to the point at
+            // each end, not its parameter.
+            auto from = [&](double t) { return normalizeAngle(std::atan2(p.minorRadius * std::sin(t), p.radius * std::cos(t))); };
+            t += QStringLiteral(", %1 -> %2 from it").arg(fmtDeg(from(p.a0)), fmtDeg(from(p.a1)));
+        }
+        return t;
+    }
+    case PrimKind::Spline: {
+        if (!p.spline) return {};
+        const SplineData& s = *p.spline;
+        auto list = [](const std::vector<Vec2>& v) {  // the first four and the last when there are many
+            QStringList l;
+            for (size_t i = 0; i < v.size(); ++i) {
+                if (v.size() > 6 && i == 4) {
+                    l << QStringLiteral("\u2026");
+                    i = v.size() - 2;
+                    continue;
+                }
+                l << fmtPt(v[i]);
+            }
+            return l.join(QStringLiteral(", "));
+        };
+        QString t;
+        switch (s.from) {
+        case SplineFrom::FitPoints: {
+            const std::vector<Vec2> own(s.fit.begin(), s.fit.begin() + static_cast<std::ptrdiff_t>(s.fitCount()));
+            t = QStringLiteral("through %1 (%2 points)").arg(list(own)).arg(own.size());
+            break;
+        }
+        case SplineFrom::Polyline:
+            t = QStringLiteral("spline-fit polyline of degree %1, vertices %2").arg(s.degree).arg(list(s.fit));
+            break;
+        case SplineFrom::ControlPoints:
+            t = QStringLiteral("degree %1, %2 control points%3, from %4 to %5")
+                    .arg(s.degree)
+                    .arg(s.ctrl.size())
+                    .arg(s.weights.empty() ? QString() : QStringLiteral(" (rational)"), fmtPt(p.p0), fmtPt(p.p1));
+            break;
+        }
+        t += QStringLiteral(", %1 long").arg(fmtLen(s.length));
+        if (s.closed(1e-9 * std::max(1.0, s.length))) t += QStringLiteral(", closed");
+        return t;
+    }
     case PrimKind::Text: return QStringLiteral("\"%1\" at %2").arg(p.text.left(40), fmtPt(p.center));
     case PrimKind::Dimension: {
         const QString shown = dimShownText(p);

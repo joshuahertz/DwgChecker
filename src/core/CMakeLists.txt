@@ -4,6 +4,7 @@
 # system's (Linux, macOS), the one QtCore itself uses there (D81, D93).
 add_library(dwgcore STATIC
   Geometry.h Geometry.cpp
+  Spline.h Spline.cpp
   Model.h Model.cpp
   Color.h Color.cpp
   Settings.h Settings.cpp
@@ -26,6 +27,7 @@ add_library(dwgcore STATIC
   ClassSummary.h ClassSummary.cpp
   Csv.h Csv.cpp
   Format.h Format.cpp
+  Readability.h Readability.cpp
 )
 target_include_directories(dwgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 if(TARGET Qt6::ZlibPrivate)

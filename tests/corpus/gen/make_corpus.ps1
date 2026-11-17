@@ -102,6 +102,36 @@ $variants = [ordered]@{
   'color_wrong'          = @{ body = '(dc-color-ref 5 16711680)' }
   'color_near'           = @{ body = '(dc-color-ref 1 16385285)' }
   'color_bylayer'        = @{ body = '(dc-color-bylayer)' }
+  'ell_ref'              = @{ body = '(dc-ell-ref)' }
+  'ell_translated'       = @{ body = '(dc-ell-ref) (command "_.MOVE" (dc-all) "" (dc-p 0 0) (dc-p 5.25 3.125))' }
+  'ell_rotated37'        = @{ body = '(dc-ell-ref) (command "_.ROTATE" (dc-all) "" (dc-p 0 0) 37)' }
+  'ell_mirrored'         = @{ body = '(dc-ell-ref) (command "_.MIRROR" (dc-all) "" (dc-p 0 0) (dc-p 0 1) "_Y")' }
+  'ell_flipped3d'        = @{ body = '(dc-ell-ref) (command "_.ROTATE3D" (dc-all) "" "_X" (dc-p 0 0) 180)' }
+  'ell_redraw'           = @{ body = '(dc-ell-redraw)' }
+  'ell_block'            = @{ body = '(dc-ell-block)' }
+  'ell_sizeoff'          = @{ body = '(dc-ell 1.5 1.5 0.45 pi)' }
+  'ell_shifted'          = @{ body = '(dc-ell 1.6 1.5 0.5 pi)' }
+  'ell_turned'           = @{ body = '(dc-ell-ref) (command "_.ROTATE" *E1* "" (dc-p 1.5 1.5) 10)' }
+  'ell_arcangle'         = @{ body = '(dc-ell 1.5 1.5 0.5 (* 0.9 pi))' }
+  'ell_circle'           = @{ body = '(dc-ell-circle)' }
+  'spl_ref'              = @{ body = '(dc-spl-ref)' }
+  'spl_translated'       = @{ body = '(dc-spl-ref) (command "_.MOVE" (dc-all) "" (dc-p 0 0) (dc-p 5.25 3.125))' }
+  'spl_rotated37'        = @{ body = '(dc-spl-ref) (command "_.ROTATE" (dc-all) "" (dc-p 0 0) 37)' }
+  'spl_mirrored'         = @{ body = '(dc-spl-ref) (command "_.MIRROR" (dc-all) "" (dc-p 0 0) (dc-p 0 1) "_Y")' }
+  'spl_reversed'         = @{ body = '(dc-spl (reverse (dc-spl-top 1)))' }
+  'spl_block'            = @{ body = '(dc-spl-block)' }
+  'spl_cv'               = @{ body = '(dc-spl-ref) (dc-spl-as-cv *S1*) (dc-spl-as-cv *S2*)' }
+  'spl_pointoff'         = @{ body = '(dc-spl (list (dc-p 6 3) (dc-p 4.5 3.4) (dc-p 3 2.7) (dc-p 1.5 3.3) (dc-p 0 3)))' }
+  'spl_fewer'            = @{ body = '(dc-spl (list (dc-p 6 3) (dc-p 4.5 3.4) (dc-p 1.5 3.3) (dc-p 0 3)))' }
+  'spl_tangent'          = @{ body = '(dc-spl-tangent)' }
+  'spl_tol'              = @{ body = '(dc-spl-tol)' }
+  'spl_pline'            = @{ body = '(dc-spl-pline)' }
+  'spl_shifted'          = @{ body = '(dc-spl-shifted)' }
+  'lw_ref'               = @{ body = '(dc-lw "THICK" nil nil)' }
+  'lw_wrong'             = @{ body = '(dc-lw "OBJECT" 25 25)' }
+  'lw_bylayer'           = @{ body = '(dc-lw-bylayer)' }
+  'rd_ref'               = @{ body = '(dc-rd)' }
+  'rd_big'               = @{ body = '(dc-rd-big)' }
 }
 
 foreach ($name in $variants.Keys) {

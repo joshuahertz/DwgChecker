@@ -32,11 +32,12 @@ struct AlignResult {
     bool anchorFound = false;
 };
 
-// Signature used for anchoring: (kind, length or radius, arc sweep).
+// Signature used for anchoring: (kind, length or radius, arc sweep, minor semi-axis).
 struct Signature {
     PrimKind kind;
-    double size;   // line length / radius
-    double sweep;  // arcs only
+    double size;   // line length / radius / major semi-axis
+    double sweep;  // arcs and elliptical arcs only
+    double minor = 0;  // ellipses only
 };
 Signature signatureOf(const Primitive& p);
 bool signaturesMatch(const Signature& a, const Signature& b, double linTol, double angTol);

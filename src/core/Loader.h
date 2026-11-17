@@ -1,6 +1,6 @@
 #pragma once
-// Drawing loaders. IDrawingLoader hides how a DWG becomes JSON so the ODA SDK or
-// a DXF route can replace dwgread later.
+// Drawing loaders. IDrawingLoader hides how a DWG becomes JSON, so another reader could
+// replace dwgread later.
 
 #include "DwgJson.h"
 #include "Settings.h"
@@ -42,7 +42,6 @@ public:
 
 private:
     bool runDwgRead(const QString& file, QByteArray* out, QString* error, QStringList* warnings) const;
-    bool convertWithOda(const QString& file, QString* outFile, QString* error, const QString& workDir) const;
 
     LoaderSettings m_settings;
     QString m_version;

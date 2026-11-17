@@ -20,6 +20,7 @@ MatchCriteria criteriaFrom(const CompareSettings& s) {
     c.requireLayer = s.requireLayerMatch;
     c.matchColor = s.matchColor;
     c.colorTol = s.colorTolerance;
+    c.matchLineweight = s.matchLineweight;
     c.requireByLayer = s.requireByLayer;
     c.strictCenterlines = s.strictCenterlines;
     c.checkDimensions = s.checkDimensions;
@@ -82,16 +83,133 @@ QString sizeText(const Primitive& p) {
     case PrimKind::Line: return fmtLen(p.length()) + QStringLiteral(" long");
     case PrimKind::Circle: return QChar(0x00D8) + fmtLen(2 * p.radius);
     case PrimKind::Arc: return QStringLiteral("R") + fmtLen(p.radius);
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc: return fmtAxes(p);
+    case PrimKind::Spline: return fmtLen(p.size()) + QStringLiteral(" long");
     case PrimKind::Dimension: return isAngularDimType(p.dimType) ? fmtDeg(p.measurement) : fmtLen(p.measurement);
     default: return {};
     }
+}
+
+// A spline near the solution's (D99): moved as it is, drawn through other points, or another
+// curve through the same ones.
+QString splineText(const Primitive& r, const Primitive& s, bool displaced, double tol, double angTol, QString* label) {
+    const QString name = QStringLiteral("%1 at %2").arg(describe(r), fmtPt(messageLocation(r)));
+    if (displaced) {  // the same shape elsewhere, perhaps turned a little
+        *label = QStringLiteral("shifted");
+        QString t = QStringLiteral("%1 is shifted by %2").arg(name, fmtOffset(s.center - r.center));
+        const double turn = lineAngleDiff((r.p1 - r.p0).angle(), (s.p1 - s.p0).angle());
+        if (turn > angTol && turn * dist(r.p0, r.p1) > tol) t += QStringLiteral(" and rotated by %1").arg(fmtDeg(turn, 0));
+        return t;
+    }
+    const SplineData& R = *r.spline;
+    const SplineData& S = *s.spline;
+    for (Vec2 from : {s.p0, s.p1}) {  // the same curve, moved (either way round)
+        const Primitive moved = transformed(s, Transform2D::translation(r.p0.x - from.x, r.p0.y - from.y));
+        if (splinesMatch(R, *moved.spline, tol)) {
+            *label = QStringLiteral("shifted");
+            return QStringLiteral("%1 is shifted by %2").arg(name, fmtOffset(from - r.p0));
+        }
+    }
+    if (R.from == SplineFrom::FitPoints && S.from == SplineFrom::FitPoints) {
+        const size_t n = R.fit.size();
+        if (S.fit.size() != n || S.fitCount() != R.fitCount()) {
+            *label = QStringLiteral("wrong points");
+            return QStringLiteral("%1 is drawn through %2 points, expected %3").arg(name).arg(S.fitCount()).arg(R.fitCount());
+        }
+        // The student's points in the solution's order: as they are, or the other way round.
+        double ahead = 0, back = 0;
+        for (size_t i = 0; i < n; ++i) {
+            ahead += dist(R.fit[i], S.fit[i]);
+            back += dist(R.fit[i], S.fit[n - 1 - i]);
+        }
+        QStringList wrong;
+        int count = 0;
+        for (size_t i = 0; i < R.fitCount(); ++i) {  // a closed one's last point is its first
+            const Vec2 q = back < ahead ? S.fit[n - 1 - i] : S.fit[i];
+            if (dist(q, R.fit[i]) <= tol) continue;
+            if (++count <= 3)
+                wrong << QStringLiteral("point %1 drawn at %2, expected %3").arg(i + 1).arg(fmtPt(q), fmtPt(R.fit[i]));
+        }
+        if (count > 0) {
+            *label = QStringLiteral("wrong points");
+            QString t = QStringLiteral("%1: %2").arg(name, wrong.join(QStringLiteral("; ")));
+            if (count > 3) t += QStringLiteral("; and %1 more").arg(count - 3);
+            return t;
+        }
+        *label = QStringLiteral("wrong shape");
+        return QStringLiteral("%1 goes through the right points but is off by up to %2 (its end tangents or knots differ)")
+            .arg(name, fmtLen(splineDeviation(R, S)));
+    }
+    *label = QStringLiteral("wrong shape");
+    return QStringLiteral("%1 is off by up to %2").arg(name, fmtLen(splineDeviation(R, S)));
+}
+
+// A circle drawn as an ellipse, an elliptical arc as a circular arc... (D98).
+QString shapeText(const Primitive& r, const Primitive& s, double tol, QString* label) {
+    *label = QStringLiteral("wrong shape");
+    auto what = [](const Primitive& p) {
+        switch (p.kind) {
+        case PrimKind::Circle: return QStringLiteral("a circle %1%2").arg(QChar(0x00D8), fmtLen(2 * p.radius));
+        case PrimKind::Arc: return QStringLiteral("a circular arc R%1").arg(fmtLen(p.radius));
+        case PrimKind::Ellipse: return QStringLiteral("an ellipse %1").arg(fmtAxes(p));
+        default: return QStringLiteral("an elliptical arc %1").arg(fmtAxes(p));
+        }
+    };
+    QString t = QStringLiteral("%1 %2 at %3 drawn as %4").arg(lineDescriptor(r), sizeText(r), fmtPt(messageLocation(r)), what(s));
+    const Vec2 off = s.center - r.center;
+    if (off.length() > tol) t += QStringLiteral(" and center off by %1").arg(fmtOffset(off));
+    return t;
+}
+
+// An ellipse, or elliptical arc, near the solution's (D98).
+QString ellipseText(const Primitive& r, const Primitive& s, bool displaced, double tol, double angTol, QString* label) {
+    const QString name = QStringLiteral("%1 %2").arg(lineDescriptor(r), fmtAxes(r));
+    const QString at = fmtPt(messageLocation(r));
+    const Vec2 off = s.center - r.center;
+    const double turn = lineAngleDiff(r.axisAngle, s.axisAngle);
+    const bool turned = turn > angTol && turn * (r.radius - r.minorRadius) > tol;
+    if (displaced) {  // the same axes elsewhere, perhaps turned a little
+        *label = QStringLiteral("shifted");
+        QString t = QStringLiteral("%1 center off by %2").arg(name, fmtOffset(off));
+        if (turned) t += QStringLiteral(" and rotated by %1").arg(fmtDeg(turn, 0));
+        return t;
+    }
+    const bool majorOff = std::fabs(s.radius - r.radius) > tol, minorOff = std::fabs(s.minorRadius - r.minorRadius) > tol;
+    if (majorOff || minorOff) {
+        *label = QStringLiteral("wrong size");
+        QString t = majorOff && minorOff ? QStringLiteral("%1 at %2 drawn as %3").arg(name, at, fmtAxes(s, &r))
+                    : majorOff ? QStringLiteral("%1 at %2: major axis drawn %3").arg(name, at, fmtLen(2 * s.radius, 2 * r.radius))
+                               : QStringLiteral("%1 at %2: minor axis drawn %3").arg(name, at, fmtLen(2 * s.minorRadius, 2 * r.minorRadius));
+        if (off.length() > tol) t += QStringLiteral(" and center off by %1").arg(fmtOffset(off));
+        return t;
+    }
+    if (off.length() > tol) {
+        *label = QStringLiteral("shifted");
+        return QStringLiteral("%1 center off by %2").arg(name, fmtOffset(off));
+    }
+    if (turned) {
+        *label = QStringLiteral("rotated");
+        return QStringLiteral("%1 at %2 is rotated by %3").arg(name, at, fmtDeg(turn, 0));
+    }
+    if (r.kind == PrimKind::EllipseArc) {
+        *label = QStringLiteral("wrong arc angle");
+        return QStringLiteral("%1 at %2 runs from %3 to %4, expected %5 to %6")
+            .arg(name, at, fmtPt(s.arcStart()), fmtPt(s.arcEnd()), fmtPt(r.arcStart()), fmtPt(r.arcEnd()));
+    }
+    *label = QStringLiteral("shifted");
+    return QStringLiteral("%1 center off by %2").arg(name, fmtOffset(off));
 }
 
 // The message for a near-miss pair, and its short label for the summary ("shifted"...).
 QString nearMissText(const Primitive& r, const Primitive& s, bool superset, bool displaced, double tol, double angTol,
                      QString* label) {
     const QString at = fmtPt(messageLocation(r));
+    if (s.kind != r.kind) return shapeText(r, s, tol, label);
     switch (r.kind) {
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc: return ellipseText(r, s, displaced, tol, angTol, label);
+    case PrimKind::Spline: return splineText(r, s, displaced, tol, angTol, label);
     case PrimKind::Circle: {
         const Vec2 off = s.center - r.center;
         if (std::fabs(s.radius - r.radius) > tol) {
@@ -172,14 +290,19 @@ QString attributeText(const Primitive& r, const Primitive& s, const MatchCriteri
     const bool ltWrong = c.matchLinetype && r.ltClass != s.ltClass;
     const bool layerWrong = c.requireLayer && r.layer.compare(s.layer, Qt::CaseInsensitive) != 0;
     const bool colorWrong = c.matchColor && colorDifference(r.aci, r.rgb, s.aci, s.rgb) > c.colorTol + 1e-9;
+    const bool lwWrong = c.matchLineweight && plottedLineweight(r.lineweight) != plottedLineweight(s.lineweight);
     if (ltWrong) t += QStringLiteral(" drawn as %1").arg(lineDescriptor(s, true));
     if (colorWrong) t += QStringLiteral(" is %1, expected %2").arg(colorName(s.aci, s.rgb), colorName(r.aci, r.rgb));
+    if (lwWrong) t += QStringLiteral(" has lineweight %1, expected %2").arg(lineweightName(s.lineweight), lineweightName(r.lineweight));
     if (layerWrong) t += QStringLiteral(" is on layer %1, expected %2").arg(s.layer, r.layer);
-    if (c.requireByLayer && !(s.colorByLayer && s.ltByLayer)) {
+    if (c.requireByLayer && !(s.colorByLayer && s.ltByLayer && s.lwByLayer)) {
         QStringList what;
         if (!s.colorByLayer) what << QStringLiteral("color");
         if (!s.ltByLayer) what << QStringLiteral("linetype");
-        t += QStringLiteral(" has its %1 set on the object, not by layer").arg(what.join(QStringLiteral(" and ")));
+        if (!s.lwByLayer) what << QStringLiteral("lineweight");
+        const QString last = what.takeLast();
+        const QString all = what.isEmpty() ? last : what.join(QStringLiteral(", ")) + QStringLiteral(" and ") + last;
+        t += QStringLiteral(" has its %1 set on the object, not by layer").arg(all);
     }
     return t;
 }
@@ -400,7 +523,7 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
         }
 
     // ---- Pass B: geometry matches with the wrong linetype class / layer / dimension precision ----
-    if (crit.matchLinetype || crit.requireLayer || crit.matchColor || crit.requireByLayer ||
+    if (crit.matchLinetype || crit.requireLayer || crit.matchColor || crit.matchLineweight || crit.requireByLayer ||
         (crit.checkDimensions && crit.checkDimPrecision)) {
         for (int k : gorder) {
             Group& g = groups[k];
@@ -432,6 +555,9 @@ static CompareResult compareCore(const Drawing& ref, const Drawing& stu, const C
                 } else if (crit.matchColor && colorDifference(R.aci, R.rgb, S.aci, S.rgb) > crit.colorTol + 1e-9) {
                     cat = ErrCat::Color;
                     label = QStringLiteral("wrong color");
+                } else if (crit.matchLineweight && plottedLineweight(R.lineweight) != plottedLineweight(S.lineweight)) {
+                    cat = ErrCat::Lineweight;
+                    label = QStringLiteral("wrong lineweight");
                 } else if (crit.requireLayer && R.layer.compare(S.layer, Qt::CaseInsensitive) != 0) {
                     cat = ErrCat::Layer;
                     label = QStringLiteral("wrong layer");
@@ -652,7 +778,7 @@ double snapFactor(double f) {
 std::vector<double> largestSizes(const Drawing& d, PrimKind kind, int count) {
     std::vector<double> v;
     for (const auto& p : d.prims)
-        if (p.kind == kind) v.push_back(kind == PrimKind::Line ? p.length() : p.radius);
+        if (p.kind == kind) v.push_back(kind == PrimKind::Line ? p.length() : kind == PrimKind::Spline ? p.size() : p.radius);
     std::sort(v.rbegin(), v.rend());
     if (static_cast<int>(v.size()) > count) v.resize(count);
     return v;
@@ -673,7 +799,7 @@ QString factorText(double f) {
     return num(f) + QChar(0x00D7);
 }
 
-// The reference's graded geometry: lines, arcs and circles, not those of an Ignored view (D76).
+// The reference's graded geometry: lines, arcs, circles, ellipses and splines, not those of an Ignored view (D76).
 std::vector<int> gradedGeometry(const Drawing& ref, const CompareSettings& s, const ViewSet* views) {
     const bool ortho = s.mode == Mode::Orthographic && views && !views->views.empty();
     std::vector<int> out;
@@ -715,7 +841,7 @@ std::vector<double> scaleCandidates(const Drawing& ref, const Drawing& stu) {
     // 2. Sizes measured in the drawings, snapped to a nice factor when within 0.2%.
     const double dr = ref.bbox().diagonal(), ds = stu.bbox().diagonal();
     if (dr > 0 && ds > 0) add(snapFactor(ds / dr));
-    for (PrimKind k : {PrimKind::Line, PrimKind::Circle, PrimKind::Arc}) {
+    for (PrimKind k : {PrimKind::Line, PrimKind::Circle, PrimKind::Arc, PrimKind::Ellipse, PrimKind::EllipseArc, PrimKind::Spline}) {
         const auto a = largestSizes(ref, k, 3), b = largestSizes(stu, k, 3);
         for (double x : a)
             for (double y : b)
@@ -780,7 +906,39 @@ static CompareResult compareAtBestScale(const Drawing& ref, const Drawing& stu, 
     return r;
 }
 
+ReadOptions readOptionsFrom(const CompareSettings& s) {
+    ReadOptions o;
+    o.dashes = s.readDashes;
+    o.hatches = s.readHatches;
+    o.dimensions = s.readDimensions;
+    o.strictness = static_cast<ReadStrictness>(std::clamp(s.readStrictness, 0, 2));
+    o.onPaper = s.readOnPaper;
+    return o;
+}
+
+static CompareResult gradeDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views);
+
 CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
+    CompareResult r = gradeDrawings(ref, stu, s, views);
+    // Readability (D101): the student's file on its own, but for an Ignored view's objects (a
+    // title block, say). One item per problem; as errors they fail the drawing, as the view
+    // checks do, without changing its score.
+    const ReadOptions o = readOptionsFrom(s);
+    if (!o.any()) return r;
+    std::vector<char> skip(stu.prims.size(), 0);
+    if (views && s.mode == Mode::Orthographic)
+        for (size_t j = 0; j < stu.prims.size() && j < r.stuView.size(); ++j)
+            skip[j] = r.stuView[j] >= 0 && views->isIgnored(r.stuView[j]);
+    for (const ReadIssue& i : readabilityIssues(stu, o, &skip)) {
+        const bool fails = s.readAsErrors && !i.label.isEmpty();
+        r.errors.push_back({ErrCat::Readability, (fails ? QString() : QStringLiteral("warning: ")) + i.text, -1, {}, i.prims, fails,
+                            fails ? i.label : QString()});
+        if (fails) r.pass = false;
+    }
+    return r;
+}
+
+static CompareResult gradeDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
     // Dimensions and hatches are checked only where the solution has some; otherwise every
     // one the student drew would count as extra. (Settings hides those checks then.)
     const bool dims = s.checkDimensions && ref.count(PrimKind::Dimension) > 0;
@@ -789,7 +947,7 @@ CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const Comp
         CompareSettings t = s;
         t.checkDimensions = dims;
         t.checkHatches = hatches;
-        return compareDrawings(ref, stu, t, views);
+        return gradeDrawings(ref, stu, t, views);
     }
     CompareResult r = compareAtBestScale(ref, stu, s, views);
     if (s.mode != Mode::Absolute || r.refCount == 0 || r.matched >= r.refCount) return r;

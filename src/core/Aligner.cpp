@@ -9,6 +9,9 @@ Signature signatureOf(const Primitive& p) {
     case PrimKind::Line: return {p.kind, p.length(), 0};
     case PrimKind::Arc: return {p.kind, p.radius, p.sweep()};
     case PrimKind::Circle: return {p.kind, p.radius, kTwoPi};
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc: return {p.kind, p.radius, p.sweep(), p.minorRadius};
+    case PrimKind::Spline: return {p.kind, p.size(), dist(p.p0, p.p1)};  // its length, and the span of its ends
     default: return {p.kind, 0, 0};
     }
 }
@@ -16,9 +19,11 @@ Signature signatureOf(const Primitive& p) {
 bool signaturesMatch(const Signature& a, const Signature& b, double linTol, double angTol) {
     if (a.kind != b.kind) return false;
     // A line whose endpoints are each within tol can differ in length by 2*tol.
-    const double sizeTol = a.kind == PrimKind::Line ? 2 * linTol : linTol;
+    const double sizeTol = a.kind == PrimKind::Line ? 2 * linTol : a.kind == PrimKind::Spline ? 2 * linTol + 1e-9 * a.size : linTol;
     if (std::fabs(a.size - b.size) > sizeTol * 1.0000001) return false;
-    if (a.kind == PrimKind::Arc) {
+    if (a.kind == PrimKind::Spline) return std::fabs(a.sweep - b.sweep) <= 2 * linTol * 1.0000001;
+    if (isElliptic(a.kind) && std::fabs(a.minor - b.minor) > linTol * 1.0000001) return false;
+    if (a.kind == PrimKind::Arc || a.kind == PrimKind::EllipseArc) {
         const double swTol = angTol + 2 * linTol / std::max(a.size, 1e-12);
         if (std::fabs(a.sweep - b.sweep) > swTol) return false;
     }
@@ -76,6 +81,7 @@ AlignResult alignDrawings(const std::vector<Primitive>& ref, const std::vector<i
     struct Anchor { int ref; std::vector<int> matches; };
     std::vector<Anchor> anchors;
     for (int i : refGeo) {
+        if (ref[i].kind == PrimKind::Spline && dist(ref[i].p0, ref[i].p1) <= linTol) continue;  // closed: no ends to turn by
         const Signature rs = signatureOf(ref[i]);
         Anchor a{i, {}};
         for (int j : stuGeo)
@@ -84,7 +90,7 @@ AlignResult alignDrawings(const std::vector<Primitive>& ref, const std::vector<i
     }
     res.anchorFound = !anchors.empty();
 
-    // 2. Rarest first; lines and arcs before circles (they fix rotation); larger first.
+    // 2. Rarest first; lines, arcs and ellipses before circles (they fix rotation); larger first.
     std::stable_sort(anchors.begin(), anchors.end(), [&](const Anchor& a, const Anchor& b) {
         const bool ac = ref[a.ref].kind == PrimKind::Circle, bc = ref[b.ref].kind == PrimKind::Circle;
         if (ac != bc) return !ac;
@@ -103,7 +109,7 @@ AlignResult alignDrawings(const std::vector<Primitive>& ref, const std::vector<i
                 const Transform2D& pre = pres[pi];
                 const bool mir = pi == 1;
                 const Primitive s = transformed(stu[j], pre);
-                if (r.kind == PrimKind::Line) {
+                if (r.kind == PrimKind::Line || r.kind == PrimKind::Spline) {  // a spline by its ends, as a line
                     if (o.allowRotation) {
                         for (int ord = 0; ord < 2; ++ord) {
                             const Vec2 q0 = ord ? s.p1 : s.p0, q1 = ord ? s.p0 : s.p1;
@@ -124,6 +130,29 @@ AlignResult alignDrawings(const std::vector<Primitive>& ref, const std::vector<i
                         const double th = r.a0 - s.a0;
                         cands.add(mapPoint(stu[j].center, r.center, th, pre), th, mir);
                     } else if (angleDiff(r.a0, s.a0) <= angTol + 2 * linTol / std::max(r.radius, 1e-12)) {
+                        const Vec2 d = r.center - s.center;
+                        Transform2D T = pre;
+                        T.tx += d.x; T.ty += d.y;
+                        cands.add(T, 0, mir);
+                    }
+                } else if (r.kind == PrimKind::Ellipse) {
+                    // Centers together and the major axes along each other, either way round.
+                    const double turn = lineAngleDiff(r.axisAngle, s.axisAngle);
+                    if (o.allowRotation) {
+                        for (double th : {r.axisAngle - s.axisAngle, r.axisAngle - s.axisAngle + kPi})
+                            cands.add(mapPoint(stu[j].center, r.center, th, pre), th, mir);
+                    } else if (turn <= angTol || turn * (r.radius - r.minorRadius) <= linTol) {
+                        const Vec2 d = r.center - s.center;
+                        Transform2D T = pre;
+                        T.tx += d.x; T.ty += d.y;
+                        cands.add(T, 0, mir);
+                    }
+                } else if (r.kind == PrimKind::EllipseArc) {
+                    // Centers together, and the starts at the same angle round them.
+                    const double th = (r.arcStart() - r.center).angle() - (s.arcStart() - s.center).angle();
+                    if (o.allowRotation) {
+                        cands.add(mapPoint(stu[j].center, r.center, th, pre), th, mir);
+                    } else if (angleDiff(th, 0) * dist(r.arcStart(), r.center) <= linTol || angleDiff(th, 0) <= angTol) {
                         const Vec2 d = r.center - s.center;
                         Transform2D T = pre;
                         T.tx += d.x; T.ty += d.y;
@@ -162,7 +191,7 @@ AlignResult alignDrawings(const std::vector<Primitive>& ref, const std::vector<i
     }
 
     // 4. Score each candidate by its match count, on a geometry-only copy of the student's lines,
-    //    arcs and circles moved in place: no names, ids or lists copied per candidate (D76).
+    //    arcs, circles and ellipses moved in place: no names, ids or lists copied per candidate (D76).
     std::vector<Primitive> bare(stu.size());
     for (int j : stuGeo) {
         const Primitive& s = stu[j];
@@ -172,6 +201,9 @@ AlignResult alignDrawings(const std::vector<Primitive>& ref, const std::vector<i
         b.p1 = s.p1;
         b.center = s.center;
         b.radius = s.radius;
+        b.minorRadius = s.minorRadius;
+        b.axisAngle = s.axisAngle;
+        b.spline = s.spline;
         b.a0 = s.a0;
         b.a1 = s.a1;
         b.ltClass = s.ltClass;

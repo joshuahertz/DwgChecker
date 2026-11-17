@@ -107,12 +107,12 @@ if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
       set(_src_url "https://github.com/${CMAKE_MATCH_1}")
     endif()
   endif()
-  # A new commit or checkout configures again, so the link follows it.
-  foreach(_git_file HEAD logs/HEAD)
-    if(EXISTS "${PROJECT_SOURCE_DIR}/.git/${_git_file}")
-      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/.git/${_git_file}")
-    endif()
-  endforeach()
+  # A branch switch configures again; a new commit does not (every commit would reconfigure
+  # a developer build, D97), so a local package's link can lag. Packages come from CI, which
+  # configures fresh.
+  if(EXISTS "${PROJECT_SOURCE_DIR}/.git/HEAD")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/.git/HEAD")
+  endif()
 endif()
 set(_link_source FALSE)
 if(_src_url AND _src_commit)

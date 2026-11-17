@@ -58,6 +58,7 @@ CanonSettings AppSettings::effectiveCanon() const {
     c.mergeByLayer = compare.requireLayerMatch;
     c.mergeByColor = compare.matchColor;
     c.colorTolerance = compare.colorTolerance;
+    c.mergeByLineweight = compare.matchLineweight;
     c.dimensionEdges = false;  // a student drawing's are never used; referenceCanon() turns them on
     return c;
 }
@@ -83,7 +84,9 @@ QJsonObject AppSettings::toJson() const {
         {"linTol", compare.linTol}, {"angTol", compare.angTol},
         {"requireLayerMatch", compare.requireLayerMatch},
         {"matchColor", compare.matchColor}, {"colorTolerance", compare.colorTolerance},
-        {"requireByLayer", compare.requireByLayer},
+        {"requireByLayer", compare.requireByLayer}, {"matchLineweight", compare.matchLineweight},
+        {"readDashes", compare.readDashes}, {"readHatches", compare.readHatches}, {"readDimensions", compare.readDimensions},
+        {"readStrictness", compare.readStrictness}, {"readOnPaper", compare.readOnPaper}, {"readAsErrors", compare.readAsErrors},
         {"extras", compare.extras == ExtrasPolicy::Penalize ? "penalize" : "report"},
         {"checkDimensions", compare.checkDimensions}, {"checkDimPrecision", compare.checkDimPrecision},
         {"strictCenterlines", compare.strictCenterlines},
@@ -99,8 +102,7 @@ QJsonObject AppSettings::toJson() const {
         {"templateShareFraction", duplicates.templateShareFraction},
         {"smallEditMinutes", duplicates.smallEditMinutes}};
     QJsonObject l{
-        {"timeoutSec", loader.timeoutSec},
-        {"odaConverterPath", loader.odaConverterPath}};
+        {"timeoutSec", loader.timeoutSec}};
     QJsonObject pd;
     for (const auto& [name, ds] : perDrawing)
         pd.insert(name, QJsonObject{{"mode", modeName(ds.mode)}, {"checkDimensions", ds.checkDimensions},
@@ -153,6 +155,13 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
     s.compare.matchColor = m.value("matchColor").toBool(s.compare.matchColor);
     s.compare.colorTolerance = std::clamp(m.value("colorTolerance").toDouble(s.compare.colorTolerance), 0.0, 100.0);
     s.compare.requireByLayer = m.value("requireByLayer").toBool(s.compare.requireByLayer);
+    s.compare.matchLineweight = m.value("matchLineweight").toBool(s.compare.matchLineweight);
+    s.compare.readDashes = m.value("readDashes").toBool(s.compare.readDashes);
+    s.compare.readHatches = m.value("readHatches").toBool(s.compare.readHatches);
+    s.compare.readDimensions = m.value("readDimensions").toBool(s.compare.readDimensions);
+    s.compare.readStrictness = std::clamp(m.value("readStrictness").toInt(s.compare.readStrictness), 0, 2);
+    s.compare.readOnPaper = m.value("readOnPaper").toBool(s.compare.readOnPaper);
+    s.compare.readAsErrors = m.value("readAsErrors").toBool(s.compare.readAsErrors);
     s.compare.extras = m.value("extras").toString() == "report" ? ExtrasPolicy::ReportOnly : ExtrasPolicy::Penalize;
     s.compare.checkDimensions = m.value("checkDimensions").toBool(s.compare.checkDimensions);
     s.compare.checkDimPrecision = m.value("checkDimPrecision").toBool(s.compare.checkDimPrecision);
@@ -188,7 +197,6 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
 
     const QJsonObject l = o.value("loader").toObject();
     s.loader.timeoutSec = l.value("timeoutSec").toInt(s.loader.timeoutSec);
-    s.loader.odaConverterPath = l.value("odaConverterPath").toString(s.loader.odaConverterPath);
 
     s.identityRegex = o.value("identityRegex").toString(s.identityRegex);
     if (s.identityRegex.isEmpty() || s.identityRegex == QLatin1String(kOldIdentityRegex))

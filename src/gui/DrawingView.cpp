@@ -89,6 +89,9 @@ void DrawingView::showAsDrawn(const Drawing* d, bool dark) {
 QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& color, double width, const Transform2D& t) {
     const Primitive p = transformed(src, t);
     m_extent.add(p.bbox());
+    // Lineweights (D100): wider than the view's own width in proportion, from 0.25 mm up (as
+    // AutoCAD shows lineweights, anything thinner looks the same), at most 4 times.
+    if (isGeometric(p.kind)) width *= std::clamp(plottedLineweight(p.lineweight) / 25.0, 1.0, 4.0);
     QPen pen(color, width, penStyleFor(p.ltClass), Qt::RoundCap);
     pen.setCosmetic(true);
     QGraphicsItem* item = nullptr;
@@ -106,6 +109,36 @@ QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& col
         QPainterPath path;
         path.arcMoveTo(r, p.a0 * 180.0 / kPi);
         path.arcTo(r, p.a0 * 180.0 / kPi, p.sweep() * 180.0 / kPi);
+        item = scene()->addPath(path, pen);
+        break;
+    }
+    case PrimKind::Ellipse: {
+        // Drawn about the origin, turned, then moved (scene y is the drawing's -y, so the turn
+        // is the other way round).
+        QPainterPath path;
+        path.addEllipse(QPointF(0, 0), p.radius, p.minorRadius);
+        const QPointF c = toScene(p.center);
+        QTransform tr;
+        tr.translate(c.x(), c.y());
+        tr.rotateRadians(-p.axisAngle);
+        item = scene()->addPath(tr.map(path), pen);
+        break;
+    }
+    case PrimKind::Spline: {  // through the points sampled along it (D99)
+        QPainterPath path;
+        if (p.spline) {
+            path.moveTo(toScene(p.spline->sp.front()));
+            for (size_t k = 1; k < p.spline->sp.size(); ++k) path.lineTo(toScene(p.spline->sp[k]));
+        }
+        item = scene()->addPath(path, pen);
+        break;
+    }
+    case PrimKind::EllipseArc: {  // traced a degree of its parameter at a time
+        const double sw = p.sweep();
+        const int steps = std::max(8, static_cast<int>(std::ceil(sw / (kPi / 180))));
+        QPainterPath path;
+        path.moveTo(toScene(p.arcStart()));
+        for (int k = 1; k <= steps; ++k) path.lineTo(toScene(p.pointAt(p.a0 + sw * k / steps)));
         item = scene()->addPath(path, pen);
         break;
     }
@@ -154,7 +187,10 @@ QGraphicsItem* DrawingView::addPrimitive(const Primitive& src, const QColor& col
         break;
     }
     }
-    if (item) item->setToolTip(QStringLiteral("%1 on %2 (%3, %4)").arg(kindName(p.kind), p.layer, p.ltypeName, p.sourceType));
+    if (item) {
+        const QString lw = isGeometric(p.kind) ? QStringLiteral(", lineweight %1").arg(lineweightName(p.lineweight)) : QString();
+        item->setToolTip(QStringLiteral("%1 on %2 (%3%4, %5)").arg(kindName(p.kind), p.layer, p.ltypeName, lw, p.sourceType));
+    }
     return item;
 }
 

@@ -20,6 +20,9 @@ dwgcheck_add_test(tst_misc)
 dwgcheck_add_test(tst_hatch)
 dwgcheck_add_test(tst_dims)
 dwgcheck_add_test(tst_batch)
+# The read-only copies opened in AutoCAD and their cleanup (D97).
+dwgcheck_add_test(tst_platform)
+target_link_libraries(tst_platform PRIVATE dwgplatform)
 
 # End to end with the real parser (skips itself when no dwgread is configured).
 dwgcheck_add_test(tst_dwgread)

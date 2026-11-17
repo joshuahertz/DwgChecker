@@ -2,6 +2,7 @@
 
 #include "Loader.h"
 
+#include <QApplication>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPushButton>
@@ -15,7 +16,13 @@ AutoCadController::AutoCadController(QObject* parent)
     : QObject(parent), m_launcher(platform::createAutoCadLauncher()) {
     // The AutoCAD choice and the read-only switch of earlier versions are gone (D96).
     QSettings().remove(QStringLiteral("autocad"));
+    // Copies are kept only while the app runs (D97): any left over (one was still open in
+    // AutoCAD at close), and those of earlier versions' folders, go now.
+    for (const QString& old : platform::earlierEvidenceFolders()) platform::removeCopies(old);
+    platform::removeCopies();
 }
+
+AutoCadController::~AutoCadController() { platform::removeCopies(); }
 
 void AutoCadController::open(QWidget* parent, const QString& path, const QByteArray& scanSha, const std::function<void()>& rescan) {
     // The evidence must not have changed since it was graded.
@@ -57,8 +64,11 @@ void AutoCadController::open(QWidget* parent, const QString& path, const QByteAr
                              tr("%1 changed while it was being opened. Try again.").arg(QFileInfo(path).fileName()));
         return;
     }
-    if (!m_launcher->openInRunning(target, &err))
-        QMessageBox::warning(parent, tr("Open in AutoCAD"), tr("Could not open the file in %1: %2").arg(acad, err));
+    // Opening may wait a few seconds for a busy AutoCAD.
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const bool opened = m_launcher->openInRunning(target, &err);
+    QApplication::restoreOverrideCursor();
+    if (!opened) QMessageBox::warning(parent, tr("Open in AutoCAD"), tr("Could not open the file in %1: %2").arg(acad, err));
 }
 
 }  // namespace dcgui

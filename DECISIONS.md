@@ -35,7 +35,7 @@ and control characters and retries once.
 **D6. Non-ASCII paths are staged.** dwgread opens files with narrow `fopen()`, so
 paths with non-ASCII characters are copied to an ASCII temp name first.
 
-**D7. The ODA File Converter fallback** is optional (Settings > Tools). When
+**D7. The ODA File Converter fallback** (removed in D104) was optional (Settings > Tools). When
 dwgread fails, the file is rewritten to ACAD2018 DWG in a temp folder and read
 again, with a per-file warning that metadata may then reflect the converter.
 The converter is a separate download from the Open Design Alliance under its own
@@ -84,8 +84,9 @@ under an INSERT on HIDDEN).
 **D13. Arcs and circles go through the full 3D transform**: block transform ×
 `ocsToWcs(extrusion)`. The image of the OCS x/y axes must be a similarity in XY.
 If it has a Z component the arc is tilted and becomes Unsupported; if its two
-columns differ in length or are not orthogonal it is non-uniform and becomes
-Unsupported (spec rule 2), each with a warning. A negative determinant
+columns differ in length or are not orthogonal it is non-uniform and became
+Unsupported (spec rule 2), each with a warning. Since D98 a non-uniform one is
+an ellipse or elliptical arc instead, with no warning. A negative determinant
 (extrusion −Z, mirrored INSERT) reverses orientation: CCW `a0→a1` becomes
 `(φ−a1)→(φ−a0)`. Real-file evidence is `ref_flipped3d.json`: ROTATE3D stores the
 arc as OCS center (−3.5,−1.5), 180°→270°, extrusion (0,0,−1), and the result is
@@ -103,7 +104,8 @@ dropping silently could hide work. A setting skips them. Layer flags:
 This rule now covers student drawings only; D51 drops them from the solution.
 
 **D16. Spline-fit POLYLINE_2D/3D, SPLINE, ELLIPSE, XLINE/RAY, REGION and solids
-are Unsupported.** SOLID, POINT, VIEWPORT, LEADER/MLEADER and TOLERANCE are
+are Unsupported.** (ELLIPSE is graded since D98, SPLINE and spline-fit polylines
+since D99.) SOLID, POINT, VIEWPORT, LEADER/MLEADER and TOLERANCE are
 ignored without a warning. HATCH is read as a filled region and compared only
 with "check hatches" (D35). Unsupported entities are never counted, in
 either the reference or the student file.
@@ -1646,7 +1648,8 @@ denied `unvirtualizedResources` (D64). It was there only so that AutoCAD could
 see the copies the app made in %TEMP%, and so that an AutoCAD the app started
 would keep its own settings. One way of working now, the same in every build
 (Store, zip, macOS), with no check of which build is running:
-- **The copies go to Documents** (`Documents\DWG Checker\Opened in AutoCAD\<sha>\`,
+- **The copies go to Documents** (moved to the profile by D97)
+  (`Documents\DWG Checker\Opened in AutoCAD\<sha>\`,
   `platform::evidenceFolder()`), a folder AutoCAD can see from every build: a
   Store app's AppData and temp files are kept in its package. Every open is a
   read-only copy: the "Open as read-only" switch is gone, and a file opened in
@@ -1674,6 +1677,280 @@ would keep its own settings. One way of working now, the same in every build
   needed only for the virtualization switches.
 - **Version 0.3.0** for the resubmission: each Store submission's package needs a
   version above the previous one's.
+
+**D97. Fixes from a code review of 0.3.0 (user approved, 2026-11-16).** Seven
+findings on the changes submitted to the Store (D94 to D96), all fixed, as 0.3.1:
+- **The copies' folder is `<home>/DWG Checker/Temp`** (user decision), for every
+  build. Not the system temp folder: it is in AppData, whose new files a Store app
+  keeps to itself, so AutoCAD could not open a copy there (Microsoft's docs on
+  packaged desktop apps; Temp is not named, so this is the AppData rule). Not
+  Documents: OneDrive's folder backup (often on with Windows 11) and iCloud's
+  Desktop & Documents would upload students' work.
+- **Copies live while the app runs:** they are cleared when it starts and when it
+  closes, instead of after a week. A copy still open in AutoCAD cannot be removed on
+  Windows and goes at the next start. The folder, and its "DWG Checker" parent, are
+  removed when nothing is left in them. 0.3.0's Documents folder and the old temp
+  folder are cleared the same way at start.
+- **Only the app's own copies are removed:** a file whose SHA-256 begins with its
+  folder's name (the name the app gave it). A drawing saved next to a copy (Save As
+  starts in the copy's folder, the copy being read-only) stays, and so does its
+  folder; other files are no longer made writable. The week-old cleanup deleted
+  whole folders.
+- **macOS reads the whole process list** (`ps -axww`): without `ww` a long
+  AutoCAD path could be cut short, and AutoCAD seemed not to be running.
+- **Windows: the running check only looks** (GetActiveObject), with no call into
+  AutoCAD, which could wait 5 s on a busy one; messages say "AutoCAD". Opening the
+  copy keeps its retry for a busy AutoCAD, under a wait cursor.
+- **Windows: why opening failed:** "busy (a command or dialog is open)" only when
+  AutoCAD said so; otherwise AutoCAD's own message (EXCEPINFO), else the error code.
+- **Tests:** `makeEvidenceCopy` and `removeCopies` take their folder, and the new
+  tst_platform checks them in a temporary folder.
+- **CMake watches only `.git/HEAD`:** a branch switch configures again, not every
+  commit (logs/HEAD), so a local build's source link can lag; packages come from CI.
+Tests: tst_platform `copyIsReadOnlyAndReused`, `cleanupKeepsTheUsersFiles`,
+`cleanupRemovesEmptyFolders`, `earlierFoldersAreCleared`,
+`folderIsOutsideAppDataAndDocuments`.
+
+**D98. Ellipses are graded (user approved the plan, 2026-11-16), as 0.4.0.** Two
+kinds join lines, arcs and circles as drawing objects: `Ellipse` (whole) and
+`EllipseArc`. They come from ELLIPSE entities and from circles and arcs inside a
+block scaled unevenly, which D13 marked unsupported. Splines stay unsupported.
+- **One form for each ellipse:** center, major semi-axis (`radius`), minor
+  semi-axis, the major axis's direction in [0, π), and for an arc its start and end
+  parameters, counter-clockwise. `setEllipse` finds the axes from any two
+  semi-diameters c + U cos t + V sin t (a circle in a sheared block gives two that
+  are not the axes), makes a clockwise trace counter-clockwise (a mirror, extrusion
+  −Z), and takes the major axis from the end that puts its direction in [0, π),
+  moving the parameters by π. `transformed` moves U and V and calls it again, so an
+  ellipse moves, turns, scales and mirrors with the drawing.
+- **ELLIPSE fields** (FIELDMAP): `center` and `sm_axis` are in WCS (the block's);
+  the minor semi-axis is `axis_ratio` × (extrusion × `sm_axis`). Real-file
+  evidence: MIRROR stores the mirrored ellipses with extrusion −Z (`ell_mirrored`),
+  unlike arcs (D13), and the rule gives the mirrored curve. A tilted one is
+  unsupported, as for arcs.
+- **A circle within the tolerance** (major − minor ≤ the linear tolerance, an axis
+  ratio of 1) is read as a circle or arc of the mean radius, so it matches a
+  circle drawn as one.
+- **Matching:** the same center, both axes, and the major axis's direction: within
+  the angular tolerance, or turned so little that its ends move less than the linear
+  tolerance (the turn times the axes' difference, so a nearly round one is not
+  failed on an unsteady axis). An elliptical arc's two ends must also be within the
+  linear tolerance, compared as points, never as parameters (the same arc can have
+  parameters π apart, as `ell_redraw` has). Stacked duplicates are removed by the
+  same test.
+- **Near misses:** "wrong size" says which axis ("minor axis drawn 0.900"),
+  "shifted", "rotated", "wrong arc angle" (with the ends), and a displaced copy at
+  any distance as for circles. A circle where the solution has an ellipse, or an
+  arc for an elliptical arc (and the other way round), is paired as **"wrong shape"**
+  ("ellipse 2.000 × 1.000 at (1.5, 1.5) drawn as a circle Ø1.500"): one error,
+  like a circle of the wrong size, rather than missing plus extra. This pairing was
+  not in the approved plan; it follows the rule that a wrong object near the
+  solution's is one error.
+- **Alignment:** a whole ellipse's center and axis give two candidate turns (either
+  end of the axis), an elliptical arc's center and start one; signatures compare
+  both axes. So a drawing of ellipses alone (an isometric's holes) aligns.
+- **Everything else** treats them as drawing objects: view splitting, layer,
+  linetype and color checks, the scale search (largest axes), the class summary
+  ("ellipse 2.000 × 1.155 on VISIBLE"), the views (drawn as ellipses, not ×), and the
+  Drawing objects list (center, axes, major axis direction, an arc's angles from the
+  major axis, as AutoCAD's ELLIPSE asks for them).
+- **Bit-identical keys** hold center, axes, direction and an arc's parameters. Only
+  a center that is not a round number makes one nontrivial: the axes are often
+  worked out from round numbers the same way for everyone (an isometric circle, a
+  turned ellipse), and should not make a match look strong.
+- **Left out:** joining pieces of one ellipse into it (as arcs are joined into a
+  circle), and dimensions to an ellipse's center as endless lines (D78).
+- The non-uniform-scale warning is gone, with nothing left to warn about.
+Corpus: the `ell_*` set (tests/corpus/README.md). Tests: tst_canon
+`nonUniformArcIsElliptical`, `ellipseEntity`, `ellipseOfRatioOneIsACircle`;
+tst_misc `ellipseFromItsAxes`, `ellipseTransform`, `ellipseMatching`,
+`alignEllipseOnlyDrawing`, and ellipses in `formatting` and `classSummaryCounts`;
+tst_corpus `ellipsesRead`, `ellipsesMatchInPlace`, `ellipsesMatchMoved`,
+`ellipseNearMisses`, and the kitchen file's ellipses in `kitchenSink`;
+tst_duplicates `ellipseKeys`. The expectations were cross-checked first with a
+Python port of the reading and matching on the `ell_*` fixtures.
+
+**D99. Splines are graded (user approved the plan, 2026-11-16), in 0.4.0.** A new
+kind, `Spline`, for SPLINE entities and spline-fit polylines. Each is kept as the
+NURBS curve it is (`SplineData`: degree, knots, control points, weights), sampled
+16 or more times per knot span, with its length.
+- **Fit-point splines** (AutoCAD's default) are stored with only their fit points,
+  end tangents, fit tolerance and kind of knots. The curve is rebuilt as AutoCAD
+  builds it: the cubic through the points, knots at the cumulative chord lengths
+  (or their square roots, or uniform), the ends straight (second derivative 0)
+  unless a tangent is given, which is then the unit direction per unit of chord.
+  Evidence: AutoCAD's own control points, read back with entget at 16 digits, match
+  to about 1e-14 for open and closed splines, with and without tangents, 2 to 7
+  points, after ROTATE, MIRROR, SCALE and drawn the other way, made in AutoCAD
+  2026's console; square-root and uniform knots and the CV method from a drawing
+  the instructor made in full AutoCAD (`spl_fullacad`), since the console's SPLINE
+  has no Knots or Method options. Tangents with square-root or uniform knots were
+  not checked (scaled in proportion). A solved spline's end control points are set
+  to its first and last fit points exactly.
+- **A fit tolerance above 0** makes AutoCAD approximate the points by another method,
+  not rebuilt: such a spline is unsupported, reported in the warning.
+- **Control-point splines** are evaluated as given (de Boor, rational ones in
+  homogeneous points). A periodic one whose stored curve does not close is
+  unsupported. **Spline-fit polylines** are the uniform B-spline of their frame
+  vertices, clamped when open, periodic when closed: it goes through every vertex
+  AutoCAD computed for them, to 1e-14.
+- **In a block** the curve is built in the block's coordinates and moved with its
+  control points, which is exact for any block transform; rebuilding it through
+  moved fit points would be wrong for an uneven scale (0.04 off in the test). A
+  spline whose points are not on one level, or whose plane is turned out of XY, is
+  unsupported as tilted.
+- **Matching is by the curve, not by how it was made:** the same ends (either way
+  round; a closed one may start anywhere), and every sample of each within the
+  linear tolerance of the other curve (nearest sampled segment, then a
+  golden-section search on the curve). So a spline drawn the other way round, or
+  the same curve given by control points (`spl_cv`), matches. Splines are compared
+  with every student spline whose box is near, not through the key-point grid: two
+  makings of one curve need not share a sample.
+- **Near misses:** "shifted by …" (the same curve moved), a displaced copy at any
+  distance turned up to 5°, and for two fit-point splines "point 3 drawn at …,
+  expected …" (up to three, in whichever order fits better) or "drawn through 4
+  points, expected 5", all labelled "wrong points"; otherwise "is off by up to X"
+  (the largest distance between the curves), labelled "wrong shape". A closed one
+  is "through 4 points", not counting its first point again at the end.
+- **Alignment:** an open spline anchors like a line, by its ends; its signature is
+  its length and the span of its ends. A closed one only counts.
+- **Bit-identical keys** hold the degree, knots, control points and weights; the
+  spline's own points (fit points, the polyline's vertices, else control points)
+  decide whether it was typed.
+- **Display:** the curve itself in every view; the Drawing objects list gives its
+  points (or degree and control points), length and whether it is closed; the class
+  summary says "spline through 5 points on VISIBLE".
+- **Left out:** joining splines that continue each other, splines with a fit
+  tolerance, and spline edges of hatch boundaries (still followed through their
+  points).
+Corpus: the `spl_*` set, and `spl_fullacad` made by hand. Tests: tst_canon
+`splineMatchesAutoCad` (six rows of AutoCAD's control points), `splineEntities`,
+`splineInUnevenBlock`, `splinesNotRead`; tst_corpus `splinesRead`,
+`splinesFromFullAutoCad`, `splineFitPolylineMatchesAutoCad`, `splinesMatchInPlace`,
+`splinesMatchMoved`, `splineNearMisses`, `splineWithFitToleranceIsNotGraded`, and the
+kitchen file's spline in `kitchenSink`; tst_misc `splineMatching`,
+`alignSplineOnlyDrawing`, a spline in `classSummaryCounts`; tst_duplicates
+`splineKeys`. The expectations were cross-checked first with a Python port on the
+`spl_*` fixtures.
+
+**D100. Lineweights (user decisions, 2026-11-16), in 0.4.0.** Each drawing object
+has its effective lineweight, resolved like its color: ByLayer takes the layer's,
+ByBlock the INSERT's (Default at the top level, and then not by layer).
+- **The file's codes** (`linewt`): 0 to 23 are AutoCAD's 24 widths, 0.00 to
+  2.11 mm; 29 ByLayer, 30 ByBlock, 31 Default (`lw_ref`: 0.50 mm is 11, 0.70 mm 14).
+- **Default counts as 0.25 mm.** What Default prints as is LWDEFAULT, a setting of
+  each computer, not saved in the drawing; 0.25 mm is AutoCAD's own. So a line at
+  Default and one at 0.25 mm match.
+- **"Lineweights must match"**, off by default (user decision): each item's
+  lineweight must be the solution item's. One error per item as for colors, labelled
+  "wrong lineweight", after a wrong linetype or color and before a wrong layer; the
+  message says lineweight (user request): "visible line 4.000 long at (2.0, 0.0) has
+  lineweight 0.25 mm, expected 0.50 mm". With it on, pieces of an edge join only
+  when they print the same width (also the pieces' check is now made whenever colors
+  or lineweights are graded; before, only with colors).
+- **"Linetype, color and lineweight must be set by layer"** (user decision): the
+  by-layer rule now covers lineweight too, whether or not lineweights are graded,
+  as it covers color whether or not colors are ("has its lineweight set on the
+  object, not by layer"). Before, it covered color and linetype only. Every file of
+  the corpus has its lineweights by layer, so no earlier result changes.
+- **The views show lineweights** (user request): every view draws a line, arc,
+  circle, ellipse or spline wider in proportion to its lineweight from 0.25 mm up
+  (thinner ones look the same, as in AutoCAD), at most 4 times its usual width. The
+  Drawing objects list and the tooltips name it.
+- **Not done (user decision):** matching linetype scale, hatch scale and dimension
+  text and arrow sizes to the solution's. The user asked instead whether they can be
+  checked for being readable, which is a separate proposal.
+Corpus: `lw_ref`, `lw_wrong`, `lw_bylayer`. Tests: tst_canon `lineweightsResolved`;
+tst_corpus `lineweightsRead`, `lineweightsMustMatch`, `lineweightSetByLayer`;
+tst_misc lineweight codes in `formatting` and the setting in `settingsRoundTrip`.
+
+**D101. Readability checks (user approved the plan, with a strictness setting added by
+the user, 2026-11-16), in 0.4.0.** Whether dashed lines, hatching and dimensions can be
+seen, judged in each student's file on its own: matching these sizes to the
+solution's was rejected by the user as not meaningful.
+- **Two ways of seeing** (one setting): **model view**, the whole drawing (its
+  geometric box) fitted to a screen 1000 pixels across, sizes in pixels; or
+  **paper**, sizes in mm on the printed sheet, through the layout viewport that shows
+  each object (the largest one, so a detail view doesn't decide). A viewport's scale
+  is its height on the sheet over the model height it shows; the first viewport of a
+  layout is the sheet itself; only plan views count; the sheet's unit is inches
+  unless the layout plots in mm. Objects in no viewport are not judged (a note says
+  how many), and a file with no layout viewport is judged in model view (a note says
+  so).
+- **Dashed lines**, as drawn: pattern and gaps × LTSCALE × the object's linetype scale
+  × a block's scale. AutoCAD draws a line shorter than one pattern as a continuous
+  line: so each must hold its pattern at least once (twice when strict), along its
+  length, or along the whole polyline when linetype generation is on (LWPOLYLINE flag
+  256 in a DWG, POLYLINE_2D 128). On paper with PSLTSCALE the pattern keeps its size
+  on the sheet while the line shrinks with the viewport, so the same line can show
+  its dashes in model view and not on paper (the short line in `rd_ref`: 0.67 times,
+  0.33 times). Gaps must be big enough to see.
+- **Hatching:** the spacing of the pattern's lines, read as drawn from the file's
+  pattern lines (already scaled and turned), must not be so small that it looks
+  solid; and at least so many lines must cross the region (its extent across each
+  family of lines over the spacing). Solid and gradient fills are not checked.
+- **Dimensions:** the text height as AutoCAD drew it in the dimension's block (its
+  MTEXT: DIMSCALE, an annotative scale and a block's scale all in), else DIMTXT ×
+  DIMSCALE (or a fixed-height text style's height); the arrowhead (DIMASZ, or DIMTSZ
+  for ticks) by the same overall scale, with the dimension's overrides. Text must be
+  high enough, and arrows in proportion to it, in either view.
+- **Strictness** (user request): Loose / Medium / Strict, Medium being the approved
+  proposal's numbers; the tooltip gives every level's numbers:
+  dash pattern held once / once / twice; gaps 0.3 / 0.5 / 1 mm or 1 / 2 / 4 px; hatch
+  spacing 0.5 / 1 / 2 mm or 2 / 3 / 5 px, with 2 / 3 / 5 lines across; text 2 / 2.5 /
+  3 mm (ISO's minimum is 2.5, ANSI's 3) or 5 / 10 / 15 px; arrows 0.33–3 / 0.5–1.5 /
+  0.75–1.25 times the text height (ANSI draws them about equal).
+- **Results:** one item per problem per drawing, with how many objects, the worst
+  one, its value and the limit, and its objects highlighted. As warnings (the
+  default) they are listed only; as errors they fail the drawing, as a misaligned
+  view does, without lowering its score. An Ignored view's objects are not judged.
+- **The solution card** says when the solution itself fails a check (then a student's
+  exact copy would too), and is read again when the readability settings change.
+- **Left out:** text that is not a dimension's, MSLTSCALE (how linetypes show in model
+  space at other annotation scales, not in dwgread's output), annotative objects at
+  scales other than the drawing's current one, frozen layers per viewport, and
+  arrowhead blocks' own sizes (the style's size is used).
+Corpus: `rd_ref` (cross-checked in Python at every level in both views). Tests:
+tst_corpus `readabilitySizesRead`, `readabilityLevels` (six rows), `readabilityMessages`,
+`readabilityInResults`; tst_misc the levels and the settings in `settingsRoundTrip`.
+
+**D102. Readability sizes are ranges (user request, numbers approved, 2026-11-16), in
+0.4.0.** D101's limits were minimums, but for the arrowheads' range, and the user
+pointed out that text, for one, can be too big. Text height, hatch line spacing and
+dash gaps now have an upper end at each level as well:
+- **On paper:** text 2–10 / 2.5–7 / 3–5 mm (loose / medium / strict), hatch spacing
+  0.5–10 / 1–6 / 2–4 mm, gaps 0.3–8 / 0.5–6 / 1–4 mm. AutoCAD's own defaults printed
+  1:1 (0.18" text, 4.6 mm; ANSI31 at scale 1 and HIDDEN's gaps, 3.2 mm) are within
+  every level, strict included.
+- **In model view:** text 5–150 / 10–100 / 15–60 px, hatch spacing 2–100 / 3–75 / 5–50 px,
+  gaps 1–100 / 2–75 / 4–50 px. These depend on the part's size, the whole drawing
+  being fitted to the screen: a 4" part with the defaults passes every level, a 2"
+  one (90 px text, 62 px gaps) passes medium, not strict.
+- **Unchanged:** the dash pattern must fit along the line (which already stops dashes
+  too long for it), the hatch lines across a region (which already stops spacing too
+  wide for it), and the arrowheads' range.
+- **Separate problems** for the upper ends: "text too large", "hatch too coarse",
+  "dashes too long" ("1 hatch looks too coarse: lines as far apart as 6.35 mm on
+  paper, at most 6 mm (hatch ANSI31 at (3.0, 1.5))"). The strictness tooltip shows
+  the ranges.
+Corpus: `rd_big` (cross-checked in Python at every level in both views; `rd_ref`'s
+results are unchanged). Tests: tst_corpus `readabilityUpperLimits` (six rows, and the
+messages); tst_misc the ranges, and AutoCAD's defaults within every level.
+
+**D103. Settings order and one name (user requests, 2026-11-16).** "Wrong scale counts
+as an error" sits with the other ways a whole drawing may differ, after "Allow
+rotation" and "Allow mirrored" and before "Tolerance". Under Reading drawings the
+linetype names come Visible, Hidden, Center, Phantom, then "Ignore layers".
+"Layers must match" is now "Layer names must match": it compares the names only
+(letter case ignored), and with it on, pieces of an edge join only on layers of the
+same name.
+
+**D104. No ODA File Converter (user decision, 2026-11-16).** The optional fallback of D7
+is gone: the setting under Reading drawings, the loader's conversion step and the
+settings file's `odaConverterPath` (a value saved by an earlier version is ignored). A
+file dwgread cannot read is listed as unreadable, with dwgread's error. The spec's
+"documented fallback" (docs/SPEC.md) is no longer followed; the spec itself is left
+as written.
 
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,

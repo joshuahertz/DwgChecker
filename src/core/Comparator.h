@@ -5,6 +5,7 @@
 #include "Matcher.h"
 #include "Model.h"
 #include "Ortho.h"
+#include "Readability.h"
 #include "Settings.h"
 
 #include <QStringList>
@@ -14,7 +15,7 @@
 
 namespace dc {
 
-enum class ErrCat { Scale, Location, NearMiss, Linetype, Color, Layer, ByLayer, Precision, Missing, Extra, Alignment, Arrangement, Warning };
+enum class ErrCat { Scale, Location, NearMiss, Linetype, Color, Lineweight, Layer, ByLayer, Precision, Missing, Extra, Alignment, Arrangement, Readability, Warning };
 enum class PrimStatus { Matched, Missing, Extra, NearMiss, WrongAttribute, NotCompared };
 
 struct ErrorItem {
@@ -92,6 +93,9 @@ std::vector<int> comparableIndices(const Drawing& d, const CompareSettings& s);
 // (reported as one error worth s.scalePenaltyErrors). In Absolute mode, when the whole
 // drawing is right but displaced, it is graded after moving it back with one error worth
 // s.locationPenaltyErrors (or, with s.detectLocation off, where it was drawn, with a warning).
+// The readability checks the settings ask for (D101).
+ReadOptions readOptionsFrom(const CompareSettings& s);
+
 CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views);
 
 // Scale factors (student size / reference size) worth trying: the INSUNITS ratio,

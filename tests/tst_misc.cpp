@@ -9,6 +9,7 @@
 #include "Csv.h"
 #include "Format.h"
 #include "Matcher.h"
+#include "Readability.h"
 #include "Settings.h"
 #include "StudentIdentity.h"
 #include "TestUtil.h"
@@ -45,6 +46,23 @@ Primitive arc(Vec2 c, double r, double a0, double a1) {
     p.a1 = normalizeAngle(a1);
     return p;
 }
+// The ellipse c + U cos(t) + V sin(t), whole, or from t0 to t1.
+Primitive ellipse(Vec2 c, Vec2 U, Vec2 V, double t0 = 0, double t1 = 0, bool full = true) {
+    Primitive p;
+    setEllipse(p, c, U, V, t0, t1, full);
+    return p;
+}
+// A fit-point spline through pts (closed: back to the first).
+Primitive spline(std::vector<Vec2> pts, bool closed = false) {
+    if (closed) pts.push_back(pts.front());
+    Primitive p;
+    p.kind = PrimKind::Spline;
+    p.spline = splineThroughPoints(pts, 0, {}, {});
+    p.p0 = p.spline->start();
+    p.p1 = p.spline->end();
+    p.center = p.spline->middle();
+    return p;
+}
 std::vector<int> all(const std::vector<Primitive>& v) {
     std::vector<int> i(v.size());
     for (size_t k = 0; k < v.size(); ++k) i[k] = static_cast<int>(k);
@@ -58,6 +76,10 @@ class TestMisc : public QObject {
 private slots:
     void transformBasics();
     void mirroredArcTransform();
+    void ellipseFromItsAxes();
+    void ellipseTransform();
+    void ellipseMatching();
+    void splineMatching();
     void lineMatchEitherOrder();
     void arcMatchAngles();
     void looseCenterlines();
@@ -67,6 +89,8 @@ private slots:
     void alignRecoversRigidTransform();
     void alignCircleOnlyDrawing();
     void alignMirror();
+    void alignEllipseOnlyDrawing();
+    void alignSplineOnlyDrawing();
     void identityCanvas();
     void identityFallback();
     void identityAccentedNames();
@@ -110,6 +134,114 @@ void TestMisc::mirroredArcTransform() {
     // Start/end points map onto the mirrored points.
     QVERIFY(dist(m.arcEnd(), {-1, 0}) < 1e-12);
     QVERIFY(dist(m.arcStart(), {0, 1}) < 1e-12);
+}
+
+void TestMisc::ellipseFromItsAxes() {
+    // Two semi-diameters that are not its axes: the circle r1 of a block scaled (1, 0.5) and
+    // turned 30 degrees has them at (cos 30, sin 30) and 0.5 (-sin 30, cos 30), so the axes
+    // here, sheared by 0.2 more, are found again.
+    const Vec2 u = fromAngle(deg(30)), v = u.perp() * 0.5;
+    const Primitive e = ellipse({1, 2}, u + v * 0.2, v);
+    QCOMPARE(e.kind, PrimKind::Ellipse);
+    // Its points are those of c + U cos(t) + V sin(t), and it is no wider than they are.
+    double far = 0, near = 1e9;
+    for (int k = 0; k < 720; ++k) {
+        const double t = kTwoPi * k / 720;
+        const Vec2 q = Vec2{1, 2} + (u + v * 0.2) * std::cos(t) + v * std::sin(t);
+        far = std::max(far, dist(q, {1, 2}));
+        near = std::min(near, dist(q, {1, 2}));
+        QVERIFY(e.bbox().contains(q, 1e-12));
+    }
+    QVERIFY(std::fabs(e.radius - far) < 1e-4 && std::fabs(e.minorRadius - near) < 1e-4);
+    QVERIFY(e.axisAngle >= 0 && e.axisAngle < kPi);
+    // The axes given: taken as they are, the major one turned into [0, pi).
+    const Primitive f = ellipse({0, 0}, {-2, 0}, {0, -1});
+    QCOMPARE(f.radius, 2.0);
+    QCOMPARE(f.minorRadius, 1.0);
+    QCOMPARE(f.axisAngle, 0.0);
+    // Traced clockwise (V the other way): counter-clockwise from the other end.
+    const Primitive g = ellipse({0, 0}, {2, 0}, {0, -1}, 0, kPi / 2, false);
+    QCOMPARE(g.kind, PrimKind::EllipseArc);
+    QVERIFY(dist(g.arcStart(), {0, -1}) < 1e-12);
+    QVERIFY(dist(g.arcEnd(), {2, 0}) < 1e-12);
+}
+
+void TestMisc::ellipseTransform() {
+    const Primitive e = ellipse({1, 2}, {2, 0}, {0, 1}, 0.25, 2.0, false);
+    for (const Transform2D& t : {Transform2D::rigid(deg(37), 3, -1), Transform2D::rigid(deg(200), 0, 5, true),
+                                 Transform2D::scaling(2.5), Transform2D::mirrorX()}) {
+        const Primitive m = transformed(e, t);
+        QCOMPARE(m.kind, PrimKind::EllipseArc);
+        QVERIFY(m.axisAngle >= 0 && m.axisAngle < kPi);
+        QVERIFY(std::fabs(m.radius - 2 * t.scaleFactor()) < 1e-12);
+        QVERIFY(std::fabs(m.minorRadius - t.scaleFactor()) < 1e-12);
+        // The same curve: the moved ends (swapped by a mirror) and the moved middle.
+        const Vec2 s = t.apply(e.arcStart()), f = t.apply(e.arcEnd());
+        QVERIFY(dist(m.arcStart(), t.isMirrored() ? f : s) < 1e-12);
+        QVERIFY(dist(m.arcEnd(), t.isMirrored() ? s : f) < 1e-12);
+        QVERIFY(dist(m.midpoint(), t.apply(e.midpoint())) < 1e-12);
+    }
+    const Primitive w = transformed(ellipse({0, 0}, {2, 0}, {0, 1}), Transform2D::rigid(deg(100), 1, 1));
+    QCOMPARE(w.kind, PrimKind::Ellipse);
+    QVERIFY(std::fabs(w.axisAngle - deg(100)) < 1e-12);
+}
+
+void TestMisc::ellipseMatching() {
+    MatchCriteria c;
+    c.linTol = 1e-6;
+    const Primitive e = ellipse({1, 1}, {2, 0}, {0, 1});
+    QVERIFY(geometryMatches(e, ellipse({1, 1}, {-2, 0}, {0, 1}), c));             // the axis from its other end
+    QVERIFY(geometryMatches(e, transformed(e, Transform2D::rigid(deg(180), 2, 2)), c));  // turned half way round about its center
+    QVERIFY(!geometryMatches(e, transformed(e, Transform2D::rigid(deg(1e-3), 0, 0)), c));  // turned about the origin
+    QVERIFY(!geometryMatches(e, ellipse({1, 1}, {2, 0}, {0, 1.00001}), c));
+    QVERIFY(!geometryMatches(e, circle({1, 1}, 1.5), c));
+    // A turn that moves it less than the tolerance: nearly round.
+    const Primitive round = ellipse({0, 0}, {1, 0}, {0, 1 - 1e-5});
+    QVERIFY(geometryMatches(round, ellipse({0, 0}, fromAngle(deg(0.005)), fromAngle(deg(0.005)).perp() * (1 - 1e-5)), c));
+    // Arcs: the ends must agree too.
+    const Primitive a = ellipse({0, 0}, {2, 0}, {0, 1}, 0, kPi / 2, false);
+    QVERIFY(geometryMatches(a, ellipse({0, 0}, {-2, 0}, {0, -1}, kPi, 1.5 * kPi, false), c));
+    QVERIFY(!geometryMatches(a, ellipse({0, 0}, {2, 0}, {0, 1}, 0, kPi / 2 + 1e-4, false), c));
+    // Near misses: a circle for an ellipse pairs with it (the wrong shape), the closest first.
+    std::vector<Primitive> ref{e, a};
+    std::vector<Primitive> stu{circle({1, 1}, 1.5), ellipse({0.1, 0}, {2, 0}, {0, 1}, 0, kPi / 2, false)};
+    const auto pairs = pairNearMisses(ref, all(ref), stu, all(stu), 0.5, c);
+    QCOMPARE(pairs.size(), size_t(2));
+    for (const auto& p : pairs) QCOMPARE(p.ref, p.stu);
+    // The same axes elsewhere: displaced.
+    std::vector<Primitive> far{transformed(e, Transform2D::translation(20, 0))};
+    const auto moved = pairNearMisses(ref, {0}, far, {0}, 0.5, c);
+    QCOMPARE(moved.size(), size_t(1));
+    QVERIFY(moved[0].displaced);
+}
+
+void TestMisc::splineMatching() {
+    MatchCriteria c;
+    c.linTol = 1e-6;
+    const std::vector<Vec2> q{{0, 0}, {1, 1}, {2, 0.5}, {3, 1.5}, {4, 0}};
+    const Primitive a = spline(q);
+    QVERIFY(geometryMatches(a, spline({q.rbegin(), q.rend()}), c));  // drawn the other way
+    Primitive cv = a;  // the same curve given by its control points
+    cv.spline = splineFromControlPoints(3, a.spline->knots, a.spline->ctrl, {});
+    QVERIFY(geometryMatches(a, cv, c));
+    QVERIFY(geometryMatches(a, transformed(transformed(a, Transform2D::rigid(deg(37), 2, 1)), Transform2D::rigid(deg(37), 2, 1).inverse()), c));
+    std::vector<Vec2> off = q;
+    off[2].y += 1e-4;
+    QVERIFY(!geometryMatches(a, spline(off), c));
+    QVERIFY(!geometryMatches(a, transformed(a, Transform2D::translation(2e-6, 0)), c));
+    QVERIFY(!geometryMatches(a, spline(q, true), c));  // closed
+    // Moved and turned a little, far away: the same shape, displaced.
+    std::vector<Primitive> ref{a};
+    std::vector<Primitive> far{transformed(a, Transform2D::rigid(deg(2), 30, 0))};
+    const auto moved = pairNearMisses(ref, {0}, far, {0}, 0.5, c);
+    QCOMPARE(moved.size(), size_t(1));
+    QVERIFY(moved[0].displaced);
+    // Formatting (D99).
+    QCOMPARE(describe(a), QStringLiteral("spline through 5 points"));
+    QVERIFY2(describeGeometry(a).startsWith(QStringLiteral("through (0.0, 0.0), (1.0, 1.0), (2.0, 0.5), (3.0, 1.5), (4.0, 0.0) (5 points), ")),
+             qPrintable(describeGeometry(a)));
+    QVERIFY(describeGeometry(spline(q, true)).endsWith(QStringLiteral(", closed")));
+    QCOMPARE(describe(cv), QStringLiteral("spline %1 long").arg(fmtLen(a.size())));
 }
 
 void TestMisc::lineMatchEitherOrder() {
@@ -195,6 +327,35 @@ void TestMisc::alignMirror() {
     const AlignResult r = alignDrawings(ref, all(ref), stu, all(stu), o);
     QCOMPARE(r.best.score, 4);
     QVERIFY(r.best.mirrored);
+}
+
+void TestMisc::alignEllipseOnlyDrawing() {
+    // Nothing but ellipses, as in an isometric drawing's holes: their axes fix the turn.
+    std::vector<Primitive> ref{ellipse({0, 0}, {1.2247, 0.7071}, Vec2{-0.7071, 1.2247} * 0.5),
+                               ellipse({4, 1}, {0, 1}, {-0.6, 0}, 0, kPi, false)};
+    const Transform2D move = Transform2D::rigid(deg(70), 2, -3);
+    std::vector<Primitive> stu;
+    for (const auto& p : ref) stu.push_back(transformed(p, move));
+    const AlignResult r = alignDrawings(ref, all(ref), stu, all(stu), AlignOptions{});
+    QCOMPARE(r.best.score, 2);
+    const Transform2D inv = move.inverse();
+    QVERIFY(std::fabs(r.best.T.tx - inv.tx) < 1e-9 && std::fabs(r.best.T.ty - inv.ty) < 1e-9);
+    // A whole ellipse alone: turned to either end of its axis (both fit).
+    std::vector<Primitive> one{ref[0]}, oneStu{stu[0]};
+    QCOMPARE(alignDrawings(one, all(one), oneStu, all(oneStu), AlignOptions{}).best.score, 1);
+}
+
+void TestMisc::alignSplineOnlyDrawing() {
+    // Nothing but splines: an open one's ends fix the turn; a closed one only counts.
+    std::vector<Primitive> ref{spline({{0, 0}, {1, 1}, {2, 0.5}, {3, 1.5}, {4, 0}}),
+                               spline({{1, -2}, {2, -1.4}, {3, -1.8}, {2.2, -2.4}}, true)};
+    const Transform2D move = Transform2D::rigid(deg(70), 2, -3);
+    std::vector<Primitive> stu;
+    for (const auto& p : ref) stu.push_back(transformed(p, move));
+    const AlignResult r = alignDrawings(ref, all(ref), stu, all(stu), AlignOptions{});
+    QCOMPARE(r.best.score, 2);
+    const Transform2D inv = move.inverse();
+    QVERIFY(std::fabs(r.best.T.tx - inv.tx) < 1e-9 && std::fabs(r.best.T.ty - inv.ty) < 1e-9);
 }
 
 void TestMisc::identityCanvas() {
@@ -400,6 +561,23 @@ void TestMisc::classSummaryCounts() {
     QCOMPARE(s.parts[2].missed, 0);  // the warning on it is not an error
     QCOMPARE(s.partOf, (std::vector<int>{0, 1, 2, -1}));
     QCOMPARE(describePart(b, 0, 0), QStringLiteral("line 2.000 long on VISIBLE"));
+    {  // ellipses (D98)
+        BatchOutput e;
+        auto d = std::make_shared<Drawing>();
+        Primitive p = ellipse({1, 1}, {1, 0}, {0, 0.5});
+        p.layer = QStringLiteral("VISIBLE");
+        d->prims.push_back(p);
+        p = ellipse({1, 1}, {1, 0}, {0, 0.5775}, 0, kPi, false);
+        p.layer = QStringLiteral("VISIBLE");
+        d->prims.push_back(p);
+        e.refs.push_back(d);
+        QCOMPARE(describePart(e, 0, 0), QStringLiteral("ellipse 2.000 \u00D7 1.000 on VISIBLE"));
+        QCOMPARE(describePart(e, 0, 1), QStringLiteral("elliptical arc 2.000 \u00D7 1.155 on VISIBLE"));
+        p = spline({{0, 0}, {1, 1}, {2, 0.5}, {3, 1.5}, {4, 0}});
+        p.layer = QStringLiteral("VISIBLE");
+        d->prims.push_back(p);
+        QCOMPARE(describePart(e, 0, 2), QStringLiteral("spline through 5 points on VISIBLE"));
+    }
 
     // All the drawings: here one, so each student's overall score is that drawing's (D90).
     b.groups[0].correctness = 100;
@@ -446,6 +624,24 @@ void TestMisc::formatting() {
     QCOMPARE(fmtDeg(deg(1)), QStringLiteral("1.00\u00B0"));
     QCOMPARE(fmtDeg(deg(0.0004), 0), QStringLiteral("0.0004\u00B0"));
     QCOMPARE(fmtDeg(deg(45.001), deg(45)), QStringLiteral("45.001\u00B0"));
+    // Lineweight codes (D100): 0 to 23 are AutoCAD's widths, 29 ByLayer, 30 ByBlock, 31 Default.
+    QCOMPARE(lineweightFromCode(0), 0);
+    QCOMPARE(lineweightFromCode(11), 50);
+    QCOMPARE(lineweightFromCode(14), 70);
+    QCOMPARE(lineweightFromCode(23), 211);
+    QCOMPARE(lineweightFromCode(29), kLineweightByLayer);
+    QCOMPARE(lineweightFromCode(30), kLineweightByBlock);
+    QCOMPARE(lineweightFromCode(31), kLineweightDefault);
+    QCOMPARE(plottedLineweight(kLineweightDefault), 25);
+    QCOMPARE(lineweightName(211), QStringLiteral("2.11 mm"));
+    // Ellipses (D98).
+    const Primitive el = ellipse({4.5, 1.5}, {0, 1}, {-0.6, 0}, 0, kPi, false);
+    QCOMPARE(describe(el), QStringLiteral("elliptical arc 2.000 \u00D7 1.200"));
+    QCOMPARE(describeGeometry(el),
+             QStringLiteral("center (4.5, 1.5), axes 2.000 \u00D7 1.200, major axis at 90.00\u00B0, 0.00\u00B0 -> 180.00\u00B0 from it"));
+    const Primitive el2 = ellipse({0, 0}, {1, 0}, {0, 0.5});
+    QCOMPARE(fmtAxes(el2, &el), QStringLiteral("2.000 \u00D7 1.000"));
+    QCOMPARE(fmtAxes(ellipse({0, 0}, {1.00001, 0}, {0, 0.5}), &el2), QStringLiteral("2.00002 \u00D7 1.000"));
     // Colors: the ACI palette, names, differences, and dwgread's encodings.
     QCOMPARE(aciToRgb(1), 0xFF0000u);
     QCOMPARE(aciToRgb(21), 0xFF9F7Fu);
@@ -490,6 +686,11 @@ void TestMisc::settingsRoundTrip() {
     s.compare.matchColor = true;
     s.compare.colorTolerance = 7;
     s.compare.requireByLayer = true;
+    s.compare.matchLineweight = true;
+    s.compare.readHatches = true;
+    s.compare.readStrictness = 2;
+    s.compare.readOnPaper = true;
+    s.compare.readAsErrors = true;
     s.compare.locationPenaltyErrors = 0;
     const AppSettings t = AppSettings::fromJson(s.toJson());
     // As text, as saved and loaded; text that is not settings is refused, not read as the
@@ -503,7 +704,32 @@ void TestMisc::settingsRoundTrip() {
     QVERIFY(why.contains(QStringLiteral("not valid JSON")));
     QVERIFY(!AppSettings::fromJsonText(QByteArray()));
     QVERIFY(!t.compare.detectLocation);
-    QVERIFY(t.compare.matchColor && t.compare.requireByLayer);
+    QVERIFY(t.compare.matchColor && t.compare.requireByLayer && t.compare.matchLineweight);
+    QVERIFY(!AppSettings{}.compare.matchLineweight);  // not counted by default
+    QVERIFY(t.effectiveCanon().mergeByLineweight);
+    QVERIFY(t.compare.readHatches && !t.compare.readDashes && t.compare.readOnPaper && t.compare.readAsErrors);
+    QCOMPARE(t.compare.readStrictness, 2);
+    QVERIFY(!AppSettings{}.compare.readHatches && AppSettings{}.compare.readStrictness == 1);  // off, medium by default
+    // The levels (D101): medium is the proposal's numbers, loose and strict around it.
+    const ReadLimits medium = readLimits(ReadStrictness::Medium), loose = readLimits(ReadStrictness::Loose),
+                     strict = readLimits(ReadStrictness::Strict);
+    QCOMPARE(medium.gapMm, 0.5);
+    QCOMPARE(medium.hatchMm, 1.0);
+    QCOMPARE(medium.textMm, 2.5);
+    QVERIFY(loose.gapMm < medium.gapMm && medium.gapMm < strict.gapMm);
+    QVERIFY(loose.textPx < medium.textPx && medium.textPx < strict.textPx);
+    QVERIFY(loose.arrowMax > medium.arrowMax && medium.arrowMax > strict.arrowMax);
+    QVERIFY2(readLimitsText(ReadStrictness::Strict).contains(QStringLiteral("text 3\u20135 mm or 15\u201360 px high")),
+             qPrintable(readLimitsText(ReadStrictness::Strict)));
+    // Ranges (D102): the upper ends shrink from loose to strict, and every range is a range.
+    QVERIFY(loose.textMmMax > medium.textMmMax && medium.textMmMax > strict.textMmMax);
+    QVERIFY(loose.hatchPxMax > medium.hatchPxMax && medium.hatchPxMax > strict.hatchPxMax);
+    for (const ReadLimits& l : {loose, medium, strict})
+        QVERIFY(l.gapMm < l.gapMmMax && l.gapPx < l.gapPxMax && l.hatchMm < l.hatchMmMax && l.hatchPx < l.hatchPxMax &&
+                l.textMm < l.textMmMax && l.textPx < l.textPxMax);
+    // AutoCAD's defaults printed 1:1 are within every level: 0.18" text, ANSI31 at scale 1, HIDDEN's gaps.
+    for (const ReadLimits& l : {loose, medium, strict})
+        QVERIFY(0.18 * 25.4 <= l.textMmMax && 0.125 * 25.4 <= l.hatchMmMax && 0.125 * 25.4 <= l.gapMmMax);
     QCOMPARE(t.compare.colorTolerance, 7.0);
     QCOMPARE(t.compare.locationPenaltyErrors, 0);
     QCOMPARE(t.compare.mode, Mode::Orthographic);

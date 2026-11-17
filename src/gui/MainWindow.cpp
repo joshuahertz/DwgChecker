@@ -76,6 +76,12 @@ QByteArray canonSignature(const AppSettings& s) {
     o.insert(QStringLiteral("mergeByLayer"), c.mergeByLayer);
     o.insert(QStringLiteral("mergeByColor"), c.mergeByColor);
     o.insert(QStringLiteral("colorTolerance"), c.colorTolerance);
+    o.insert(QStringLiteral("mergeByLineweight"), c.mergeByLineweight);
+    // The card also says whether the solution passes the readability checks (D101).
+    const CompareSettings& r = s.compare;
+    o.insert(QStringLiteral("readability"), QStringLiteral("%1%2%3/%4/%5")
+                                                .arg(int(r.readDashes)).arg(int(r.readHatches)).arg(int(r.readDimensions))
+                                                .arg(r.readStrictness).arg(int(r.readOnPaper)));
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
 
@@ -495,6 +501,12 @@ RefSummary describeReferences(const QStringList& paths, const AppSettings& s,
             line += (d->hiddenLayerObjectsSkipped ? QObject::tr("; ignoring %1 on turned-off or frozen layers")
                                                   : QObject::tr("; including %1 on turned-off or frozen layers"))
                         .arg(countText(d->hiddenLayerObjects, QObject::tr("object"), QObject::tr("objects")));
+        // The readability checks on the solution itself (D101): if it fails them, so would a
+        // student's exact copy, and the limits may want loosening.
+        QStringList unreadable;
+        for (const ReadIssue& i : readabilityIssues(*d, readOptionsFrom(s.compare)))
+            if (!i.label.isEmpty()) unreadable << i.label;
+        if (!unreadable.isEmpty()) line += QObject::tr("; the solution itself fails readability: %1").arg(unreadable.join(QStringLiteral(", ")));
         out.drawings[path] = d;
         out.summaries[path] = d->meta.insUnits > 0 ? insUnitsName(d->meta.insUnits) + QStringLiteral("  ·  ") + line : line;
         if (d->meta.insUnits > 0 && !units.contains(insUnitsName(d->meta.insUnits))) units << insUnitsName(d->meta.insUnits);

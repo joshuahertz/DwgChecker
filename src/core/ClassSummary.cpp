@@ -128,6 +128,12 @@ QString describePart(const BatchOutput& b, int ref, int prim) {
     case PrimKind::Line: what = QStringLiteral("line %1 long").arg(fmtLen(p.length())); break;
     case PrimKind::Circle: what = QStringLiteral("circle Ø%1").arg(fmtLen(2 * p.radius)); break;
     case PrimKind::Arc: what = QStringLiteral("arc R%1").arg(fmtLen(p.radius)); break;
+    case PrimKind::Ellipse: what = QStringLiteral("ellipse %1").arg(fmtAxes(p)); break;
+    case PrimKind::EllipseArc: what = QStringLiteral("elliptical arc %1").arg(fmtAxes(p)); break;
+    case PrimKind::Spline:
+        what = p.spline && p.spline->from == SplineFrom::FitPoints ? QStringLiteral("spline through %1 points").arg(p.spline->fitCount())
+                                                                    : QStringLiteral("spline %1 long").arg(fmtLen(p.size()));
+        break;
     case PrimKind::Dimension: {
         QString t = dimShownText(p);
         if (t.isEmpty()) t = isAngularDimType(p.dimType) ? fmtDeg(p.measurement) : fmtLen(p.measurement);

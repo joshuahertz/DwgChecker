@@ -10,6 +10,8 @@
 #include <QProcessEnvironment>
 #include <QStandardPaths>
 
+#include <algorithm>
+
 namespace dc::platform {
 
 QString findDwgRead() {
@@ -31,32 +33,53 @@ QString findDwgRead() {
 }
 
 QString evidenceFolder() {
-    return QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + QStringLiteral("/DWG Checker/Opened in AutoCAD");
+    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + QStringLiteral("/DWG Checker/Temp");
+}
+
+QStringList earlierEvidenceFolders() {
+    return {QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + QStringLiteral("/DWG Checker/Opened in AutoCAD"),
+            QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/DwgChecker-evidence")};
 }
 
 namespace {
 
-// Removes a folder of copies: they are read-only, which Windows will not delete.
-void removeCopies(const QString& dir) {
-    QDirIterator it(dir, QDir::Files | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
-    while (it.hasNext()) QFile::setPermissions(it.next(), QFile::ReadOwner | QFile::WriteOwner);
-    QDir(dir).removeRecursively();
+// The name of a copy's folder: the first 12 hex digits of its SHA-256.
+bool isCopyFolderName(const QString& name) {
+    if (name.size() != 12) return false;
+    return std::all_of(name.cbegin(), name.cend(), [](QChar c) { return c.isDigit() || (c >= QLatin1Char('a') && c <= QLatin1Char('f')); });
 }
 
-// Copies older than a week (one still open in AutoCAD cannot be removed, and stays), and the
-// temp folder earlier versions used (D96).
-void removeOldCopies() {
-    const QDateTime weekAgo = QDateTime::currentDateTime().addDays(-7);
-    for (const QFileInfo& d : QDir(evidenceFolder()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
-        if (d.lastModified() < weekAgo) removeCopies(d.absoluteFilePath());
-    const QString old = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/DwgChecker-evidence");
-    if (QFileInfo(old).isDir()) removeCopies(old);
+QString sha256Hex(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    QCryptographicHash h(QCryptographicHash::Sha256);
+    if (!h.addData(&f)) return {};
+    return QString::fromLatin1(h.result().toHex());
 }
 
 }  // namespace
 
-QString makeEvidenceCopy(const QString& file, QString* error) {
-    removeOldCopies();
+void removeCopies(const QString& root) {
+    for (const QFileInfo& d : QDir(root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
+        if (!isCopyFolderName(d.fileName())) continue;  // not a folder the app made
+        for (const QFileInfo& f : QDir(d.absoluteFilePath()).entryInfoList(QDir::Files | QDir::Hidden | QDir::System)) {
+            if (!sha256Hex(f.absoluteFilePath()).startsWith(d.fileName())) continue;  // not its copy: the user's
+            // Read-only, which Windows will not delete; one still open in AutoCAD stays.
+            QFile::setPermissions(f.absoluteFilePath(), QFile::ReadOwner | QFile::WriteOwner);
+            if (!QFile::remove(f.absoluteFilePath()))
+                QFile::setPermissions(f.absoluteFilePath(), QFile::ReadOwner | QFile::ReadUser | QFile::ReadGroup | QFile::ReadOther);
+        }
+        QDir(root).rmdir(d.fileName());  // only when empty
+    }
+    // The folder itself, then its "DWG Checker" parent, when nothing is left in them.
+    const QFileInfo r(root);
+    if (QDir(r.absolutePath()).rmdir(r.fileName()) && QFileInfo(r.absolutePath()).fileName() == QStringLiteral("DWG Checker")) {
+        const QFileInfo parent(r.absolutePath());
+        QDir(parent.absolutePath()).rmdir(parent.fileName());
+    }
+}
+
+QString makeEvidenceCopy(const QString& file, QString* error, const QString& root) {
     QFile in(file);
     if (!in.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("cannot read %1").arg(file);
@@ -64,7 +87,7 @@ QString makeEvidenceCopy(const QString& file, QString* error) {
     }
     const QByteArray data = in.readAll();
     const QString sha = QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex().left(12));
-    const QString dir = evidenceFolder() + QLatin1Char('/') + sha;
+    const QString dir = root + QLatin1Char('/') + sha;
     if (!QDir().mkpath(dir)) {
         if (error) *error = QStringLiteral("cannot make the folder %1").arg(QDir::toNativeSeparators(dir));
         return {};

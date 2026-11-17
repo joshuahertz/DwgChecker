@@ -37,6 +37,7 @@ struct CanonSettings {
     bool mergeByLayer = false;      // only merge lines on the same layer (when layers must match)
     bool mergeByColor = false;      // ... of the same color (when colors must match)
     double colorTolerance = 0;      // ... within this colorDifference (copied from CompareSettings)
+    bool mergeByLineweight = false; // ... and the same lineweight (copied from CompareSettings, D100)
     // Find the edges the drawing's dimensions measure from (D78). Only a solution's are used, so
     // student drawings skip it (effectiveCanon).
     bool dimensionEdges = true;
@@ -52,13 +53,19 @@ struct CompareSettings {
     bool requireLayerMatch = false;
     bool matchColor = false;        // each item's color must match the reference's...
     double colorTolerance = 0;      // ...within this colorDifference (0-100; 0 = the same color)
-    bool requireByLayer = false;    // each item's color and linetype must be set by its layer
+    bool matchLineweight = false;   // each item's lineweight must match the reference's (Default = 0.25 mm, D100)
+    bool requireByLayer = false;    // each item's color, linetype and lineweight must be set by its layer
     ExtrasPolicy extras = ExtrasPolicy::Penalize;
     bool checkDimensions = false;   // compare DIMENSION measured values
     bool checkDimPrecision = true;  // ...and the precision they show (only when checkDimensions)
     bool strictCenterlines = false; // also compare centerline length
     bool checkHatches = false;      // check that each hatched reference region is hatched
     bool checkHatchPattern = true;  // ...with the same pattern (only when checkHatches)
+    // Readability (D101): judged in the student's file on its own, not against the solution.
+    bool readDashes = false, readHatches = false, readDimensions = false;
+    int readStrictness = 1;         // 0 loose, 1 medium, 2 strict (ReadStrictness)
+    bool readOnPaper = false;       // as printed through the layout viewports, else in model view
+    bool readAsErrors = false;      // its problems count as errors, else they are warnings
     double nearMissRadius = 0;      // 0 = auto: 10% of the reference diagonal
     bool detectScale = true;        // when little matches, try uniform scale factors (mm vs inches...)
     int scalePenaltyErrors = 1;     // a wrongly scaled drawing counts as this many errors
@@ -83,7 +90,6 @@ struct DuplicateSettings {
 struct LoaderSettings {
     QString dwgreadPath;                  // set at run time to the bundled copy; never saved
     int timeoutSec = 60;
-    QString odaConverterPath;             // optional fallback (ODA File Converter)
 };
 
 // An assignment with several solution drawings: what may differ per drawing.

@@ -15,7 +15,8 @@ struct MatchCriteria {
     bool requireLayer = false;
     bool matchColor = false;
     double colorTol = 0;          // colorDifference allowed (0-100)
-    bool requireByLayer = false;  // the student's color and linetype set by layer
+    bool matchLineweight = false; // the same printed lineweight (Default = 0.25 mm, D100)
+    bool requireByLayer = false;  // the student's color, linetype and lineweight set by layer
     bool strictCenterlines = false;
     bool checkDimensions = false;
     bool checkDimPrecision = true;  // with checkDimensions: the shown precision must agree
@@ -68,10 +69,12 @@ struct Pairing {
 constexpr double kDisplacedMaxTurn = 5.0 * kPi / 180.0;
 
 // Pairs unmatched reference primitives with the closest unmatched student primitive of
-// the same kind within `radius`. Superset lines may explain several reference lines.
+// the same kind within `radius` (a circle and an ellipse, or an arc and an elliptical arc,
+// pair too: the wrong shape). Superset lines may explain several reference lines.
 // What is left is then paired at any distance with primitives of the same size (a line of
-// the same length, a circle of the same radius, an arc of the same radius and sweep)
-// turned by at most kDisplacedMaxTurn: drawn in the wrong place.
+// the same length, a circle of the same radius, an arc of the same radius and sweep, an
+// ellipse with the same axes, a spline of the same shape) turned by at most
+// kDisplacedMaxTurn: drawn in the wrong place.
 std::vector<Pairing> pairNearMisses(const std::vector<Primitive>& ref, const std::vector<int>& refUnmatched,
                                     const std::vector<Primitive>& stu, const std::vector<int>& stuUnmatched,
                                     double radius, const MatchCriteria& c);

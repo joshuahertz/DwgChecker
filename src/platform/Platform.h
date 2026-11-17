@@ -3,6 +3,7 @@
 // platform/win and platform/mac; everything else is platform independent.
 
 #include <QString>
+#include <QStringList>
 
 #include <memory>
 
@@ -32,13 +33,22 @@ QString bundledDwgReadPath();
 // made without a dwgread to bundle.
 QString findDwgRead();
 
-// Where the read-only copies opened in AutoCAD go: Documents/DWG Checker/Opened in AutoCAD
-// (D96). Other programs see that folder from every build; a Store-installed app's AppData
-// and temp files are its own, and AutoCAD could not open a copy there.
+// Where the read-only copies opened in AutoCAD go: <home>/DWG Checker/Temp (D97). Outside
+// AppData, whose new files a Store-installed app keeps to itself (AutoCAD could not open a
+// copy there, the system temp folder included), and outside Documents and Desktop, which
+// OneDrive and iCloud often sync. The same in every build.
 QString evidenceFolder();
-// Protects the evidence: copies `file` into evidenceFolder() (read-only) and returns the
-// copy, so saving in AutoCAD can never rewrite the submission. Copies older than a week, and
-// the temp folder earlier versions used, are removed first.
-QString makeEvidenceCopy(const QString& file, QString* error);
+// Protects the evidence: copies `file` into `root` (read-only), in a folder named after the
+// start of its SHA-256, and returns the copy, so saving in AutoCAD can never rewrite the
+// submission. The same file again reuses its copy.
+QString makeEvidenceCopy(const QString& file, QString* error, const QString& root = evidenceFolder());
+// Removes the app's own copies from `root`: a file whose SHA-256 begins with its folder's
+// name. Anything else stays, such as a drawing saved there with Save As, and so does a copy
+// still open in AutoCAD (Windows cannot delete it). Then removes the folders left empty,
+// `root` itself and its "DWG Checker" parent included. Called at start and close (D97).
+void removeCopies(const QString& root = evidenceFolder());
+// The folders earlier versions copied into: Documents/DWG Checker/Opened in AutoCAD (0.3.0)
+// and DwgChecker-evidence in the system temp folder (before). Cleared at start, the same way.
+QStringList earlierEvidenceFolders();
 
 }  // namespace dc::platform

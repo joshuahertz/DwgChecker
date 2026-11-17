@@ -51,6 +51,8 @@ QString hex(quint64 h) { return QString::number(h, 16).toUpper(); }
 class Builder {
 public:
     Builder(const DwgJson& j, const CanonSettings& s, Drawing& d) : J(j), S(s), D(d), lt(s) {
+        ltscale = DwgJson::num(j.header(), "LTSCALE", 1.0);
+        if (!(ltscale > 0)) ltscale = 1;
         if (!s.layerIgnoreRegex.trimmed().isEmpty())
             ignore = QRegularExpression(s.layerIgnoreRegex, QRegularExpression::CaseInsensitiveOption);
     }
@@ -63,6 +65,8 @@ public:
         quint32 insRgb = 0xFFFFFF;
         bool insColorByLayer = true;   // ... and whether the INSERT's color and linetype are by layer
         bool insLtByLayer = true;
+        int insLw = kLineweightDefault;  // likewise its lineweight (D100)
+        bool insLwByLayer = true;
         QString idPrefix;     // "29C/" ...
         QString typePrefix;   // "INSERT>" ...
         quint64 top = 0;      // top-level entity handle
@@ -97,15 +101,57 @@ public:
             li.ltype = J.ltypeName(l.ltype);
             li.color = l.color;
             li.rgb = l.rgb;
+            li.lineweight = l.lineweight;
             li.frozen = l.frozen(); li.off = l.off(); li.locked = l.locked(); li.plot = l.plot();
             D.layers.push_back(li);
         }
         std::sort(D.layers.begin(), D.layers.end(), [](const LayerInfo& a, const LayerInfo& b) { return a.name < b.name; });
+        readViewports();
+    }
+
+    // Each layout's viewports (D101), but the first, which is the sheet itself: the part of
+    // model space each shows (its height VIEWSIZE, centered on VIEWCTR) and at what scale (its
+    // height on the sheet over VIEWSIZE). Only plan views (looking down, not twisted) count.
+    void readViewports() {
+        D.psltscale = DwgJson::integer(J.header(), "PSLTSCALE", 1) != 0;
+        for (const QJsonObject* lo : J.objectsOfType(QStringLiteral("LAYOUT"))) {
+            if (lo->value("layout_name").toString().compare(QLatin1String("Model"), Qt::CaseInsensitive) == 0) continue;
+            const quint64 bh = DwgJson::href(lo->value("block_header"));
+            const DwgJson::Block* b = J.block(bh);
+            std::vector<quint64> ents = b ? b->entities : std::vector<quint64>{};
+            if (ents.empty() && bh && bh == J.paperSpaceBlock()) ents = J.paperSpace();  // R2000: no entity list
+            const double inch = DwgJson::integer(*lo, "plotsettings.plot_paper_unit", 0) == 1 ? 1.0 : 25.4;
+            const double pu = DwgJson::num(*lo, "plotsettings.paper_units", 1), du = DwgJson::num(*lo, "plotsettings.drawing_units", 1);
+            const double mm = inch * (pu > 0 && du > 0 ? pu / du : 1.0);
+            bool sheet = true;
+            for (quint64 h : ents) {
+                const QJsonObject* v = J.object(h);
+                if (!v || J.typeOf(*v) != QLatin1String("VIEWPORT")) continue;
+                if (sheet) {
+                    sheet = false;
+                    continue;
+                }
+                const Vec3 dir = DwgJson::vec3(v->value("VIEWDIR"), {0, 0, 1});
+                if (std::fabs(dir.x) > 1e-9 || std::fabs(dir.y) > 1e-9 || dir.z <= 0 || std::fabs(DwgJson::num(*v, "VIEWTWIST", 0)) > 1e-9)
+                    continue;
+                const double w = DwgJson::num(*v, "width", 0), ht = DwgJson::num(*v, "height", 0), size = DwgJson::num(*v, "VIEWSIZE", 0);
+                if (!(w > 0 && ht > 0 && size > 0)) continue;
+                LayoutViewport vp;
+                vp.scale = ht / size;
+                vp.area = w * ht;
+                vp.mmPerUnit = mm;
+                const Vec2 ctr = DwgJson::vec2(v->value("VIEWCTR")) + DwgJson::vec3(v->value("view_target")).xy();
+                const Vec2 half{w / vp.scale / 2, size / 2};
+                vp.window.add(ctr - half);
+                vp.window.add(ctr + half);
+                D.viewports.push_back(vp);
+            }
+        }
     }
 
     // Counters turned into warnings by finish().
     QMap<QString, int> unsupported;
-    int nonUniform = 0, tilted = 0, zCount = 0, hiddenLayerCount = 0, xrefs = 0, tooDeep = 0, minsertNoCounts = 0;
+    int tilted = 0, zCount = 0, hiddenLayerCount = 0, xrefs = 0, tooDeep = 0, minsertNoCounts = 0;
     int nonFinite = 0;
     QSet<QString> hiddenLayers;
     double zMax = 0;
@@ -114,13 +160,9 @@ public:
         if (zCount)
             D.addWarning(WarnKind::NonZeroZ, QStringLiteral("%1 entities have nonzero Z (max |z| = %2); Z was ignored")
                                                  .arg(zCount).arg(zMax, 0, 'g', 6));
-        if (nonUniform)
-            D.addWarning(WarnKind::NonUniformScale,
-                         QStringLiteral("%1 arcs/circles are inside non-uniformly scaled blocks and were marked unsupported")
-                             .arg(nonUniform));
         if (tilted)
-            D.addWarning(WarnKind::NonZeroZ,
-                         QStringLiteral("%1 arcs/circles are not parallel to the XY plane and were marked unsupported").arg(tilted));
+            D.addWarning(WarnKind::NonZeroZ, QStringLiteral("%1 arcs, circles, ellipses or splines are not parallel to the XY plane and "
+                                                            "were marked unsupported").arg(tilted));
         D.hiddenLayerObjects = hiddenLayerCount;
         D.hiddenLayerObjectsSkipped = hiddenLayerCount > 0 && S.skipHiddenLayers;
         if (hiddenLayerCount) {
@@ -151,6 +193,38 @@ private:
     Drawing& D;
     LinetypeClassifier lt;
     QRegularExpression ignore;
+    double ltscale = 1;  // LTSCALE
+
+    // How much a transform scales lengths in the XY plane.
+    static double planeScale(const Affine3& M) {
+        const Vec3 ex = M.applyLinear({1, 0, 0}), ey = M.applyLinear({0, 1, 0});
+        return std::sqrt(std::fabs(cross(ex.xy(), ey.xy())));
+    }
+    // A linetype's dash pattern (D101): its length, and its shortest gap; 0 when it has none.
+    struct LtPattern {
+        double length = 0, gap = 0;
+    };
+    mutable QHash<QString, LtPattern> patterns;
+    LtPattern patternOf(const QString& name) const {
+        const QString key = name.toUpper();
+        const auto it = patterns.constFind(key);
+        if (it != patterns.constEnd()) return *it;
+        LtPattern pat;
+        if (const QJsonObject* o = J.object(J.ltypeByName(name))) {
+            double gap = 1e300;
+            for (const auto& dv : o->value("dashes").toArray()) {
+                const double len = dv.toObject().value("length").toDouble();
+                if (len < 0) gap = std::min(gap, -len);
+            }
+            const double total = DwgJson::num(*o, "pattern_len", 0);
+            if (total > 0 && gap < 1e300) {
+                pat.length = total;
+                pat.gap = gap;
+            }
+        }
+        patterns.insert(key, pat);
+        return pat;
+    }
 
     QString layerName(const QJsonObject& o) const {
         const auto* l = J.layer(DwgJson::href(o.value("layer")));
@@ -220,22 +294,42 @@ private:
         }
         return e;
     }
-    // effColor and ltByLayer for one entity in one context: the same for all its primitives
-    // (a polyline's segments, a MINSERT's cells), so they are resolved once.
+    // The object's effective lineweight (D100), and whether it comes from its layer. ByBlock
+    // takes the enclosing INSERT's (Default at the top level, where it is not by layer).
+    struct EffWeight {
+        int lw = kLineweightDefault;
+        bool byLayer = true;
+    };
+    EffWeight effWeight(const QJsonObject& o, const QString& effLayerName, const Ctx& c) const {
+        const int lw = lineweightFromCode(DwgJson::integer(o, "linewt", 29));
+        if (lw == kLineweightByLayer) {
+            const auto* l = J.layerByName(effLayerName);
+            return {l ? l->lineweight : kLineweightDefault, true};
+        }
+        if (lw == kLineweightByBlock) return c.depth > 0 ? EffWeight{c.insLw, c.insLwByLayer} : EffWeight{kLineweightDefault, false};
+        return {lw, false};
+    }
+    // effColor, ltByLayer and effWeight for one entity in one context: the same for all its
+    // primitives (a polyline's segments, a MINSERT's cells), so they are resolved once.
     struct AttrMemo {
         const QJsonObject* o = nullptr;
         QString layer;
         int depth = -1, insAci = 0;
         quint32 insRgb = 0;
         bool insColorByLayer = false, insLtByLayer = false;
+        int insLw = 0;
+        bool insLwByLayer = false;
         EffColor color;
         bool ltByLayer = true;
+        EffWeight weight;
     };
     mutable AttrMemo memo;
     const AttrMemo& attrsOf(const QJsonObject& o, const QString& layer, const Ctx& c) const {
         if (memo.o != &o || memo.layer != layer || memo.depth != c.depth || memo.insAci != c.insAci ||
-            memo.insRgb != c.insRgb || memo.insColorByLayer != c.insColorByLayer || memo.insLtByLayer != c.insLtByLayer)
-            memo = {&o, layer, c.depth, c.insAci, c.insRgb, c.insColorByLayer, c.insLtByLayer, effColor(o, layer, c), ltByLayer(o, c)};
+            memo.insRgb != c.insRgb || memo.insColorByLayer != c.insColorByLayer || memo.insLtByLayer != c.insLtByLayer ||
+            memo.insLw != c.insLw || memo.insLwByLayer != c.insLwByLayer)
+            memo = {&o, layer, c.depth, c.insAci, c.insRgb, c.insColorByLayer, c.insLtByLayer, c.insLw, c.insLwByLayer,
+                    effColor(o, layer, c), ltByLayer(o, c), effWeight(o, layer, c)};
         return memo;
     }
     // Whether the object's linetype comes from its layer (ltype_flags 0 ByLayer, 1 ByBlock).
@@ -272,6 +366,13 @@ private:
         p.rgb = a.color.rgb;
         p.colorByLayer = a.color.byLayer;
         p.ltByLayer = a.ltByLayer;
+        p.lineweight = a.weight.lw;
+        p.lwByLayer = a.weight.byLayer;
+        if (const LtPattern pat = patternOf(ltype); pat.length > 0) {
+            const double sc = ltscale * DwgJson::num(o, "ltype_scale", 1.0) * planeScale(c.M);
+            p.ltPattern = pat.length * sc;
+            p.ltGap = pat.gap * sc;
+        }
         p.sourceType = c.typePrefix + type;
         p.sourceId = c.idPrefix + hex(DwgJson::ownHandle(o)) + (seg >= 0 ? QStringLiteral("#%1").arg(seg) : QString());
         p.handle = c.top;
@@ -282,10 +383,17 @@ private:
     // referenced directly), then the per-dimension overrides that AutoCAD keeps as
     // ACAD "DSTYLE" extended data: "{", pairs of (DXF group code, value), "}".
     // See FIELDMAP.md "DIMENSION".
-    void readDimFormat(Primitive& p, const QJsonObject& o) const {
+    // Its text and arrowhead sizes as set (D101): DIMTXT, DIMASZ, DIMSCALE, DIMTSZ, with the
+    // overrides, and the height of a text style of fixed height.
+    struct DimSizes {
+        double txt = 0.18, asz = 0.18, scale = 1, tsz = 0, fixed = 0;
+    };
+    void readDimFormat(Primitive& p, const QJsonObject& o, DimSizes* sizes = nullptr) const {
         static const std::pair<int, const char*> vars[] = {{271, "DIMDEC"},  {179, "DIMADEC"},  {78, "DIMZIN"},
                                                            {79, "DIMAZIN"},  {277, "DIMLUNIT"}, {275, "DIMAUNIT"},
-                                                           {278, "DIMDSEP"}, {144, "DIMLFAC"},  {45, "DIMRND"}};
+                                                           {278, "DIMDSEP"}, {144, "DIMLFAC"},  {45, "DIMRND"},
+                                                           {140, "DIMTXT"},  {41, "DIMASZ"},    {40, "DIMSCALE"},
+                                                           {142, "DIMTSZ"}};
         QHash<int, double> v;
         const QJsonObject* st = J.object(DwgJson::href(o.value("dimstyle")));
         const QJsonObject& src = st && J.typeOf(*st) == QLatin1String("DIMSTYLE") ? *st : J.header();
@@ -308,6 +416,14 @@ private:
                 k += 2;
             }
             break;
+        }
+        if (sizes) {
+            sizes->txt = v.value(140, 0.18);
+            sizes->asz = v.value(41, 0.18);
+            sizes->scale = v.value(40, 1.0);
+            sizes->tsz = v.value(142, 0.0);
+            const QJsonObject* ts = J.object(DwgJson::href(src.value("DIMTXSTY")));
+            sizes->fixed = ts && J.typeOf(*ts) == QLatin1String("STYLE") ? DwgJson::num(*ts, "text_size", 0) : 0.0;
         }
         if (!v.contains(271)) return;  // no style information: the precision stays unknown
         const bool angular = isAngularDimType(p.dimType);
@@ -351,14 +467,12 @@ private:
             D.prims.push_back(std::move(p));
             return;
         }
+        noteZ(c.z);
         if (std::fabs(s0 - s1) > 1e-9 * std::max(s0, s1) || std::fabs(dot(c0, c1)) > 1e-9 * s0 * s1) {
-            ++nonUniform;
-            p.kind = PrimKind::Unsupported;
-            p.sourceType += QStringLiteral(" (non-uniform scale)");
-            D.prims.push_back(std::move(p));
+            // In a block scaled unevenly: an ellipse, or part of one (D98).
+            emitEllipse(std::move(p), c.xy(), c0 * r, c1 * r, a0, a1, full);
             return;
         }
-        noteZ(c.z);
         p.radius = r * s0;
         if (full) {
             p.kind = PrimKind::Circle;
@@ -373,13 +487,193 @@ private:
         D.prims.push_back(std::move(p));
     }
 
+    // The ellipse traced by c + U cos(t) + V sin(t), whole or from t0 to t1 (D98). One that is
+    // a circle within the tolerance (axis ratio 1) is a circle or an arc.
+    void emitEllipse(Primitive p, Vec2 c, Vec2 U, Vec2 V, double t0, double t1, bool full) {
+        setEllipse(p, c, U, V, t0, t1, full);
+        if (p.radius - p.minorRadius <= S.linTol) {
+            // c + r cos(s) u + r sin(s) perp(u) is at angle axisAngle + s.
+            const double th = p.axisAngle;
+            p.radius = (p.radius + p.minorRadius) / 2;
+            p.minorRadius = p.axisAngle = 0;
+            if (full) {
+                p.kind = PrimKind::Circle;
+                p.a0 = p.a1 = 0;
+            } else {
+                p.kind = PrimKind::Arc;
+                p.a0 = normalizeAngle(p.a0 + th);
+                p.a1 = normalizeAngle(p.a1 + th);
+            }
+        }
+        D.prims.push_back(std::move(p));
+    }
+
+    // ELLIPSE (FIELDMAP): center and major semi-axis `sm_axis` in WCS (the block's), the minor
+    // one `axis_ratio` times as long along extrusion x major, from parameter start_angle to
+    // end_angle (0 to 2pi for a whole one).
+    void emitEllipseEntity(Primitive p, const QJsonObject& o, const Ctx& c, Vec3 ext) {
+        const Vec3 major = DwgJson::vec3(o.value("sm_axis"));
+        const Vec3 minor = cross(ext.normalized(), major) * DwgJson::num(o, "axis_ratio", 1);
+        const Vec3 ctr = c.M.apply(DwgJson::vec3(o.value("center")));
+        const Vec3 U = c.M.applyLinear(major), V = c.M.applyLinear(minor);
+        p.center = ctr.xy();
+        if (std::fabs(U.z) > 1e-9 * std::max(1.0, U.length()) || std::fabs(V.z) > 1e-9 * std::max(1.0, V.length())) {
+            ++tilted;
+            p.kind = PrimKind::Unsupported;
+            p.sourceType += QStringLiteral(" (tilted)");
+            D.prims.push_back(std::move(p));
+            return;
+        }
+        noteZ(ctr.z);
+        const double t0 = DwgJson::num(o, "start_angle", 0), t1 = DwgJson::num(o, "end_angle", kTwoPi);
+        const double sw = ccwSweep(t0, t1);  // 0..2pi prints as 6.28318530717959, a hair past 2pi
+        emitEllipse(std::move(p), ctr.xy(), U.xy(), V.xy(), t0, t1, sw <= 1e-9 || sw >= kTwoPi - 1e-9);
+    }
+
+    // Splines (D99). Their points are in the block's coordinates; the curve is built there and
+    // then moved with its control points, which is exact for any block transform (an uneven
+    // scale too, which rebuilding through moved fit points would not be).
+
+    // The points' common height, or false when they are not on one level.
+    static bool flat(const std::vector<Vec3>& pts, double* z0) {
+        double lo = 1e300, hi = -1e300, size = 1;
+        for (const Vec3& q : pts) {
+            lo = std::min(lo, q.z);
+            hi = std::max(hi, q.z);
+            size = std::max({size, std::fabs(q.x), std::fabs(q.y), std::fabs(q.z)});
+        }
+        *z0 = pts.empty() ? 0.0 : lo;
+        return pts.empty() || hi - lo <= 1e-9 * size;
+    }
+    // The map from the plane z = z0 of M's coordinates to the drawing's XY, or false when that
+    // plane is not parallel to the XY plane.
+    static bool planeMap(const Affine3& M, double z0, Transform2D* t, double* zOut) {
+        const Vec3 ex = M.applyLinear({1, 0, 0}), ey = M.applyLinear({0, 1, 0});
+        if (std::fabs(ex.z) > 1e-9 * std::max(1.0, ex.length()) || std::fabs(ey.z) > 1e-9 * std::max(1.0, ey.length())) return false;
+        const Vec3 o = M.apply({0, 0, z0});
+        t->a = ex.x;
+        t->b = ey.x;
+        t->c = ex.y;
+        t->d = ey.y;
+        t->tx = o.x;
+        t->ty = o.y;
+        *zOut = o.z;
+        return true;
+    }
+    void emitSpline(Primitive p, std::shared_ptr<SplineData> s, const Affine3& M, double z0) {
+        Transform2D t;
+        double z = 0;
+        if (!planeMap(M, z0, &t, &z)) {
+            ++tilted;
+            p.kind = PrimKind::Unsupported;
+            p.sourceType += QStringLiteral(" (tilted)");
+            p.center = s->start();
+            D.prims.push_back(std::move(p));
+            return;
+        }
+        if (!t.isIdentity()) mapSpline(*s, t, -1);
+        noteZ(z);
+        p.kind = PrimKind::Spline;
+        p.p0 = s->start();
+        p.p1 = s->end();
+        p.center = s->middle();
+        p.spline = std::move(s);
+        D.prims.push_back(std::move(p));
+    }
+    void splineUnsupported(Primitive p, const QJsonObject& o, const Ctx& c, const QString& why, bool tilt = false) {
+        if (tilt) ++tilted;
+        p.sourceType += why;
+        emitUnsupported(std::move(p), o, c.M);
+    }
+
+    // SPLINE (FIELDMAP): fit points (scenario 2: the file keeps only those, with the end
+    // tangents, fit tolerance and kind of knots), or control points (scenario 1).
+    void emitSplineEntity(Primitive p, const QJsonObject& o, const Ctx& c) {
+        const QJsonArray fitArr = o.value("fit_pts").toArray(), cps = o.value("ctrl_pts").toArray();
+        const int scenario = DwgJson::integer(o, "scenario", cps.isEmpty() ? 2 : 1);
+        std::vector<Vec3> pts;
+        std::shared_ptr<SplineData> s;
+        double z0 = 0;
+        if (scenario == 2 || cps.isEmpty()) {
+            // A fit tolerance makes AutoCAD approximate the points instead, which is not rebuilt.
+            if (DwgJson::num(o, "fit_tol", 0) > 1e-9) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (fit tolerance)"));
+            const int kp = DwgJson::integer(o, "knotparam", 0);
+            if (kp < 0 || kp > 2) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (custom knots)"));
+            if (DwgJson::integer(o, "degree", 3) != 3) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (degree)"));
+            for (const auto& v : fitArr) pts.push_back(DwgJson::vec3(v));
+            const Vec3 t0 = DwgJson::vec3(o.value("beg_tan_vec")), t1 = DwgJson::vec3(o.value("end_tan_vec"));
+            if (!flat(pts, &z0) || std::fabs(t0.z) > 1e-9 || std::fabs(t1.z) > 1e-9)
+                return splineUnsupported(std::move(p), o, c, QStringLiteral(" (not flat)"), true);
+            std::vector<Vec2> xy;
+            for (const Vec3& q : pts) xy.push_back(q.xy());
+            s = splineThroughPoints(xy, kp, t0.xy(), t1.xy());
+        } else {
+            std::vector<Vec2> ctrl;
+            std::vector<double> w;
+            bool weighted = false;
+            for (const auto& v : cps) {
+                Vec3 q;
+                double wt = 1;
+                if (v.isObject()) {
+                    const QJsonObject po = v.toObject();
+                    q = {po.value("x").toDouble(), po.value("y").toDouble(), po.value("z").toDouble()};
+                    if (po.contains("w")) {
+                        wt = po.value("w").toDouble();
+                        weighted = true;
+                    }
+                } else {
+                    q = DwgJson::vec3(v);
+                }
+                pts.push_back(q);
+                ctrl.push_back(q.xy());
+                w.push_back(wt);
+            }
+            if (!flat(pts, &z0)) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (not flat)"), true);
+            std::vector<double> knots;
+            for (const auto& k : o.value("knots").toArray()) knots.push_back(k.toDouble());
+            s = splineFromControlPoints(DwgJson::integer(o, "degree", 3), std::move(knots), std::move(ctrl),
+                                        weighted ? std::move(w) : std::vector<double>{});
+            // A periodic one whose stored curve does not close is not read as AutoCAD shows it.
+            if (s && DwgJson::integer(o, "periodic", 0) && !s->closed(1e-9 * std::max(1.0, s->length)))
+                return splineUnsupported(std::move(p), o, c, QStringLiteral(" (periodic)"));
+        }
+        if (!s) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (unreadable)"));
+        emitSpline(std::move(p), std::move(s), c.M, z0);
+    }
+
+    // A spline-fit polyline (PEDIT Spline): the B-spline of its frame vertices (flag 16), in
+    // L's coordinates (a 2D polyline's OCS, or the block's for a 3D one).
+    void emitSplineFrame(Primitive p, const QJsonObject& o, const Ctx& c, const Affine3& L, double elev) {
+        const int type = DwgJson::integer(o, "curve_type", 6);  // 5 quadratic, 6 cubic
+        if (type != 5 && type != 6) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (spline-fit type %1)").arg(type));
+        std::vector<Vec3> frame;
+        for (quint64 vh : J.polylineVertices(o)) {
+            const QJsonObject* vo = J.object(vh);
+            if (!vo || !(DwgJson::integer(*vo, "flag", 0) & 16)) continue;
+            Vec3 q = DwgJson::vec3(vo->value("point"));
+            if (elev != 0 && q.z == 0) q.z = elev;
+            frame.push_back(q);
+        }
+        double z0 = 0;
+        if (!flat(frame, &z0)) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (not flat)"), true);
+        std::vector<Vec2> xy;
+        for (const Vec3& q : frame) xy.push_back(q.xy());
+        auto s = splineFromFrame(xy, type == 5 ? 2 : 3, (DwgJson::integer(o, "flag", 0) & 1) != 0);
+        if (!s) return splineUnsupported(std::move(p), o, c, QStringLiteral(" (unreadable)"));
+        emitSpline(std::move(p), std::move(s), L, z0);
+    }
+
     void emitUnsupported(Primitive p, const QJsonObject& o, const Affine3& M) {
         p.kind = PrimKind::Unsupported;
         Vec3 pos;
         for (const char* k : {"center", "point", "ins_pt", "start"})
             if (o.contains(QLatin1StringView(k))) { pos = DwgJson::vec3(o.value(QLatin1StringView(k))); break; }
-        if (o.contains("fit_pts")) pos = DwgJson::vec3(o.value("fit_pts").toArray().at(0));
-        else if (o.contains("ctrl_pts")) pos = DwgJson::vec3(o.value("ctrl_pts").toArray().at(0));
+        if (o.contains("fit_pts")) {
+            pos = DwgJson::vec3(o.value("fit_pts").toArray().at(0));
+        } else if (o.contains("ctrl_pts")) {
+            const QJsonValue v = o.value("ctrl_pts").toArray().at(0);  // {x, y, z, w} in dwgread 0.14
+            pos = v.isObject() ? Vec3{v["x"].toDouble(), v["y"].toDouble(), v["z"].toDouble()} : DwgJson::vec3(v);
+        }
         p.center = M.apply(pos).xy();
         unsupported[p.sourceType]++;
         D.prims.push_back(std::move(p));
@@ -422,6 +716,10 @@ private:
             const Affine3 L = c.M * Affine3::ocsToWcs(ext);
             emitArc(proto(o, type, layer, ltype, c), L, DwgJson::vec3(o.value("center")), DwgJson::num(o, "radius"),
                     DwgJson::num(o, "start_angle"), DwgJson::num(o, "end_angle"), type == "CIRCLE");
+        } else if (type == "ELLIPSE") {
+            emitEllipseEntity(proto(o, type, layer, ltype, c), o, c, ext);
+        } else if (type == "SPLINE") {
+            emitSplineEntity(proto(o, type, layer, ltype, c), o, c);
         } else if (type == "LWPOLYLINE") {
             const Affine3 L = c.M * Affine3::ocsToWcs(ext);
             const double elev = DwgJson::num(o, "elevation", 0);
@@ -436,8 +734,8 @@ private:
             emitPolyline(o, type, layer, ltype, c, L, v, b, elev, closed);
         } else if (type == "POLYLINE_2D") {
             const int flag = DwgJson::integer(o, "flag", 0);
-            if (flag & 4) {  // spline-fit: a curve, not lines and arcs
-                emitUnsupported(proto(o, type + QStringLiteral(" (spline-fit)"), layer, ltype, c), o, c.M);
+            if (flag & 4) {  // spline-fit: the spline of its frame (D99)
+                emitSplineFrame(proto(o, type, layer, ltype, c), o, c, c.M * Affine3::ocsToWcs(ext), DwgJson::num(o, "elevation", 0));
                 return;
             }
             const Affine3 L = c.M * Affine3::ocsToWcs(ext);
@@ -456,8 +754,8 @@ private:
             emitPolyline(o, type, layer, ltype, c, L, v, b, elev, (flag & 1) != 0);
         } else if (type == "POLYLINE_3D") {
             const int flag = DwgJson::integer(o, "flag", 0);
-            if (flag & 4) {
-                emitUnsupported(proto(o, type + QStringLiteral(" (spline-fit)"), layer, ltype, c), o, c.M);
+            if (flag & 4) {  // spline-fit (D99), its vertices in the block's coordinates
+                emitSplineFrame(proto(o, type, layer, ltype, c), o, c, c.M, 0);
                 return;
             }
             std::vector<Vec3> v;
@@ -495,7 +793,8 @@ private:
             p.dimType = type.startsWith("DIMENSION_") ? type.mid(10) : type;
             p.measurement = DwgJson::num(o, "act_measurement", 0);
             p.text = o.value("user_text").toString();
-            readDimFormat(p, o);
+            DimSizes ds;
+            readDimFormat(p, o, &ds);
             const Affine3 L = c.M * Affine3::ocsToWcs(ext);
             const Vec2 tm = DwgJson::vec2(o.value("text_midpt"));
             p.center = L.apply({tm.x, tm.y, DwgJson::num(o, "elevation", 0)}).xy();
@@ -553,10 +852,16 @@ private:
                 placed = true;
             }
             if (placed) p.dimPlace = std::move(place);
-            readDimLook(o, c, p);
+            // Its text as AutoCAD drew it in its block (DIMSCALE, annotative scales and a block's
+            // scale all in), else from the style; its arrows by the same overall scale (D101).
+            const double drawn = readDimLook(o, c, p);
+            const double style = (ds.fixed > 0 ? ds.fixed : ds.txt) * (ds.scale > 0 ? ds.scale : 1.0) * planeScale(c.M);
+            p.dimTextHeight = drawn > 0 ? drawn : style;
+            const double overall = drawn > 0 && ds.fixed <= 0 && ds.txt > 0 ? drawn / ds.txt : (ds.scale > 0 ? ds.scale : 1.0) * planeScale(c.M);
+            p.dimArrowSize = (ds.tsz > 0 ? ds.tsz : ds.asz) * overall;
             D.prims.push_back(std::move(p));
         } else {
-            // SPLINE, ELLIPSE, XLINE, RAY, REGION, 3DSOLID, MLINE, 3DFACE, meshes...: reported, never compared (rule 8).
+            // XLINE, RAY, REGION, 3DSOLID, MLINE, 3DFACE, meshes...: reported, never compared (rule 8).
             emitUnsupported(proto(o, type, layer, ltype, c), o, c.M);
         }
     }
@@ -564,9 +869,10 @@ private:
     // How a dimension is drawn (D87): the lines, arcs and filled arrowheads of its *D block,
     // in the dimension's own coordinates, each in its effective color (ByBlock is the
     // dimension's). Its text and definition points are left out: the label is drawn instead.
-    void readDimLook(const QJsonObject& o, const Ctx& c, Primitive& p) const {
+    // Returns the height of its text there (0 without one).
+    double readDimLook(const QJsonObject& o, const Ctx& c, Primitive& p) const {
         const DwgJson::Block* blk = J.block(DwgJson::href(o.value("block")));
-        if (!blk) return;
+        if (!blk) return 0;
         Ctx n;
         n.M = c.M * Affine3::translation(blk->base * -1.0);
         n.insLayer = p.layer;
@@ -578,11 +884,13 @@ private:
         n.top = c.top;
         n.depth = c.depth + 1;
         auto look = std::make_shared<DimLook>();
-        lookOf(blk->entities, n, *look);
+        double textHeight = 0;
+        lookOf(blk->entities, n, *look, &textHeight);
         if (!look->shapes.empty()) p.dimLook = std::move(look);
+        return textHeight;
     }
 
-    void lookOf(const std::vector<quint64>& entities, const Ctx& c, DimLook& look) const {
+    void lookOf(const std::vector<quint64>& entities, const Ctx& c, DimLook& look, double* textHeight = nullptr) const {
         for (const quint64 h : entities) {
             const QJsonObject* op = J.object(h);
             if (!op) continue;
@@ -648,8 +956,11 @@ private:
                 n.depth = c.depth + 1;
                 lookOf(b->entities, n, look);
                 continue;
+            } else if (type == "MTEXT") {  // the label is drawn instead; its height is measured (D101)
+                if (textHeight) *textHeight = std::max(*textHeight, DwgJson::num(o, "text_height", 0) * planeScale(c.M));
+                continue;
             } else {
-                continue;  // MTEXT (the label is drawn instead), POINT (definition points), ...
+                continue;  // POINT (definition points), ...
             }
             if (s.pts.size() >= 2) look.shapes.push_back(std::move(s));
         }
@@ -713,6 +1024,18 @@ private:
         p.text = hatchPattern(o);
         p.evenOdd = style != 2;
         p.loops = loops;
+        // Its pattern's families of lines as drawn (D101): the file keeps them scaled and turned,
+        // in the hatch's plane; moved here into the drawing's.
+        auto fams = std::make_shared<std::vector<HatchFamily>>();
+        for (const auto& dv : o.value("deflines").toArray()) {
+            const QJsonObject dl = dv.toObject();
+            const double a = DwgJson::num(dl, "angle", 0);
+            const Vec2 off = DwgJson::vec2(dl.value("offset"));
+            const Vec2 dir = L.applyLinear({std::cos(a), std::sin(a), 0}).xy().normalized();
+            const double spacing = std::fabs(dot(L.applyLinear({off.x, off.y, 0}).xy(), dir.perp()));
+            if (dir.length() > 0 && spacing > 0) fams->push_back({dir, spacing});
+        }
+        if (!fams->empty()) p.hatchLines = std::move(fams);
         p.center = p.bbox().center();
         D.prims.push_back(std::move(p));
     }
@@ -789,6 +1112,7 @@ private:
         const int n = static_cast<int>(v.size());
         if (n < 2) return;
         const int segs = closed ? n : n - 1;
+        const size_t first = D.prims.size();
         for (int i = 0; i < segs; ++i) {
             const Vec2 a = v[i], e = v[(i + 1) % n];
             if (closed && i == n - 1 && a == e) continue;  // explicit closing vertex
@@ -799,6 +1123,13 @@ private:
             } else {
                 emitLine(proto(o, type, layer, ltype, c, i), L.apply({a.x, a.y, elev}), L.apply({e.x, e.y, elev}));
             }
+        }
+        // Linetype generation on (LWPOLYLINE flag 256 in a DWG, POLYLINE_2D 128, as in DXF): the
+        // dash pattern runs on round the vertices, along the whole polyline, not segment by segment (D101).
+        if (DwgJson::integer(o, "flag", 0) & (type == QLatin1String("LWPOLYLINE") ? 256 : 128)) {
+            double run = 0;
+            for (size_t k = first; k < D.prims.size(); ++k) run += D.prims[k].size();
+            for (size_t k = first; k < D.prims.size(); ++k) D.prims[k].ltRun = run;
         }
     }
 
@@ -838,6 +1169,8 @@ private:
                 n.insRgb = insAttrs.color.rgb;
                 n.insColorByLayer = insAttrs.color.byLayer;
                 n.insLtByLayer = insAttrs.ltByLayer;
+                n.insLw = insAttrs.weight.lw;
+                n.insLwByLayer = insAttrs.weight.byLayer;
                 n.idPrefix = c.idPrefix + hex(DwgJson::ownHandle(o)) +
                              (rows * cols > 1 ? QStringLiteral("[%1,%2]").arg(r).arg(k) : QString()) + "/";
                 n.typePrefix = c.typePrefix + type + ">";
@@ -866,7 +1199,9 @@ QString groupKey(const Primitive& p, const CanonSettings& s) {
 
 // When colors must match, pieces merge only when their colors are within the color tolerance,
 // as the comparison judges them (D76); an exact RGB key split a segmented edge in near colors.
+// Likewise, when lineweights must match, only pieces that print the same width (D100).
 bool colorsMerge(const Primitive& a, const Primitive& b, const CanonSettings& s) {
+    if (s.mergeByLineweight && plottedLineweight(a.lineweight) != plottedLineweight(b.lineweight)) return false;
     return !s.mergeByColor || colorDifference(a.aci, a.rgb, b.aci, b.rgb) <= s.colorTolerance + 1e-9;
 }
 
@@ -883,7 +1218,7 @@ struct PieceSets {
         a = dsu.find(a);
         b = dsu.find(b);
         if (a == b) return;
-        if (s.mergeByColor)
+        if (s.mergeByColor || s.mergeByLineweight)
             for (int x : members[a])
                 for (int y : members[b])
                     if (!colorsMerge(prims[g[x]], prims[g[y]], s)) return;
@@ -908,13 +1243,14 @@ struct PieceSets {
 
 void normalizeArcs(std::vector<Primitive>& prims, const CanonSettings& s) {
     for (auto& p : prims) {
-        if (p.kind != PrimKind::Arc) continue;
+        if (p.kind != PrimKind::Arc && p.kind != PrimKind::EllipseArc) continue;
         p.a0 = normalizeAngle(p.a0);
         p.a1 = normalizeAngle(p.a1);
         const double sw = ccwSweep(p.a0, p.a1);
-        // A 360-degree sweep (start == end, or within tolerance of a full turn) is a circle.
+        // A 360-degree sweep (start == end, or within tolerance of a full turn) is a circle, or
+        // a whole ellipse (the gap is at most radius times its parameter's sweep).
         if (sw == 0 || sw >= kTwoPi - s.angTol || (kTwoPi - sw) * p.radius <= s.linTol) {
-            p.kind = PrimKind::Circle;
+            p.kind = p.kind == PrimKind::Arc ? PrimKind::Circle : PrimKind::Ellipse;
             p.a0 = p.a1 = 0;
         }
     }
@@ -925,13 +1261,14 @@ void dropDegenerate(std::vector<Primitive>& prims, const CanonSettings& s) {
     for (size_t i = 0; i < prims.size(); ++i) {
         const auto& p = prims[i];
         if (p.kind == PrimKind::Line && p.length() <= s.linTol) rm[i] = 1;
-        else if ((p.kind == PrimKind::Circle || p.kind == PrimKind::Arc) && p.radius <= s.linTol) rm[i] = 1;
-        else if (p.kind == PrimKind::Arc && ccwSweep(p.a0, p.a1) * p.radius <= s.linTol) rm[i] = 1;
+        else if ((p.kind == PrimKind::Circle || p.kind == PrimKind::Arc || isElliptic(p.kind)) && p.radius <= s.linTol) rm[i] = 1;
+        else if ((p.kind == PrimKind::Arc || p.kind == PrimKind::EllipseArc) && ccwSweep(p.a0, p.a1) * p.radius <= s.linTol) rm[i] = 1;
+        else if (p.kind == PrimKind::Spline && p.size() <= s.linTol) rm[i] = 1;
     }
     compact(prims, rm);
 }
 
-static bool sameGeometry(const Primitive& a, const Primitive& b, double tol) {
+static bool sameGeometry(const Primitive& a, const Primitive& b, double tol, double angTol) {
     if (a.kind != b.kind) return false;
     switch (a.kind) {
     case PrimKind::Line:
@@ -941,6 +1278,9 @@ static bool sameGeometry(const Primitive& a, const Primitive& b, double tol) {
     case PrimKind::Arc:
         return dist(a.center, b.center) <= tol && std::fabs(a.radius - b.radius) <= tol &&
                dist(a.arcStart(), b.arcStart()) <= tol && dist(a.arcEnd(), b.arcEnd()) <= tol;
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc: return sameEllipse(a, b, tol, angTol);
+    case PrimKind::Spline: return a.spline && b.spline && splinesMatch(*a.spline, *b.spline, tol);
     default: return false;
     }
 }
@@ -956,7 +1296,7 @@ void removeStackedDuplicates(std::vector<Primitive>& prims, const CanonSettings&
         int dupOf = -1;
         grid.forNear(key, [&](int j) {
             if (dupOf < 0 && prims[j].ltClass == p.ltClass && (!s.mergeByLayer || prims[j].layer == p.layer) &&
-                colorsMerge(prims[j], p, s) && sameGeometry(prims[j], p, tol))
+                colorsMerge(prims[j], p, s) && sameGeometry(prims[j], p, tol, s.angTol))
                 dupOf = j;
         });
         if (dupOf >= 0) {

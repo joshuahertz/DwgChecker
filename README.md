@@ -155,7 +155,8 @@ tolerance must be above 0. Then:
   cheating** icon (red = strong evidence, amber = weaker; hover for the details),
   the student, the correctness, a summary of the errors such as "2 shifted, 1
   missing, 1 extra", and an **Open in AutoCAD** link. It opens a read-only copy of
-  the file (in Documents\DWG Checker\Opened in AutoCAD, cleared after a week) in
+  the file (in DWG Checker\Temp in your user folder, emptied when the app starts
+  and closes; a drawing you save there yourself is kept) in
   the AutoCAD that is already running; start AutoCAD first, since the app never
   starts it. This needs the full version of AutoCAD: AutoCAD LT can't be used,
   since it can't be controlled by other programs. Two students' files with the same account name are red: a name in
@@ -243,10 +244,49 @@ tolerance must be above 0. Then:
   colors: the RGB distance as a share of black to white, so 250,5,5 against
   255,0,0 is 2 %, red against orange 29 %, red against blue 82 %. An ACI color
   and the same true color are the same color, and ACI 7 (black/white) matches
-  black as well as white. **Linetype and color must be set
-  by layer** makes each item take both from its layer rather than from the
+  black as well as white. **Linetype, color and lineweight must be set
+  by layer** makes each item take all three from its layer rather than from the
   object (inside a block, ByBlock counts when the block is by layer).
-- **Layers must match:** each item must be on a layer named like the solution
+- **Lineweights must match** (off by default): each item's lineweight, after
+  ByLayer and ByBlock, must be the solution item's ("has lineweight 0.25 mm,
+  expected 0.50 mm"). Default counts as 0.25 mm, AutoCAD's own default: the file
+  does not say what a computer's default is. The views show lineweights, from
+  0.25 mm up, as wider lines.
+- **Readability** (its own group, each check off by default): whether each student's
+  drawing can be read, judged in the file on its own, not against the solution.
+  **Dashed lines show their dashes** (a line too short for one dash pattern draws
+  as a continuous line; gaps big enough to see), **Hatching can be seen** (lines
+  not so close they look solid, and enough of them across each region), and
+  **Dimension text and arrows can be read** (text high enough, arrowheads in
+  proportion to it). **Judged in** model view (the whole drawing fitted to a
+  screen 1000 pixels across) or on paper (as printed, in mm, through the layout
+  viewport that shows each object). **Strictness** Loose / Medium / Strict; its
+  tooltip gives the numbers:
+
+  | | Loose | Medium | Strict |
+  |---|---|---|---|
+  | dash pattern held along a dashed line, at least | once | once | twice |
+  | its gaps, on paper | 0.3–8 mm | 0.5–6 mm | 1–4 mm |
+  | …in model view | 1–100 px | 2–75 px | 4–50 px |
+  | hatch line spacing, on paper | 0.5–10 mm | 1–6 mm | 2–4 mm |
+  | …in model view | 2–100 px | 3–75 px | 5–50 px |
+  | hatch lines across a region, at least | 2 | 3 | 5 |
+  | dimension text height, on paper | 2–10 mm | 2.5–7 mm | 3–5 mm |
+  | …in model view | 5–150 px | 10–100 px | 15–60 px |
+  | arrowhead / text height | 0.33–3 | 0.5–1.5 | 0.75–1.25 |
+
+  AutoCAD's own defaults printed 1:1 are within every level (0.18" text is 4.6 mm,
+  ANSI31 hatch lines and HIDDEN's gaps 3.2 mm). Too small and too large are
+  separate problems: "text too small" and "text too large", "hatch too dense" and
+  "hatch too coarse", "dashes too small" and "dashes too long".
+
+  Each problem is one item naming how many objects and the worst one ("1 dashed
+  line looks continuous: it is too short to hold its dash pattern once (hidden line
+  0.250 long at (1.125, 2.0) holds it 0.67 times)"). **Problems count as**
+  warnings, or errors, which fail the drawing as a misaligned view does without
+  lowering its score. The solution card says when the solution itself fails a
+  check.
+- **Layer names must match:** each item must be on a layer named like the solution
   item's (letter case ignored).
 - **Near-miss distance** (Advanced): how far a wrong item may be from the
   solution item and still be reported as one error about it ("is 4.010 long")
@@ -287,9 +327,24 @@ tolerance must be above 0. Then:
   places or fraction precision as the reference shows. The style, per-dimension
   overrides, trailing-zero suppression and typed-over text all count. A
   dimension that differs only in precision is one error.
-- A line, circle or arc with the right size but in the wrong place is one error
-  ("is shifted by …", plus "and rotated by …" when it is also turned by up to 5°),
-  however far it was moved, not missing plus extra.
+- A line, circle, arc or ellipse with the right size but in the wrong place is one
+  error ("is shifted by …", plus "and rotated by …" when it is also turned by up to
+  5°), however far it was moved, not missing plus extra.
+- **Ellipses** are graded like circles and arcs: AutoCAD's ellipses and elliptical
+  arcs, and a circle or arc inside a block scaled unevenly (which is drawn as an
+  ellipse). One matches on its center, both axes and the major axis's direction,
+  and an elliptical arc on its two ends too, within the same tolerances. A wrong one
+  near the solution's is one error: "wrong size" (which axis), "shifted", "rotated",
+  "wrong arc angle", or "wrong shape" for a circle drawn where the solution has an
+  ellipse (or the other way round). An ellipse whose axes are equal is a circle.
+- **Splines** are graded too: those drawn through fit points (AutoCAD's default, with
+  chord, square-root or uniform knots), by control vertices, and spline-fit polylines
+  (PEDIT Spline). Two match when their curves coincide within the tolerance, end to
+  end, however each was made: drawn the other way round, or the same curve by its
+  control points. A wrong one near the solution's is one error: "shifted",
+  "point 3 drawn at (3.0, 2.7), expected (3.0, 2.8)", "drawn through 4 points,
+  expected 5", or "wrong shape" with how far off it is. A spline drawn with a fit
+  tolerance (it then misses its points on purpose) is reported as unsupported.
 - A drawing at the wrong scale (millimeters instead of inches, or simply 2×) is
   detected when most of it would otherwise fail. "Wrong scale counts as an error"
   (Settings) is **Once** by default: graded after undoing the scale, with one
@@ -336,4 +391,10 @@ when no dwgread is configured.
   (spec M6). Open in AutoCAD needs the full AutoCAD; AutoCAD LT is not supported
   (D96).
 - MINSERT needs patch `0001`, because dwgread 0.14's JSON omits the array size.
-- Splines, ellipses and other curves are reported as unsupported, not compared (v1).
+- Ellipses (D98) and splines (D99) are graded, but pieces of one ellipse are not
+  joined into it (as arcs are into a circle), nor splines that continue each other,
+  and a dimension to an ellipse's center does not count from anywhere on the line
+  across through it, as one to a circle's center does. Splines with a fit tolerance,
+  splines not flat in the XY plane, and other curves (XLINE, REGION, solids) are
+  reported as unsupported, not compared. A hatch boundary with spline edges still
+  follows their points, not the true curve.

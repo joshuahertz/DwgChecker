@@ -22,9 +22,13 @@ QString fmtOffset(Vec2 d);
 // fmtDeg(turn, 0) for a small rotation: "0.0006°", not "0.00°".
 QString fmtDeg(double radians, double other = std::numeric_limits<double>::quiet_NaN());
 
+// An ellipse's axes, end to end: "2.000 × 1.000". With `other`, as many digits as tell the two
+// apart, axis by axis.
+QString fmtAxes(const Primitive& p, const Primitive* other = nullptr);
 // "hidden edge", "visible line", "centerline", "hidden arc", "circle" ...
 QString lineDescriptor(const Primitive& p, bool forLinetypeError = false);
-// Short description with size: "hidden line 1.250 long", "circle Ø0.750", "arc R0.500".
+// Short description with size: "hidden line 1.250 long", "circle Ø0.750", "arc R0.500",
+// "ellipse 2.000 × 1.000".
 QString describe(const Primitive& p);
 // A representative location for messages: line midpoint, arc/circle center.
 Vec2 messageLocation(const Primitive& p);

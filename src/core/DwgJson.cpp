@@ -1,4 +1,5 @@
 #include "DwgJson.h"
+#include "Model.h"
 
 #include "Color.h"
 
@@ -131,6 +132,8 @@ void DwgJson::index() {
                 const DwgColor col = parseDwgColor(o.value("color"));
                 l.color = col.kind == DwgColor::Kind::Rgb ? -1 : col.kind == DwgColor::Kind::Aci ? col.aci : 7;
                 l.rgb = col.kind == DwgColor::Kind::Rgb ? col.rgb : aciToRgb(l.color);
+                l.lineweight = lineweightFromCode(integer(o, "linewt", 31));
+                if (l.lineweight < 0) l.lineweight = kLineweightDefault;  // a layer's is a value or Default
                 m_layers.insert(h, l);
                 m_layerByName.insert(l.name.toUpper(), h);
             } else if (type == "LTYPE") {
@@ -201,6 +204,19 @@ const DwgJson::Layer* DwgJson::layerByName(const QString& name) const {
 }
 
 QString DwgJson::ltypeName(quint64 handle) const { return m_ltypes.value(handle); }
+
+quint64 DwgJson::ltypeByName(const QString& name) const {
+    for (auto it = m_ltypes.cbegin(); it != m_ltypes.cend(); ++it)
+        if (it.value().compare(name, Qt::CaseInsensitive) == 0) return it.key();
+    return 0;
+}
+
+std::vector<const QJsonObject*> DwgJson::objectsOfType(const QString& type) const {
+    std::vector<const QJsonObject*> out;
+    for (const QJsonObject& o : m_objects)
+        if (typeOf(o) == type) out.push_back(&o);
+    return out;
+}
 
 const DwgJson::Block* DwgJson::block(quint64 handle) const {
     const auto it = m_blocks.constFind(handle);

@@ -84,6 +84,11 @@ private:
     QDoubleSpinBox* m_colorTol;
     QWidget* m_colorTolRow;
     QCheckBox* m_byLayer;
+    QCheckBox* m_matchLw;
+    // Readability (D101)
+    QFormLayout* m_readForm;
+    QCheckBox *m_readDashes, *m_readHatches, *m_readDims;
+    QComboBox *m_readStrict, *m_readView, *m_readCount;
     QGridLayout* m_drawingsGrid;
     QFormLayout* m_rulesForm;  // "Matching rules"
     QGroupBox* m_orthoBox;
@@ -142,7 +147,6 @@ private:
     QDoubleSpinBox* m_smallEdit;
     QLineEdit* m_identity;
     QSpinBox* m_timeout;
-    QLineEdit* m_oda;
 };
 
 }  // namespace dcgui

@@ -1,5 +1,7 @@
 #include "SettingsPanel.h"
 
+#include "Readability.h"
+
 #include "AutoCadController.h"
 #include "Geometry.h"
 
@@ -41,20 +43,6 @@ QStringList splitPatterns(const QString& s) {
     QStringList out;
     for (const QString& p : s.split(';', Qt::SkipEmptyParts)) out << p.trimmed();
     return out;
-}
-
-QWidget* withBrowse(QLineEdit* edit, const QString& title, QWidget* parent) {
-    auto* w = new QWidget(parent);
-    auto* h = new QHBoxLayout(w);
-    h->setContentsMargins(0, 0, 0, 0);
-    h->addWidget(edit);
-    auto* b = new QPushButton(QObject::tr("Browse…"), w);
-    h->addWidget(b);
-    QObject::connect(b, &QPushButton::clicked, w, [edit, title, w]() {
-        const QString p = QFileDialog::getOpenFileName(w, title, edit->text());
-        if (!p.isEmpty()) edit->setText(p);
-    });
-    return w;
 }
 
 // A label with an (i) icon after it; both show `tip` when hovered.
@@ -223,6 +211,13 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
     m_mirror->setToolTip(tr("A drawing flipped over, as with the MIRROR command"));
     fRules->addRow(m_rotation);
     fRules->addRow(m_mirror);
+    m_scaleMode = combo({tr("Never"), tr("Once"), tr("Every time")});
+    m_scaleMode->setItemData(0, tr("Graded after undoing the scale, with no error for the scale itself"), Qt::ToolTipRole);
+    m_scaleMode->setItemData(1, tr("Graded after undoing the scale, with one error for the scale"), Qt::ToolTipRole);
+    m_scaleMode->setItemData(2, tr("Not rescaled: every object drawn at the wrong size is an error"), Qt::ToolTipRole);
+    m_scaleMode->setToolTip(tr("A drawing at the wrong scale, e.g. in millimeters instead of inches, or twice too large. "
+                               "Never / Once: it is graded after undoing the scale. Every time: every object is wrong."));
+    fRules->addRow(tr("Wrong scale counts as an error"), m_scaleMode);
     m_linTol = sciEdit(1e-6, 1e-12);  // a tolerance of 0 would accept nothing
     m_linTol->setToolTip(tr("How far apart two points may be and still count as the same point"));
     fRules->addRow(tr("Tolerance (drawing units)"), m_linTol);
@@ -258,11 +253,15 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
         fRules->addRow(m_colorTolRow);
     }
     connect(m_matchColor, &QCheckBox::toggled, this, &SettingsPanel::updateScopes);
-    m_byLayer = check(tr("Linetype and color must be set by layer"));
-    m_byLayer->setToolTip(tr("Each item's color and linetype must come from its layer (ByLayer), not be set on the "
-                             "object. Inside a block, ByBlock counts when the block itself is by layer."));
+    m_matchLw = check(tr("Lineweights must match"));
+    m_matchLw->setToolTip(tr("Each item must have the solution item's lineweight, after ByLayer and ByBlock. Default "
+                             "counts as 0.25 mm, AutoCAD's own default (the file does not say what a computer's is)."));
+    fRules->addRow(m_matchLw);
+    m_byLayer = check(tr("Linetype, color and lineweight must be set by layer"));
+    m_byLayer->setToolTip(tr("Each item's color, linetype and lineweight must come from its layer (ByLayer), not be set "
+                              "on the object. Inside a block, ByBlock counts when the block is inserted by layer."));
     fRules->addRow(m_byLayer);
-    m_layerMatch = check(tr("Layers must match"));
+    m_layerMatch = check(tr("Layer names must match"));
     m_layerMatch->setToolTip(tr("Each item must be on a layer with the same name as the solution item's (letter case "
                                 "ignored). Off: any layer will do."));
     fRules->addRow(m_layerMatch);
@@ -282,14 +281,52 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
     fRules->addRow(m_hatchPatternRow);
     m_hatchPatternScope = addScope(fRules, true);
     connect(m_hatches, &QCheckBox::toggled, this, &SettingsPanel::updateScopes);
-    m_scaleMode = combo({tr("Never"), tr("Once"), tr("Every time")});
-    m_scaleMode->setItemData(0, tr("Graded after undoing the scale, with no error for the scale itself"), Qt::ToolTipRole);
-    m_scaleMode->setItemData(1, tr("Graded after undoing the scale, with one error for the scale"), Qt::ToolTipRole);
-    m_scaleMode->setItemData(2, tr("Not rescaled: every object drawn at the wrong size is an error"), Qt::ToolTipRole);
-    m_scaleMode->setToolTip(tr("A drawing at the wrong scale, e.g. in millimeters instead of inches, or twice too large. "
-                               "Never / Once: it is graded after undoing the scale. Every time: every object is wrong."));
-    fRules->addRow(tr("Wrong scale counts as an error"), m_scaleMode);
     outer->addWidget(gRules);
+
+    // Readability (D101): each student's file on its own, not against the solution.
+    auto* gLegible = new QGroupBox(tr("Readability"), this);
+    gLegible->setToolTip(tr("Whether each drawing can be read, checked in the file on its own rather than against the solution."));
+    m_readForm = new QFormLayout(gLegible);
+    m_readDashes = check(tr("Dashed lines show their dashes"));
+    m_readDashes->setToolTip(tr("Hidden, center and other dashed lines must hold their dash pattern along them (AutoCAD draws "
+                                "a line too short for one pattern as a continuous line), with gaps big enough to see."));
+    m_readHatches = check(tr("Hatching can be seen"));
+    m_readHatches->setToolTip(tr("Hatch lines must be far enough apart not to look solid, and close enough that several cross "
+                                 "each region. Solid fills are not checked."));
+    m_readDims = check(tr("Dimension text and arrows can be read"));
+    m_readDims->setToolTip(tr("Dimension text must be high enough to read, and its arrowheads in proportion to it."));
+    for (QCheckBox* c : {m_readDashes, m_readHatches, m_readDims}) {
+        m_readForm->addRow(c);
+        connect(c, &QCheckBox::toggled, this, &SettingsPanel::updateScopes);
+    }
+    m_readStrict = combo({tr("Loose"), tr("Medium"), tr("Strict")});
+    {
+        QStringList tips;
+        const char* names[] = {"Loose", "Medium", "Strict"};
+        for (int k = 0; k < 3; ++k) {
+            const QString t = readLimitsText(static_cast<ReadStrictness>(k));
+            m_readStrict->setItemData(k, tr("%1: %2.").arg(tr(names[k]), t), Qt::ToolTipRole);
+            tips << tr("%1: %2.").arg(tr(names[k]), t);
+        }
+        m_readStrict->setToolTip(tr("How strictly to judge. Paper: as printed, in mm on the sheet. Model view: the whole drawing "
+                                    "fitted to a screen %1 pixels across.\n\n%2")
+                                     .arg(kModelViewPixels)
+                                     .arg(tips.join(QStringLiteral("\n\n"))));
+    }
+    m_readForm->addRow(tr("Strictness"), m_readStrict);
+    m_readView = combo({tr("Model view"), tr("Paper (as printed)")});
+    m_readView->setItemData(0, tr("Sizes as seen with the whole drawing fitted to a screen %1 pixels across").arg(kModelViewPixels),
+                            Qt::ToolTipRole);
+    m_readView->setItemData(1, tr("Sizes on the printed sheet, through the layout viewport that shows each object (PSLTSCALE "
+                                  "counts for dashes). A file with no layout viewport is judged in model view."),
+                            Qt::ToolTipRole);
+    m_readView->setToolTip(tr("Where sizes are judged: on screen in model space, or on the printed sheet"));
+    m_readForm->addRow(tr("Judged in"), m_readView);
+    m_readCount = combo({tr("Warnings"), tr("Errors")});
+    m_readCount->setToolTip(tr("Warnings are listed but not counted. Errors fail the drawing (it does not pass), as a view "
+                               "that is not aligned does, without lowering its score."));
+    m_readForm->addRow(tr("Problems count as"), m_readCount);
+    outer->addWidget(gLegible);
 
     // ======================= Advanced =======================
     m_advancedToggle = new QToolButton(this);
@@ -332,17 +369,17 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
     m_skipHidden->setToolTip(tr("Off: a student's hidden objects still count, with a warning (turning a layer off "
                                 "changes only the display)."));
     for (QCheckBox* c : {m_paper, m_skipDefpoints, m_ignoreHiddenRef, m_skipHidden}) fRead->addRow(c);
+    m_visiblePat = line(); m_hiddenPat = line(); m_centerPat = line(); m_phantomPat = line();
+    for (QLineEdit* e : {m_visiblePat, m_hiddenPat, m_centerPat, m_phantomPat})
+        e->setToolTip(tr("Linetype names, separated by ';'. * matches anything."));
+    fRead->addRow(tr("Visible linetypes"), m_visiblePat);
+    fRead->addRow(tr("Hidden linetypes"), m_hiddenPat);
+    fRead->addRow(tr("Center linetypes"), m_centerPat);
+    fRead->addRow(tr("Phantom linetypes"), m_phantomPat);
     m_ignoreRe = line();
     m_ignoreRe->setPlaceholderText(tr("e.g. ^(CONST|CONSTRUCTION)$"));
     m_ignoreRe->setToolTip(tr("Layers whose names match this regular expression are ignored"));
     fRead->addRow(tr("Ignore layers"), m_ignoreRe);
-    m_hiddenPat = line(); m_centerPat = line(); m_phantomPat = line(); m_visiblePat = line();
-    for (QLineEdit* e : {m_hiddenPat, m_centerPat, m_phantomPat, m_visiblePat})
-        e->setToolTip(tr("Linetype names, separated by ';'. * matches anything."));
-    fRead->addRow(tr("Hidden linetypes"), m_hiddenPat);
-    fRead->addRow(tr("Center linetypes"), m_centerPat);
-    fRead->addRow(tr("Phantom linetypes"), m_phantomPat);
-    fRead->addRow(tr("Visible linetypes"), m_visiblePat);
 
     // Orthographic views.
     auto* gOrtho = new QGroupBox(tr("Orthographic views"), m_advanced);
@@ -432,12 +469,6 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
                              "the batch goes on."));
     connect(m_timeout, &QSpinBox::valueChanged, this, &SettingsPanel::changed);
     fRead->addRow(tr("Give up reading a file after"), m_timeout);
-    m_oda = line();
-    m_oda->setPlaceholderText(tr("optional fallback for unreadable files"));
-    m_oda->setToolTip(tr("ODA File Converter is a free tool from the Open Design Alliance (a separate download). "
-                         "When dwgread cannot read a submission, the checker reads a copy rewritten by it instead. "
-                         "Leave this empty unless some files fail to load."));
-    fRead->addRow(tr("ODA File Converter"), withBrowse(m_oda, tr("Locate ODA File Converter"), this));
 
     for (QGroupBox* g : {gMatch, gRead, gOrtho, gCopy}) adv->addWidget(g);
 
@@ -512,6 +543,9 @@ void SettingsPanel::updateScopes() {
     showRow(m_modeForm, m_modeHelp, !multi);
     showRow(m_modeForm, m_editViewsRow, !multi && mode == Mode::Orthographic);
     showRow(m_rulesForm, m_colorTolRow, m_matchColor->isChecked());
+    const bool reading = m_readDashes->isChecked() || m_readHatches->isChecked() || m_readDims->isChecked();
+    for (QWidget* w : {static_cast<QWidget*>(m_readStrict), static_cast<QWidget*>(m_readView), static_cast<QWidget*>(m_readCount)})
+        showRow(m_readForm, w, reading);
     showRow(m_rulesForm, m_dims, !multi && one.dims);
     showRow(m_rulesForm, m_hatches, !multi && one.hatches);
 
@@ -706,6 +740,13 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     m_matchColor->setChecked(s.compare.matchColor);
     m_colorTol->setValue(s.compare.colorTolerance);
     m_byLayer->setChecked(s.compare.requireByLayer);
+    m_matchLw->setChecked(s.compare.matchLineweight);
+    m_readDashes->setChecked(s.compare.readDashes);
+    m_readHatches->setChecked(s.compare.readHatches);
+    m_readDims->setChecked(s.compare.readDimensions);
+    m_readStrict->setCurrentIndex(std::clamp(s.compare.readStrictness, 0, 2));
+    m_readView->setCurrentIndex(s.compare.readOnPaper ? 1 : 0);
+    m_readCount->setCurrentIndex(s.compare.readAsErrors ? 1 : 0);
     setSci(m_nearMiss, s.compare.nearMissRadius, 0);
     m_ignoreRe->setText(s.canon.layerIgnoreRegex);
     m_paper->setChecked(s.canon.usePaperSpace);
@@ -727,7 +768,6 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     m_smallEdit->setValue(s.duplicates.smallEditMinutes);
     m_identity->setText(s.identityRegex);
     m_timeout->setValue(s.loader.timeoutSec);
-    m_oda->setText(s.loader.odaConverterPath);
     for (QWidget* w : kids) w->blockSignals(false);
     // Per drawing (by file name): what these settings say wins, and drawings they don't list
     // stay as they are (an older saved set has an older snapshot of the drawings).
@@ -758,6 +798,13 @@ AppSettings SettingsPanel::settings() const {
     s.compare.matchColor = m_matchColor->isChecked();
     s.compare.colorTolerance = m_colorTol->value();
     s.compare.requireByLayer = m_byLayer->isChecked();
+    s.compare.matchLineweight = m_matchLw->isChecked();
+    s.compare.readDashes = m_readDashes->isChecked();
+    s.compare.readHatches = m_readHatches->isChecked();
+    s.compare.readDimensions = m_readDims->isChecked();
+    s.compare.readStrictness = m_readStrict->currentIndex();
+    s.compare.readOnPaper = m_readView->currentIndex() == 1;
+    s.compare.readAsErrors = m_readCount->currentIndex() == 1;
     s.compare.nearMissRadius = sciValue(m_nearMiss, 0);
     s.canon.layerIgnoreRegex = m_ignoreRe->text().trimmed();
     s.canon.usePaperSpace = m_paper->isChecked();
@@ -778,7 +825,6 @@ AppSettings SettingsPanel::settings() const {
     s.duplicates.smallEditMinutes = m_smallEdit->value();
     s.identityRegex = m_identity->text().trimmed().isEmpty() ? AppSettings::defaultIdentityRegex() : m_identity->text().trimmed();
     s.loader.timeoutSec = m_timeout->value();
-    s.loader.odaConverterPath = m_oda->text().trimmed();
     s.perDrawing = m_perDrawing;
     return s;
 }

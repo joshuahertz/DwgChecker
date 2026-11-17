@@ -16,7 +16,9 @@ namespace dcgui {
 class AutoCadController : public QObject {
     Q_OBJECT
 public:
+    // Both clear the read-only copies (D97): this session's at close, and any left from earlier.
     explicit AutoCadController(QObject* parent = nullptr);
+    ~AutoCadController() override;
 
     // Opens a submission, as a read-only copy, in the AutoCAD that is already running; says so
     // when none is. `scanSha` is the SHA-256 recorded at scan time; `rescan` is called if the

@@ -134,35 +134,6 @@ bool DwgReadLoader::runDwgRead(const QString& file, QByteArray* out, QString* er
     return true;
 }
 
-bool DwgReadLoader::convertWithOda(const QString& file, QString* outFile, QString* error, const QString& workDir) const {
-    // ODAFileConverter <in dir> <out dir> <version> <type> <recurse> <audit> [<filter>]
-    const QString inDir = workDir + "/oda_in", outDir = workDir + "/oda_out";
-    QDir().mkpath(inDir);
-    QDir().mkpath(outDir);
-    const QString name = QStringLiteral("input.dwg");
-    QFile::remove(inDir + "/" + name);
-    if (!QFile::copy(file, inDir + "/" + name)) {
-        *error = QStringLiteral("could not stage file for ODA File Converter");
-        return false;
-    }
-    QProcess p;
-    p.start(m_settings.odaConverterPath,
-            {QDir::toNativeSeparators(inDir), QDir::toNativeSeparators(outDir), QStringLiteral("ACAD2018"),
-             QStringLiteral("DWG"), QStringLiteral("0"), QStringLiteral("1"), name});
-    if (!p.waitForStarted(15000) || !p.waitForFinished(std::max(1, m_settings.timeoutSec) * 2000)) {
-        p.kill();
-        p.waitForFinished(5000);
-        *error = QStringLiteral("ODA File Converter failed or timed out");
-        return false;
-    }
-    *outFile = outDir + "/" + name;
-    if (!QFileInfo::exists(*outFile)) {
-        *error = QStringLiteral("ODA File Converter produced no output");
-        return false;
-    }
-    return true;
-}
-
 LoadOutcome DwgReadLoader::load(const QString& path) const {
     LoadOutcome r;
     QString why;
@@ -197,21 +168,6 @@ LoadOutcome DwgReadLoader::load(const QString& path) const {
     bool ok = runDwgRead(file, &out, &err, &r.warnings);
     if (ok) {
         ok = r.json.parse(out, &err);
-    }
-    if (!ok && !m_settings.odaConverterPath.isEmpty() && tmp.isValid()) {
-        QString converted, odaErr;
-        const QString firstError = err;
-        if (convertWithOda(path, &converted, &odaErr, tmp.path())) {
-            out.clear();
-            err.clear();
-            ok = runDwgRead(converted, &out, &err, &r.warnings) && r.json.parse(out, &err);
-            if (ok)
-                r.warnings << QStringLiteral("dwgread could not read the file (%1); read a copy rewritten by ODA File "
-                                             "Converter instead, so metadata may reflect the converter")
-                                  .arg(firstError);
-        } else {
-            err = firstError + "; ODA fallback: " + odaErr;
-        }
     }
     r.ok = ok;
     if (!ok) r.error = err;

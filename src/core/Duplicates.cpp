@@ -66,6 +66,31 @@ QByteArray exactKey(const Primitive& p, bool* nontrivial) {
         for (double v : {p.center.x, p.center.y, p.radius, p.a0, p.a1}) appendBits(k, v);
         *nontrivial = !(isRound(p.center.x) && isRound(p.center.y) && isRound(p.radius));
         break;
+    case PrimKind::Ellipse:
+    case PrimKind::EllipseArc:
+        for (double v : {p.center.x, p.center.y, p.radius, p.minorRadius, p.axisAngle}) appendBits(k, v);
+        if (p.kind == PrimKind::EllipseArc)
+            for (double v : {p.a0, p.a1}) appendBits(k, v);
+        // Only its center says it was not typed (D98): its axes are often worked out from round
+        // numbers, the same for everyone (an isometric circle, a turned ellipse).
+        *nontrivial = !(isRound(p.center.x) && isRound(p.center.y));
+        break;
+    case PrimKind::Spline: {
+        if (!p.spline) return {};
+        const SplineData& s = *p.spline;
+        k.append(static_cast<char>(s.degree));
+        for (double v : s.knots) appendBits(k, v);
+        for (Vec2 q : s.ctrl) {
+            appendBits(k, q.x);
+            appendBits(k, q.y);
+        }
+        for (double w : s.weights) appendBits(k, w);
+        // Its own points (fit points, a polyline's vertices, else the control points) say
+        // whether it was typed (D99).
+        const std::vector<Vec2>& own = s.fit.empty() ? s.ctrl : s.fit;
+        *nontrivial = std::any_of(own.begin(), own.end(), [](Vec2 q) { return !isRound(q.x) || !isRound(q.y); });
+        break;
+    }
     default: return {};
     }
     return k;

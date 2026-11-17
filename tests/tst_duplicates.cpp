@@ -82,6 +82,8 @@ private slots:
     void sameAccountNameIsStrong();
     void severalNamesInOneStudentsFiles();
     void bitExactNonRoundIsStrong();
+    void ellipseKeys();
+    void splineKeys();
     void absoluteModeIgnoresBitExact();
     void groupsOfStudents();
     void weakerLinkGetsItsOwnRow();
@@ -233,6 +235,42 @@ void TestDuplicates::bitExactNonRoundIsStrong() {
     QVERIFY(!has(pairOf(r, 0, 2), "bitexact"));
     QCOMPARE(bitExact(*e[0].drawing, *e[1].drawing).exact, 6);
     QCOMPARE(bitExact(*e[0].drawing, *e[1].drawing).nontrivial, 6);
+}
+
+// Ellipses count in the bit-identical signal (D98): a copy of the file has every one, and only
+// a center that is not a round number makes one nontrivial, whatever its axes.
+void TestDuplicates::ellipseKeys() {
+    auto a = loadFixture("ell_ref");
+    auto b = loadFixture("ell_ref");
+    QVERIFY(a && b);
+    QCOMPARE(bitExact(*a, *b).exact, 6);
+    QCOMPARE(bitExact(*a, *b).nontrivial, 0);  // typed: round corners and centers
+    auto r = loadFixture("ell_rotated37");
+    QVERIFY(r);
+    QCOMPARE(bitExact(*r, *r).exact, 6);
+    QCOMPARE(bitExact(*r, *r).nontrivial, 6);
+    QCOMPARE(bitExact(*a, *r).exact, 0);
+    // An isometric circle: a round center, axes worked out from round numbers.
+    Drawing iso;
+    Primitive e;
+    setEllipse(e, {2, 3}, Vec2{std::sqrt(1.5), 0}, Vec2{0, std::sqrt(0.5)}, 0, 0, true);
+    iso.prims.push_back(e);
+    QCOMPARE(bitExact(iso, iso).exact, 1);
+    QCOMPARE(bitExact(iso, iso).nontrivial, 0);
+}
+
+// Splines too (D99): a copy has every one; fit points that are round numbers are typed.
+void TestDuplicates::splineKeys() {
+    auto a = loadFixture("spl_ref");
+    auto b = loadFixture("spl_ref");
+    QVERIFY(a && b);
+    QCOMPARE(bitExact(*a, *b).exact, 5);
+    QCOMPARE(bitExact(*a, *b).nontrivial, 0);
+    auto r = loadFixture("spl_rotated37");
+    QVERIFY(r);
+    QCOMPARE(bitExact(*r, *r).exact, 5);
+    QCOMPARE(bitExact(*r, *r).nontrivial, 5);
+    QCOMPARE(bitExact(*a, *r).exact, 0);
 }
 
 void TestDuplicates::absoluteModeIgnoresBitExact() {

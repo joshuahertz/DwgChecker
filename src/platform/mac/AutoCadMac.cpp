@@ -26,7 +26,8 @@ namespace {
 // LT is not supported (D96), as on Windows, and is passed over.
 QString runningBundle() {
     QProcess ps;
-    ps.start(QStringLiteral("/bin/ps"), {QStringLiteral("-axo"), QStringLiteral("command=")});
+    // -ww: whole lines, never cut to a terminal width (AutoCAD's path is long, D97).
+    ps.start(QStringLiteral("/bin/ps"), {QStringLiteral("-axww"), QStringLiteral("-o"), QStringLiteral("command=")});
     if (!ps.waitForFinished(3000)) return {};
     static const QString marker = QStringLiteral(".app/Contents/MacOS/");
     for (const QString& line : QString::fromLocal8Bit(ps.readAllStandardOutput()).split(QLatin1Char('\n'))) {
