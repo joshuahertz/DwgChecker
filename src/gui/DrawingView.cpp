@@ -49,6 +49,9 @@ DrawingView::DrawingView(QWidget* parent) : QGraphicsView(parent) {
     setDragMode(QGraphicsView::NoDrag);
     setBackgroundBrush(QColor(250, 250, 250));
     setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
+    // Scroll bars and arrow keys move the view as a drag does (actionTriggered: the user's, not setValue).
+    connect(horizontalScrollBar(), &QAbstractSlider::actionTriggered, this, &DrawingView::movedByUser);
+    connect(verticalScrollBar(), &QAbstractSlider::actionTriggered, this, &DrawingView::movedByUser);
 }
 
 namespace {
@@ -245,6 +248,32 @@ void DrawingView::zoomToAll() {
     fit(m_extent, kAllMargin);
 }
 
+Camera DrawingView::camera() const {
+    return {fromScene(mapToScene(viewport()->rect()).boundingRect().center()), transform().m11()};
+}
+
+void DrawingView::setCamera(const Camera& c) {
+    if (!(c.scale > 0) || !std::isfinite(c.scale) || !std::isfinite(c.center.x) || !std::isfinite(c.center.y)) return;
+    m_target = {};
+    m_target.active = m_target.camera = true;
+    m_target.cam = c;
+    applyCamera(c);
+}
+
+void DrawingView::applyCamera(const Camera& c) {
+    setTransform(QTransform::fromScale(c.scale, c.scale));
+    // Room around it, a whole view each way, so that centering never stops at the scene's edge.
+    const QPointF at = toScene(c.center);
+    const double w = std::max(viewport()->width(), 1) / c.scale, h = std::max(viewport()->height(), 1) / c.scale;
+    scene()->setSceneRect(scene()->sceneRect().united(QRectF(at.x() - w, at.y() - h, 2 * w, 2 * h)));
+    centerOn(at);
+}
+
+void DrawingView::movedByUser() {
+    m_target.active = false;
+    emit userMoved();
+}
+
 void DrawingView::clearDrawing() {
     scene()->clear();
     m_lassoItem = nullptr;
@@ -253,13 +282,15 @@ void DrawingView::clearDrawing() {
 
 void DrawingView::resizeEvent(QResizeEvent* e) {
     QGraphicsView::resizeEvent(e);
-    if (m_target.active) fit(m_target.all ? m_extent : m_target.box, m_target.margin);
+    if (!m_target.active) return;
+    if (m_target.camera) applyCamera(m_target.cam);
+    else fit(m_target.all ? m_extent : m_target.box, m_target.margin);
 }
 
 void DrawingView::wheelEvent(QWheelEvent* e) {
-    m_target.active = false;
     const double f = std::pow(1.0015, e->angleDelta().y());
     scale(f, f);
+    movedByUser();
 }
 
 void DrawingView::mousePressEvent(QMouseEvent* e) {
@@ -289,9 +320,9 @@ void DrawingView::mouseMoveEvent(QMouseEvent* e) {
     if (m_panning) {
         const QPoint d = e->pos() - m_lastPan;
         m_lastPan = e->pos();
-        if (!d.isNull()) m_target.active = false;
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - d.x());
         verticalScrollBar()->setValue(verticalScrollBar()->value() - d.y());
+        if (!d.isNull()) movedByUser();
         e->accept();
         return;
     }

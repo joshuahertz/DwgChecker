@@ -714,3 +714,68 @@
   (command "_.PSPACE")
   (setvar "CTAB" "Model")
   (princ))
+
+;;; ------------------------------------------------------------------
+;;; Creative mode set (D106). cr_ref: a 6 x 3 plate, its top-right corner rounded R0.5, a
+;;; hole D1 with centerlines drawn as lines, a hole D0.8 with AutoCAD's center mark (two
+;;; centerline pieces each way and a small cross), a hidden line, a linear and a diameter
+;;; dimension. cr_good: another design with all of that (three holes with centerlines, two
+;;; hidden lines, a fillet). cr_bad: corners that don't meet (a gap of 0.02, a line 0.03
+;;; past), a hole without centerlines, one with them one way only, one with them too short;
+;;; no hidden line, arc or diameter dimension.
+;;; ------------------------------------------------------------------
+(defun dc-cl (x y r ext)   ; centerlines through (x, y), reaching ext past a circle of radius r
+  (dc-line "CENTER" (- x r ext) y (+ x r ext) y)
+  (dc-line "CENTER" x (- y r ext) x (+ y r ext))
+  (princ))
+(defun dc-cr-ref ()
+  (dc-line "OBJECT" 0 0 6 0)
+  (dc-line "OBJECT" 6 0 6 2.5)
+  (dc-arc "OBJECT" 5.5 2.5 0.5 0 90)
+  (dc-line "OBJECT" 5.5 3 0 3)
+  (dc-line "OBJECT" 0 3 0 0)
+  (setq *C1* (dc-circle "OBJECT" 1.5 1.5 0.5))
+  (dc-cl 1.5 1.5 0.5 0.2)
+  (setq *C2* (dc-circle "OBJECT" 4 1.5 0.4))
+  (setvar "CLAYER" "CENTER")
+  (command "_.CENTERMARK" (list *C2* (dc-p 4.4 1.5)) "")
+  (setvar "CLAYER" "OBJECT")
+  (dc-line "HIDDEN" 3 0 3 3)
+  (setvar "CLAYER" "DIM")
+  (command "_.DIMLINEAR" (dc-p 0 0) (dc-p 6 0) (dc-p 3 -0.6))
+  (command "_.DIMDIAMETER" (list *C1* (dc-p 2.0 1.5)) (dc-p 2.6 2.6))
+  (setvar "CLAYER" "OBJECT")
+  (princ))
+(defun dc-cr-good ()
+  (dc-line "OBJECT" 0 0 8 0)
+  (dc-line "OBJECT" 8 0 8 4)
+  (dc-line "OBJECT" 8 4 1 4)
+  (dc-arc "OBJECT" 1 3 1 90 180)
+  (dc-line "OBJECT" 0 3 0 0)
+  (setq *C1* (dc-circle "OBJECT" 2 2 0.6))
+  (dc-cl 2 2 0.6 0.25)
+  (dc-circle "OBJECT" 5 2 0.5)
+  (dc-cl 5 2 0.5 0.25)
+  (dc-circle "OBJECT" 6.5 1 0.3)
+  (dc-cl 6.5 1 0.3 0.2)
+  (dc-line "HIDDEN" 3.5 0 3.5 4)
+  (dc-line "HIDDEN" 7.5 0 7.5 4)
+  (setvar "CLAYER" "DIM")
+  (command "_.DIMLINEAR" (dc-p 0 0) (dc-p 8 0) (dc-p 4 -0.7))
+  (command "_.DIMDIAMETER" (list *C1* (dc-p 2.6 2)) (dc-p 3 3.3))
+  (setvar "CLAYER" "OBJECT")
+  (princ))
+(defun dc-cr-bad ()
+  (dc-line "OBJECT" 0 0 8 0)
+  (dc-line "OBJECT" 8 0 8 4)
+  (dc-line "OBJECT" 7.98 4 0 4)        ; stops 0.02 short of the corner
+  (dc-line "OBJECT" 0 4 0 -0.03)       ; runs 0.03 past it
+  (dc-circle "OBJECT" 2 2 0.6)         ; no centerlines
+  (dc-circle "OBJECT" 5 2 0.5)
+  (dc-line "CENTER" 4.3 2 5.7 2)       ; one way only
+  (dc-circle "OBJECT" 6.5 1.5 0.3)
+  (dc-cl 6.5 1.5 0.3 -0.1)             ; too short: 0.2 each way from the center, inside the hole
+  (setvar "CLAYER" "DIM")
+  (command "_.DIMLINEAR" (dc-p 0 0) (dc-p 8 0) (dc-p 4 -0.7))
+  (setvar "CLAYER" "OBJECT")
+  (princ))

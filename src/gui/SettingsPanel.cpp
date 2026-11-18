@@ -75,7 +75,10 @@ QString locationModeTip() {
         "<b>Relative</b>: anywhere, and turned or flipped too if rotation or mirroring is allowed. Sizes, and where "
         "the items are relative to each other, must match.<br><br>"
         "<b>Orthographic</b>: a drawing with several views (front, top, side…). Each view is found and compared on "
-        "its own, wherever it is; then the views' alignment and arrangement are checked.");
+        "its own, wherever it is; then the views' alignment and arrangement are checked.<br><br>"
+        "<b>Creative</b>: the student's own design. Sizes and places are free; the drawing needs the kinds of objects "
+        "chosen from the solution (hidden lines, circles, radius dimensions…), as many as required, and may have to "
+        "follow two drafting rules: every circle has centerlines, and corners meet.");
 }
 
 // A sub-setting shown indented under the checkbox it belongs to.
@@ -170,7 +173,7 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
     mLay->addWidget(withInfo(tr("Location mode"), locationModeTip(), m_modeStep, true));
     m_modeForm = new QFormLayout;
     mLay->addLayout(m_modeForm);
-    m_mode = combo({tr("Absolute"), tr("Relative"), tr("Orthographic")});
+    m_mode = combo({tr("Absolute"), tr("Relative"), tr("Orthographic"), tr("Creative")});
     m_mode->setToolTip(locationModeTip());
     m_modeForm->addRow(m_mode);
     m_modeHelp = new QLabel(this);
@@ -182,6 +185,11 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
     connect(m_editViews, &QPushButton::clicked, this, [this]() { emit editViewsRequested(QString()); });
     m_editViewsRow = indented(m_editViews, this);
     m_modeForm->addRow(m_editViewsRow);
+    auto* chooseItems = new QPushButton(tr("Choose items…"), this);
+    chooseItems->setToolTip(tr("Which kinds of objects in the solution a student's drawing must have, how many, and the drafting rules"));
+    connect(chooseItems, &QPushButton::clicked, this, [this]() { emit chooseItemsRequested(QString()); });
+    m_chooseItemsRow = indented(chooseItems, this);
+    m_modeForm->addRow(m_chooseItemsRow);
     m_drawingsBox = new QWidget(m_modeStep);
     auto* dLay = new QVBoxLayout(m_drawingsBox);
     dLay->setContentsMargins(0, 0, 0, 0);
@@ -507,6 +515,10 @@ void SettingsPanel::updateModeHelp() {
         m_modeHelp->setText(tr("A multi-view drawing: each view is found and compared on its own, then the views' "
                                "alignment and arrangement are checked. Use \"Edit views…\" to confirm the solution's views."));
         break;
+    case Mode::Creative:
+        m_modeHelp->setText(tr("The student's own design: sizes and places are free. The drawing needs the kinds of objects "
+                               "the solution has, as many as required. Use \"Choose items…\" to pick them and the drafting rules."));
+        break;
     }
     updateScopes();
 }
@@ -542,12 +554,15 @@ void SettingsPanel::updateScopes() {
     showRow(m_modeForm, m_mode, !multi);
     showRow(m_modeForm, m_modeHelp, !multi);
     showRow(m_modeForm, m_editViewsRow, !multi && mode == Mode::Orthographic);
+    showRow(m_modeForm, m_chooseItemsRow, !multi && mode == Mode::Creative);
     showRow(m_rulesForm, m_colorTolRow, m_matchColor->isChecked());
     const bool reading = m_readDashes->isChecked() || m_readHatches->isChecked() || m_readDims->isChecked();
     for (QWidget* w : {static_cast<QWidget*>(m_readStrict), static_cast<QWidget*>(m_readView), static_cast<QWidget*>(m_readCount)})
         showRow(m_readForm, w, reading);
-    showRow(m_rulesForm, m_dims, !multi && one.dims);
-    showRow(m_rulesForm, m_hatches, !multi && one.hatches);
+    // Creative mode counts dimensions and hatches as kinds of objects, chosen per drawing (D106).
+    const bool creativeOne = !multi && mode == Mode::Creative;
+    showRow(m_rulesForm, m_dims, !multi && one.dims && !creativeOne);
+    showRow(m_rulesForm, m_hatches, !multi && one.hatches && !creativeOne);
 
     // A shared setting that only some drawings use (by their mode, checks and contents): shown
     // only when one does, with "Only for …" when not all do. With one drawing, it decides.
@@ -575,29 +590,41 @@ void SettingsPanel::updateScopes() {
     showRow(m_rulesForm, m_rotation, relative);
     showRow(m_rulesForm, m_mirror, relative);
     showRow(m_rulesForm, m_locationMode, anyMode(Mode::Absolute));
+    // Creative mode finds no scale and never counts extras (D106).
+    const bool placed = anyMode(Mode::Absolute) || relative || anyMode(Mode::Orthographic);
+    showRow(m_rulesForm, m_scaleMode, placed);
+    showRow(m_rulesForm, m_extras, placed);
     const bool ortho = scope(
         m_orthoScope, [](const DrawingSettings& d, const DrawingContent&) { return d.mode == Mode::Orthographic; },
         mode == Mode::Orthographic, tr("Orthographic mode"));
     m_orthoBox->setVisible(ortho);
     const bool prec = scope(
-        m_dimPrecScope, [](const DrawingSettings& d, const DrawingContent& c) { return d.checkDimensions && c.dims; },
-        m_dims->isChecked() && one.dims, tr("dimensions checked"));
+        m_dimPrecScope,
+        [](const DrawingSettings& d, const DrawingContent& c) { return d.checkDimensions && c.dims && d.mode != Mode::Creative; },
+        m_dims->isChecked() && one.dims && !creativeOne, tr("dimensions checked"));
     showRow(m_rulesForm, m_dimPrecRow, prec);
+    // In Creative mode the pattern splits the hatches into kinds.
     const bool pattern = scope(
-        m_hatchPatternScope, [](const DrawingSettings& d, const DrawingContent& c) { return d.checkHatches && c.hatches; },
-        m_hatches->isChecked() && one.hatches, tr("hatches checked"));
+        m_hatchPatternScope,
+        [](const DrawingSettings& d, const DrawingContent& c) { return (d.checkHatches || d.mode == Mode::Creative) && c.hatches; },
+        (m_hatches->isChecked() || creativeOne) && one.hatches, tr("hatches checked, or Creative mode"));
     showRow(m_rulesForm, m_hatchPatternRow, pattern);
+    m_hatchPattern->setText(multi || creativeOne ? tr("Hatch pattern must match") : tr("…and with the same hatch pattern"));
 
-    // The table: a drawing's Dims. / Hatches box only when it has some, Edit views… only in
-    // Orthographic mode; a column with nothing left goes away.
+    // The table: a drawing's Dims. / Hatches box only when it has some (and isn't in Creative
+    // mode, which counts them as kinds), Edit views… only in Orthographic mode, Choose items…
+    // only in Creative mode; a column with nothing left goes away.
     bool anyDims = false, anyHatches = false;
     for (const DrawingRow& row : m_rows) {
         const DrawingContent c = contentOf(row.key);
-        row.dims->setVisible(c.dims);
-        row.hatches->setVisible(c.hatches);
-        row.views->setVisible(m_perDrawing[row.key].mode == Mode::Orthographic);
-        anyDims = anyDims || c.dims;
-        anyHatches = anyHatches || c.hatches;
+        const Mode m = m_perDrawing[row.key].mode;
+        const bool dims = c.dims && m != Mode::Creative, hatches = c.hatches && m != Mode::Creative;
+        row.dims->setVisible(dims);
+        row.hatches->setVisible(hatches);
+        row.views->setVisible(m == Mode::Orthographic);
+        row.items->setVisible(m == Mode::Creative);
+        anyDims = anyDims || dims;
+        anyHatches = anyHatches || hatches;
     }
     if (m_headDims) m_headDims->setVisible(anyDims);
     if (m_headHatches) m_headHatches->setVisible(anyHatches);
@@ -652,7 +679,7 @@ void SettingsPanel::rebuildDrawingRows() {
         name->setToolTip(tr("Show this drawing: %1").arg(QDir::toNativeSeparators(path)));
         connect(name, &QLabel::linkActivated, this, [this, path]() { emit previewRequested(path); });
         auto* mode = new QComboBox(m_drawingsBox);
-        mode->addItems({tr("Absolute"), tr("Relative"), tr("Orthographic")});
+        mode->addItems({tr("Absolute"), tr("Relative"), tr("Orthographic"), tr("Creative")});
         mode->setCurrentIndex(static_cast<int>(ds.mode));
         mode->setFocusPolicy(Qt::StrongFocus);
         mode->installEventFilter(this);
@@ -662,13 +689,21 @@ void SettingsPanel::rebuildDrawingRows() {
         auto* hatches = new QCheckBox(m_drawingsBox);
         hatches->setChecked(ds.checkHatches);
         hatches->setToolTip(tr("Check hatches"));
-        auto* views = new QPushButton(tr("Edit views…"), m_drawingsBox);
+        // Edit views… (Orthographic) and Choose items… (Creative) share the last column.
+        auto* buttons = new QWidget(m_drawingsBox);
+        auto* bl = new QHBoxLayout(buttons);
+        bl->setContentsMargins(0, 0, 0, 0);
+        auto* views = new QPushButton(tr("Edit views…"), buttons);
+        auto* items = new QPushButton(tr("Choose items…"), buttons);
+        items->setToolTip(tr("Which kinds of objects in this solution drawing a student's must have, how many, and the drafting rules"));
+        bl->addWidget(views);
+        bl->addWidget(items);
         m_drawingsGrid->addWidget(name, i + 1, 0);
         m_drawingsGrid->addWidget(mode, i + 1, 1);
         m_drawingsGrid->addWidget(dims, i + 1, 2, Qt::AlignHCenter);
         m_drawingsGrid->addWidget(hatches, i + 1, 3, Qt::AlignHCenter);
-        m_drawingsGrid->addWidget(views, i + 1, 4);
-        m_rows.push_back({key, dims, hatches, views});
+        m_drawingsGrid->addWidget(buttons, i + 1, 4);
+        m_rows.push_back({key, dims, hatches, views, items});
         connect(mode, &QComboBox::currentIndexChanged, this, [this, key](int m) {
             m_perDrawing[key].mode = static_cast<Mode>(m);
             updateModeHelp();  // and what applies now
@@ -685,6 +720,7 @@ void SettingsPanel::rebuildDrawingRows() {
             emit changed();
         });
         connect(views, &QPushButton::clicked, this, [this, path]() { emit editViewsRequested(path); });
+        connect(items, &QPushButton::clicked, this, [this, path]() { emit chooseItemsRequested(path); });
     }
     m_drawingsGrid->setColumnStretch(0, 1);
 }
@@ -696,8 +732,7 @@ void SettingsPanel::applyDrawingLayout() {
     const bool multi = m_drawingPaths.size() > 1;
     m_drawingsBox->setVisible(multi);
     m_dimPrec->setText(multi ? tr("Dimension precision must match (4.00 vs 4.000)") : tr("…and the precision they show (4.00 vs 4.000)"));
-    m_hatchPattern->setText(multi ? tr("Hatch pattern must match") : tr("…and with the same hatch pattern"));
-    updateModeHelp();  // and which settings apply
+    updateModeHelp();  // and which settings apply (the hatch pattern's label too)
 }
 
 // Drop-downs and number boxes take the mouse wheel only once clicked into; otherwise the
@@ -772,8 +807,14 @@ void SettingsPanel::setSettings(const AppSettings& s) {
     // Per drawing (by file name): what these settings say wins, and drawings they don't list
     // stay as they are (an older saved set has an older snapshot of the drawings).
     for (const auto& [key, ds] : s.perDrawing) m_perDrawing[key] = ds;
+    for (const auto& [key, ch] : s.creative) m_creative[key] = ch;
     rebuildDrawingRows();
     applyDrawingLayout();
+}
+
+void SettingsPanel::setCreativeChoices(const QString& key, const CreativeChoices& c) {
+    m_creative[key] = c;
+    emit changed();
 }
 
 AppSettings SettingsPanel::settings() const {
@@ -826,6 +867,7 @@ AppSettings SettingsPanel::settings() const {
     s.identityRegex = m_identity->text().trimmed().isEmpty() ? AppSettings::defaultIdentityRegex() : m_identity->text().trimmed();
     s.loader.timeoutSec = m_timeout->value();
     s.perDrawing = m_perDrawing;
+    s.creative = m_creative;
     return s;
 }
 

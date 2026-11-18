@@ -62,6 +62,10 @@ private:
     void cancel();
     void onFinished();
     void editViews(const QString& refPath = QString());  // empty: the only drawing, or ask which
+    void chooseItems(const QString& refPath = QString());  // Creative mode (D106); empty as for editViews
+    // The solution drawing a button is for (empty: the only one, or ask which), as read for the
+    // card, else read now. False, having said why, when there is none.
+    bool solutionDrawing(const QString& chosen, const QString& title, QString* refPath, dc::DrawingPtr* ref);
     // A window with the solution drawing in its own colors; opens once it is read.
     void previewDrawing(const QString& refPath);
     void exportResults();
@@ -99,6 +103,8 @@ private:
     // m_refCanonSig), with each one's summary; for the preview and Edit views.
     std::map<QString, dc::DrawingPtr> m_refDrawings;
     std::map<QString, QString> m_refSummaries;
+    std::map<QString, QString> m_refLines;  // each one's line on the card, without the readability note (D105)
+    QByteArray m_refReadSig;                // the readability settings the card's note was made with
     QString m_pendingPreview;  // clicked while still being read: opens when the read ends
     QHash<QString, QPointer<QDialog>> m_previews;  // one open preview per drawing
     int m_dirCount = 0;     // drawings in the chosen folder (or .zip)

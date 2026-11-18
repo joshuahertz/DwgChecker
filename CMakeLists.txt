@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(DwgChecker VERSION 0.4.0 DESCRIPTION "Grades CAD assignments against a reference DWG" LANGUAGES CXX)
+project(DwgChecker VERSION 0.4.1 DESCRIPTION "Grades CAD assignments against a reference DWG" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

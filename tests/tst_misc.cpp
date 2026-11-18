@@ -6,6 +6,7 @@
 #include "ClassSummary.h"
 #include "Color.h"
 #include "Comparator.h"
+#include "Creative.h"
 #include "Csv.h"
 #include "Format.h"
 #include "Matcher.h"
@@ -13,6 +14,7 @@
 #include "Settings.h"
 #include "StudentIdentity.h"
 #include "TestUtil.h"
+#include "ViewSync.h"
 
 #include <QTemporaryDir>
 #include <QtTest>
@@ -80,6 +82,13 @@ private slots:
     void ellipseTransform();
     void ellipseMatching();
     void splineMatching();
+    void readabilityEdgeCases();
+    void viewSyncMapping();
+    void creativeKinds();
+    void creativeGrading();
+    void creativeCenterlineRule();
+    void creativeCornerRule();
+    void creativeChoicesSaved();
     void lineMatchEitherOrder();
     void arcMatchAngles();
     void looseCenterlines();
@@ -241,7 +250,378 @@ void TestMisc::splineMatching() {
     QVERIFY2(describeGeometry(a).startsWith(QStringLiteral("through (0.0, 0.0), (1.0, 1.0), (2.0, 0.5), (3.0, 1.5), (4.0, 0.0) (5 points), ")),
              qPrintable(describeGeometry(a)));
     QVERIFY(describeGeometry(spline(q, true)).endsWith(QStringLiteral(", closed")));
+    // Its outline is kept with it, and moves with it (D105).
+    const Primitive flipped = transformed(a, Transform2D::rigid(deg(37), 2, 1, true));
+    BBox box;
+    for (Vec2 p : flipped.spline->sp) box.add(p);
+    const BBox kept = flipped.bbox();
+    QVERIFY(kept.x0 == box.x0 && kept.y0 == box.y0 && kept.x1 == box.x1 && kept.y1 == box.y1);
     QCOMPARE(describe(cv), QStringLiteral("spline %1 long").arg(fmtLen(a.size())));
+}
+
+void TestMisc::readabilityEdgeCases() {
+    ReadOptions o;
+    o.dimensions = true;
+    Primitive dim;
+    dim.kind = PrimKind::Dimension;
+    dim.dimType = QStringLiteral("LINEAR");
+    dim.p0 = {0, 0};
+    dim.p1 = {4, 0};
+    dim.center = {2, 0.5};
+    dim.dimTextHeight = dim.dimArrowSize = 0.18;
+    // No geometry: model view fits the dimension itself (4 wide: text 45 px), not 0 px (D105).
+    Drawing only;
+    only.prims = {dim};
+    QVERIFY(readabilityIssues(only, o).empty());
+    // An ordinate dimension has no arrowheads: its style's arrow size says nothing.
+    Primitive ord = dim;
+    ord.dimType = QStringLiteral("ORDINATE");
+    ord.dimArrowSize = 0.9;
+    Drawing ordinate;
+    ordinate.prims = {ord};
+    QVERIFY(readabilityIssues(ordinate, o).empty());
+    Primitive lin = ord;
+    lin.dimType = QStringLiteral("LINEAR");
+    Drawing linear;
+    linear.prims = {lin};
+    const auto arrows = readabilityIssues(linear, o);
+    QCOMPARE(arrows.size(), size_t(1));
+    QCOMPARE(arrows[0].label, QStringLiteral("arrows out of proportion"));
+    // Nothing spanning any distance: nothing judged, and a note says so.
+    Primitive dot = dim;
+    dot.p0 = dot.p1 = dot.center = {1, 1};
+    Drawing point;
+    point.prims = {dot};
+    const auto note = readabilityIssues(point, o);
+    QCOMPARE(note.size(), size_t(1));
+    QVERIFY(note[0].label.isEmpty() && note[0].text.startsWith(QStringLiteral("the drawing spans no distance")));
+}
+
+// The detail view's tabs follow each other (D107): a view position taken into the student's file
+// keeps its place and the size things show at; Orthographic, the view under it decides.
+void TestMisc::viewSyncMapping() {
+    // Student -> reference: drawn twice too large, turned 37 degrees and moved.
+    const Transform2D T = Transform2D::rigid(deg(37), 3, -2) * Transform2D::scaling(0.5);
+    const Camera c{{1.5, 0.75}, 40};  // reference frame, 40 pixels per unit
+    const Camera s = mapCamera(c, T.inverse());
+    QVERIFY(dist(T.apply(s.center), c.center) < 1e-12);
+    QVERIFY(std::fabs(s.scale - 20) < 1e-12);  // a student unit is half a reference unit: half the pixels
+    const Camera back = mapCamera(s, T);
+    QVERIFY(dist(back.center, c.center) < 1e-12 && std::fabs(back.scale - 40) < 1e-12);
+    const Camera moved = mapCamera(c, Transform2D::translation(5, 1));  // only moved: the same zoom
+    QVERIFY(dist(moved.center, Vec2{6.5, 1.75}) < 1e-12 && std::fabs(moved.scale - 40) < 1e-12);
+
+    // Orthographic: each view has its own transform.
+    CompareResult r;
+    r.mode = Mode::Orthographic;
+    const Transform2D t0 = Transform2D::translation(-10, 0), t1 = Transform2D::rigid(deg(90), 6, 1);
+    r.stuT = {t0, t0, t1};
+    r.stuView = {0, 0, 1};
+    r.stuPartner = {0, -1, 2};
+    ViewSet vs;
+    vs.views.resize(2);
+    vs.views[0].name = ViewName::Front;
+    vs.views[0].bbox.add(Vec2{0, 0});
+    vs.views[0].bbox.add(Vec2{2, 2});
+    vs.views[1].name = ViewName::Right;
+    vs.views[1].bbox.add(Vec2{5, 0});
+    vs.views[1].bbox.add(Vec2{7, 2});
+    auto same = [](const std::optional<Transform2D>& a, const Transform2D& b) {
+        return a && dist(a->apply({0.3, 0.7}), b.apply({0.3, 0.7})) < 1e-12 && dist(a->apply({-2, 5}), b.apply({-2, 5})) < 1e-12;
+    };
+    QVERIFY(same(refToStudentAt(r, &vs, {6, 1}), t1.inverse()));
+    QVERIFY(same(refToStudentAt(r, &vs, {1, 1}), t0.inverse()));
+    QVERIFY(same(refToStudentAt(r, &vs, {3, 1}), t0.inverse()));  // between the views: the nearer one
+    // The student's file: the view of the student items nearest the point.
+    Drawing stu;
+    Primitive l;
+    l.kind = PrimKind::Line;
+    l.p0 = {10, 0};
+    l.p1 = {12, 2};
+    stu.prims.push_back(l);  // view 0, which t0 moves onto (0, 0)-(2, 2)
+    l.p0 = {11, 0};
+    l.p1 = {11, 1};
+    stu.prims.push_back(l);
+    l.p0 = {-1, -6};
+    l.p1 = {1, -5};
+    stu.prims.push_back(l);  // view 1
+    QVERIFY(same(studentToRefAt(r, &vs, stu, {11, 1}), t0));
+    QVERIFY(same(studentToRefAt(r, &vs, stu, {0, -5.5}), t1));
+    // An Ignored view is located like the others: its own transform (D108)...
+    vs.views[1].name = ViewName::Ignored;
+    QVERIFY(same(refToStudentAt(r, &vs, {6, 1}), t1.inverse()));
+    QVERIFY(same(studentToRefAt(r, &vs, stu, {0, -5.5}), t1));
+    // ...and a view with nothing of the student's in it falls back to the nearest that has.
+    r.stuView[2] = -1;
+    QVERIFY(same(refToStudentAt(r, &vs, {6, 1}), t0.inverse()));
+    r.stuView[2] = 1;
+    // Another mode: one transform for the whole drawing.
+    vs.views[1].name = ViewName::Right;
+    r.mode = Mode::Relative;
+    QVERIFY(same(refToStudentAt(r, &vs, {6, 1}), t0.inverse()));
+    QVERIFY(same(studentToRefAt(r, nullptr, stu, {0, -5.5}), t0));
+}
+
+// Creative mode's kinds (D106): shape and linetype, dimensions by type; a centerline is counted
+// by its axis, and a center mark's cross not at all.
+void TestMisc::creativeKinds() {
+    DocBuilder b;
+    b.line({0, 0}, {4, 0});
+    b.line({4, 0}, {4, 2});
+    b.line({0, 0.2}, {4, 0.2}, "0", "HIDDEN");
+    b.circle({1, 1}, 0.5);
+    b.circle({3, 1}, 0.4, "0", "HIDDEN");
+    b.arc({2, 2}, 0.5, 0, 90);
+    // A center mark at (1, 1), as AutoCAD draws one: two pieces each way, and a small cross.
+    b.line({0.3, 1}, {0.9, 1}, "0", "CENTER");
+    b.line({1.1, 1}, {1.7, 1}, "0", "CENTER");
+    b.line({1, 0.3}, {1, 0.9}, "0", "CENTER");
+    b.line({1, 1.1}, {1, 1.7}, "0", "CENTER");
+    b.line({0.95, 1}, {1.05, 1});
+    b.line({1, 0.95}, {1, 1.05});
+    b.dimension("LINEAR", 4, {0, 0}, {4, 0});
+    b.dimension("ALIGNED", 2, {4, 0}, {4, 2});
+    const Drawing d = b.canon();
+    CompareSettings s;
+    auto kinds = [&]() {
+        QStringList got;
+        for (const CreativeItems& it : creativeItems(d, s)) got << countOf(it.count, it.kind);
+        return got.join(QStringLiteral(", "));
+    };
+    QCOMPARE(kinds(), QStringLiteral("2 visible lines, 1 hidden line, 2 centerlines, 1 arc, 1 circle, 1 hidden circle, "
+                                     "1 linear dimension, 1 aligned dimension"));
+    auto needs = [&](const CreativeChoices& ch) {
+        QStringList got;
+        for (const CreativeNeed& n : creativeNeeds(creativeItems(d, s), ch))
+            got << countOf(n.need, n.key, n.plural) + (n.merged ? QStringLiteral(" (merged)") : QString());
+        return got.join(QStringLiteral(", "));
+    };
+    QCOMPARE(needs({}), QStringLiteral("2 visible lines, 1 hidden line, 2 centerlines, 1 arc, 1 circle, 1 hidden circle, "
+                                       "1 linear dimension, 1 aligned dimension"));
+    // Linetypes need not match: the kinds are still listed apart, for the choices, and graded
+    // together, each line kind's count added (D108).
+    s.matchLinetype = false;
+    QCOMPARE(kinds(), QStringLiteral("2 visible lines, 1 hidden line, 2 centerlines, 1 arc, 1 circle, 1 hidden circle, "
+                                     "1 linear dimension, 1 aligned dimension"));
+    QCOMPARE(needs({}), QStringLiteral("5 lines (merged), 1 arc, 2 circles (merged), 1 linear dimension, 1 aligned dimension"));
+    CreativeChoices ch;
+    ch.off << QStringLiteral("hidden line") << QStringLiteral("hidden circle");
+    ch.counts[QStringLiteral("centerline")] = 1;
+    QCOMPARE(needs(ch), QStringLiteral("3 lines (merged), 1 arc, 1 circle, 1 linear dimension, 1 aligned dimension"));
+    QCOMPARE(pluralKind(QStringLiteral("hatch (ANSI31)")), QStringLiteral("hatches (ANSI31)"));
+    QCOMPARE(pluralKind(QStringLiteral("elliptical arc")), QStringLiteral("elliptical arcs"));
+    QCOMPARE(pluralKind(QStringLiteral("arc length dimension")), QStringLiteral("arc length dimensions"));
+}
+
+// Creative mode's grading (D106): each kind as many as required, anywhere and at any size; an
+// item that breaks a rule its kind follows in the solution doesn't count.
+void TestMisc::creativeGrading() {
+    DocBuilder rb;  // the solution: two hidden lines on HIDDEN, three circles, a linear dimension
+    rb.layer("HIDDEN", "HIDDEN");
+    rb.line({0, 0}, {6, 0}, "HIDDEN", "HIDDEN");
+    rb.line({0, 1}, {6, 1}, "HIDDEN", "HIDDEN");
+    for (int k = 0; k < 3; ++k) rb.circle({1.0 + 2 * k, 3}, 0.5);
+    rb.dimension("LINEAR", 6, {0, 0}, {6, 0});
+    const Drawing ref = rb.canon();
+    DocBuilder sb;  // the student's own design: larger, elsewhere, one hidden line on layer 0, four circles
+    sb.layer("HIDDEN", "HIDDEN");
+    sb.line({10, 10}, {30, 10}, "HIDDEN", "HIDDEN");
+    sb.line({10, 14}, {30, 14}, "0", "HIDDEN");
+    for (int k = 0; k < 4; ++k) sb.circle({12.0 + 5 * k, 20}, 1.5);
+    sb.dimension("LINEAR", 20, {10, 10}, {30, 10});
+    const Drawing stu = sb.canon();
+    CompareSettings s;
+    s.mode = Mode::Creative;
+    CompareResult r = compareDrawings(ref, stu, s, nullptr);
+    QVERIFY2(r.pass && r.correctness == 100, qPrintable(r.errorStrings().join(" | ")));
+    QCOMPARE(r.refCount, 6);
+    QCOMPARE(r.penalizedExtras, 0);  // the fourth circle
+    // Layer names must match: all of the solution's hidden lines are on HIDDEN, so a student's must be.
+    s.requireLayerMatch = true;
+    r = compareDrawings(ref, stu, s, nullptr);
+    QCOMPARE(r.matched, 5);
+    QVERIFY(std::fabs(r.correctness - 100.0 * 5 / 6) < 1e-9);
+    QCOMPARE(r.errors.size(), size_t(1));
+    QCOMPARE(r.errors[0].text, QStringLiteral("1 of 2 hidden lines (1 missing); 1 more hidden line doesn't count: layer 0, expected HIDDEN"));
+    QCOMPARE(r.errors[0].label, QStringLiteral("too few hidden lines"));
+    QCOMPARE(r.errors[0].refPrims.size(), size_t(2));
+    QCOMPARE(r.errors[0].stuPrims.size(), size_t(2));
+    // Fewer needed than the solution has: one is enough, and the other is only noted.
+    s.creative.counts[QStringLiteral("hidden line")] = 1;
+    r = compareDrawings(ref, stu, s, nullptr);
+    QVERIFY2(r.pass, qPrintable(r.errorStrings().join(" | ")));
+    QCOMPARE(r.refCount, 5);
+    QCOMPARE(r.errors.size(), size_t(1));
+    QVERIFY(!r.errors[0].failing && r.errors[0].text.contains(QStringLiteral("doesn't count")));
+    // More circles than the student drew, and the dimension not checked.
+    s.creative.counts[QStringLiteral("circle")] = 5;
+    s.creative.off << QStringLiteral("linear dimension");
+    r = compareDrawings(ref, stu, s, nullptr);
+    QCOMPARE(r.refCount, 6);
+    QCOMPARE(r.matched, 5);
+    QVERIFY2(r.errorStrings().contains(QStringLiteral("4 of 5 circles (1 missing)")), qPrintable(r.errorStrings().join(" | ")));
+    // Each item's state, for the detail view: the student's are counted, not needed or don't count.
+    int counted = 0, notCounted = 0;
+    for (PrimStatus st : r.stuStatus) {
+        counted += st == PrimStatus::Matched;
+        notCounted += st == PrimStatus::WrongAttribute;
+    }
+    QCOMPARE(counted, 5);
+    QCOMPARE(notCounted, 1);
+
+    // Choices made with the linetypes apart still apply with "Linetypes must match" off: then a
+    // student's visible lines count for the solution's hidden ones (D108).
+    DocBuilder vb;
+    vb.line({0, 0}, {9, 0});
+    vb.line({0, 2}, {9, 2});
+    for (int k = 0; k < 3; ++k) vb.circle({1.0 + 3 * k, 5}, 1);
+    vb.dimension("LINEAR", 9, {0, 0}, {9, 0});
+    const Drawing visible = vb.canon();
+    CompareSettings m;
+    m.mode = Mode::Creative;
+    r = compareDrawings(ref, visible, m, nullptr);
+    QVERIFY2(r.errorStrings().contains(QStringLiteral("0 of 2 hidden lines (2 missing)")), qPrintable(r.errorStrings().join(" | ")));
+    m.matchLinetype = false;
+    m.creative.counts[QStringLiteral("hidden line")] = 1;
+    r = compareDrawings(ref, visible, m, nullptr);
+    QVERIFY2(r.pass, qPrintable(r.errorStrings().join(" | ")));
+    QCOMPARE(r.refCount, 5);  // 1 line, 3 circles, 1 dimension
+}
+
+// The centerline rule (D106).
+void TestMisc::creativeCenterlineRule() {
+    DocBuilder b;
+    b.circle({0, 0}, 1);  // centerlines drawn as lines, past it both ways: fine
+    b.line({-1.2, 0}, {1.2, 0}, "0", "CENTER");
+    b.line({0, -1.2}, {0, 1.2}, "0", "CENTER");
+    b.circle({5, 0}, 1);  // as AutoCAD's center mark draws them: a gap at the center, and a cross
+    b.line({3.8, 0}, {4.9, 0}, "0", "CENTER");
+    b.line({5.1, 0}, {6.2, 0}, "0", "CENTER");
+    b.line({5, -1.2}, {5, -0.1}, "0", "CENTER");
+    b.line({5, 0.1}, {5, 1.2}, "0", "CENTER");
+    b.line({4.95, 0}, {5.05, 0});
+    b.line({5, -0.05}, {5, 0.05});
+    b.circle({10, 0}, 1);  // none: another hole's centerline along the same axis isn't its own
+    b.circle({15, 0}, 1);  // one way only
+    b.line({13.8, 0}, {16.2, 0}, "0", "CENTER");
+    b.circle({20, 5}, 1);  // too short
+    b.line({19.5, 5}, {20.5, 5}, "0", "CENTER");
+    b.line({20, 4.5}, {20, 5.5}, "0", "CENTER");
+    b.arc({25, 0}, 1, 0, 180);              // a half circle needs them
+    b.arc({30, 0}, 1, 0, 90);               // a fillet doesn't
+    b.circle({35, 0}, 1, "0", "CENTER");    // nor a bolt circle
+    // Holes on a bolt circle: a radial centerline and the bolt circle itself are its two (D108).
+    b.circle({50, 0}, 3, "0", "CENTER");
+    b.circle({53, 0}, 0.3);                       // fine
+    b.line({52.4, 0}, {53.6, 0}, "0", "CENTER");
+    b.circle({50, 3}, 0.3);                       // the bolt circle alone: one direction only
+    const Vec2 u5 = fromAngle(deg(5));            // on an arc of 10 degrees: it stops 0.26 past the
+    b.arc({60, 0}, 3, 0, 10, "0", "CENTER");      // center, short of the 0.3 hole's side
+    b.circle(Vec2{60, 0} + u5 * 3, 0.3);
+    b.line(Vec2{60, 0} + u5 * 2.4, Vec2{60, 0} + u5 * 3.6, "0", "CENTER");
+    const Drawing d = b.canon();
+    const std::vector<CenterlineProblem> p = centerlineProblems(d, 1e-6);
+    auto at = [&](Vec2 c) {
+        for (const CenterlineProblem& x : p)
+            if (dist(d.prims[x.prim].center, c) < 1e-9) return x.text;
+        return QString();
+    };
+    QCOMPARE(p.size(), size_t(6));
+    QVERIFY2(at({53, 0}).isEmpty(), qPrintable(at({53, 0})));
+    QVERIFY2(at({50, 3}).endsWith(QStringLiteral("has a centerline in one direction only")), qPrintable(at({50, 3})));
+    const Vec2 c5 = Vec2{60, 0} + u5 * 3;
+    QVERIFY2(at(c5).endsWith(QStringLiteral("its centerlines don't reach past it on both sides")), qPrintable(at(c5)));
+    QVERIFY2(at({10, 0}).endsWith(QStringLiteral("has no centerlines")), qPrintable(at({10, 0})));
+    QVERIFY2(at({15, 0}).endsWith(QStringLiteral("has a centerline in one direction only")), qPrintable(at({15, 0})));
+    QVERIFY2(at({20, 5}).endsWith(QStringLiteral("its centerlines don't reach past it on both sides")), qPrintable(at({20, 5})));
+    QVERIFY2(at({25, 0}).endsWith(QStringLiteral("has no centerlines")), qPrintable(at({25, 0})));
+}
+
+// The corner rule (D106).
+void TestMisc::creativeCornerRule() {
+    DocBuilder b;
+    // A 10 x 5 outline: three corners meet, one has a gap of 0.02, and one line runs 0.03 past another.
+    b.line({0, 0}, {10, 0});
+    b.line({10, 0}, {10, 5});
+    b.line({9.98, 5}, {0, 5});
+    b.line({0, 5}, {0, -0.03});
+    b.line({5, 0}, {5, 2}, "0", "HIDDEN");     // a T: touches the bottom; its top end is open
+    b.line({2, 5}, {2, 3});                    // a visible line, continued by a hidden one after a
+    b.line({2, 2.97}, {2, 1}, "0", "HIDDEN");  // gap: the drafting convention
+    b.line({20, 20}, {25, 20});                // far from everything: open ends
+    b.circle({7, 2}, 1);                       // a hand-drawn center mark's cross is not an edge
+    b.line({6.95, 2}, {7.05, 2});
+    b.line({7, 1.95}, {7, 2.05});
+    const Drawing d = b.canon();
+    const std::vector<CornerProblem> c = cornerProblems(d, 1e-6);
+    QCOMPARE(c.size(), size_t(2));
+    const CornerProblem& gap = c[0].overshoot ? c[1] : c[0];
+    const CornerProblem& over = c[0].overshoot ? c[0] : c[1];
+    QVERIFY(!gap.overshoot && over.overshoot);
+    QVERIFY(dist(gap.at, Vec2{9.99, 5}) < 1e-9);
+    QVERIFY(std::fabs(gap.worst - 0.02) < 1e-9);
+    QCOMPARE(gap.prims.size(), size_t(2));
+    QVERIFY(dist(over.at, Vec2{0, -0.03}) < 1e-9);
+    QVERIFY(std::fabs(over.worst - 0.03) < 1e-9);
+    QCOMPARE(countCorners(d, 1e-6), 2);  // where ends meet ends: (10, 0) and (0, 5)
+    // Distances to curves, for what touches: on the circle, near the arc's end.
+    Primitive arc;
+    arc.kind = PrimKind::Arc;
+    arc.center = {0, 0};
+    arc.radius = 2;
+    arc.a0 = 0;
+    arc.a1 = kPi / 2;
+    QVERIFY(std::fabs(distanceToPrimitive(arc, {0, 3}) - 1) < 1e-12);
+    QVERIFY(std::fabs(distanceToPrimitive(arc, {3, -1}) - std::hypot(1, 1)) < 1e-12);  // past its start: to the end point
+    Primitive ell;
+    ell.kind = PrimKind::Ellipse;
+    ell.center = {0, 0};
+    ell.radius = 3;
+    ell.minorRadius = 1;
+    QVERIFY(distanceToPrimitive(ell, ell.pointAt(1.1)) < 1e-9);
+    QVERIFY(std::fabs(distanceToPrimitive(ell, {0, 2.5}) - 1.5) < 1e-9);
+
+    // A stub hanging off an edge is near it only because it is attached there: an open end. One
+    // that stops short of another line is a gap to that line (D108).
+    DocBuilder sb;
+    sb.line({0, 0}, {10, 0});
+    sb.line({0, 1}, {10, 1});
+    sb.line({5, 0}, {5, 0.05});
+    sb.line({8, 0}, {8, 0.99});
+    const Drawing stubs = sb.canon();
+    const std::vector<CornerProblem> st = cornerProblems(stubs, 1e-6);
+    QCOMPARE(st.size(), size_t(1));
+    QVERIFY(!st[0].overshoot && std::fabs(st[0].worst - 0.01) < 1e-9 && dist(st[0].at, Vec2{8, 0.99}) < 1e-9);
+    // A spline snapped closed onto its start, without AutoCAD's closed flag, has no ends.
+    Drawing snapped;
+    snapped.prims.push_back(spline({{0, 0}, {2, 1}, {4, 0}, {2, -1}, {1e-9, 0}}));
+    Primitive ring;
+    ring.kind = PrimKind::Circle;
+    ring.center = {-0.05, 0};
+    ring.radius = 0.03;
+    snapped.prims.push_back(ring);
+    QVERIFY(cornerProblems(snapped, 1e-6).empty());
+    QCOMPARE(countCorners(snapped, 1e-6), 0);
+}
+
+// Creative mode's choices are saved per solution drawing, and reach its comparison (D106).
+void TestMisc::creativeChoicesSaved() {
+    AppSettings a;
+    CreativeChoices ch;
+    ch.off << QStringLiteral("hidden line");
+    ch.counts[QStringLiteral("circle")] = 3;
+    ch.centerlines = false;
+    a.creative[QStringLiteral("plate.dwg")] = ch;
+    a.creative[QStringLiteral("part b.dwg")] = CreativeChoices{};
+    const AppSettings b = AppSettings::fromJson(a.toJson());
+    QCOMPARE(b.creative.size(), size_t(2));
+    QVERIFY(b.creative.at(QStringLiteral("plate.dwg")) == ch);
+    QVERIFY(b.creativeFor(QStringLiteral("C:/x/Plate.DWG")) == ch);
+    QVERIFY(b.compareFor(QStringLiteral("C:/x/Plate.dwg")).creative == ch);
+    QVERIFY(b.creativeFor(QStringLiteral("other.dwg")) == CreativeChoices{});
+    Mode m = Mode::Absolute;
+    QVERIFY(parseMode(QStringLiteral("Creative"), &m) && m == Mode::Creative);
+    QCOMPARE(modeName(Mode::Creative), QStringLiteral("creative"));
 }
 
 void TestMisc::lineMatchEitherOrder() {

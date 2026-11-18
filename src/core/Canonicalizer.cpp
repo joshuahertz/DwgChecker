@@ -1183,6 +1183,9 @@ private:
     }
 };
 
+// Of two pieces' dash runs (D105), the shorter (0: none known).
+double shortestRun(double a, double b) { return a <= 0 ? b : b <= 0 ? a : std::min(a, b); }
+
 void compact(std::vector<Primitive>& prims, const std::vector<char>& removed) {
     std::vector<Primitive> out;
     out.reserve(prims.size());
@@ -1359,9 +1362,11 @@ void mergeCollinearLines(std::vector<Primitive>& prims, const CanonSettings& s) 
             Vec2 lo = bp.p0, hi = bp.p1;
             double tlo = dot(lo, d), thi = dot(hi, d);
             int stacked = 0, drawOrder = 0;
+            double run = 0;
             QStringList merged;
             for (int i : comp) {
                 const Primitive& q = prims[g[i]];
+                run = shortestRun(run, q.ltRun);
                 for (Vec2 e : {q.p0, q.p1}) {
                     const double t = dot(e, d);
                     if (t < tlo) { tlo = t; lo = e; }
@@ -1377,6 +1382,7 @@ void mergeCollinearLines(std::vector<Primitive>& prims, const CanonSettings& s) 
             out.stacked = stacked;
             out.mergedFrom << merged;
             out.drawOrder = drawOrder;  // drawn as its topmost piece
+            out.ltRun = run;
         }
     }
     compact(prims, rm);
@@ -1447,6 +1453,7 @@ void mergeCocircularArcs(std::vector<Primitive>& prims, const CanonSettings& s) 
                 base.kind = PrimKind::Circle;
                 base.a0 = base.a1 = 0;
                 for (size_t k = 1; k < comp.size(); ++k) {
+                    base.ltRun = shortestRun(base.ltRun, prims[g[comp[k]]].ltRun);
                     base.mergedFrom << prims[g[comp[k]]].sourceId;
                     base.stacked += prims[g[comp[k]]].stacked;
                     base.drawOrder = std::max(base.drawOrder, prims[g[comp[k]]].drawOrder);
@@ -1470,6 +1477,7 @@ void mergeCocircularArcs(std::vector<Primitive>& prims, const CanonSettings& s) 
                     Primitive& out = prims[g[iv[k].i]];
                     const double newA1 = prims[g[endArc]].a1;
                     for (size_t q = k + 1; q <= m; ++q) {
+                        out.ltRun = shortestRun(out.ltRun, prims[g[iv[q].i]].ltRun);
                         out.mergedFrom << prims[g[iv[q].i]].sourceId;
                         out.stacked += prims[g[iv[q].i]].stacked;
                         out.drawOrder = std::max(out.drawOrder, prims[g[iv[q].i]].drawOrder);
@@ -1535,6 +1543,9 @@ static void findDimensionEdges(std::vector<Primitive>& prims, const CanonSetting
 void postProcess(Drawing& d, const CanonSettings& s) {
     normalizeArcs(d.prims, s);
     dropDegenerate(d.prims, s);
+    // Each dashed object's dash run as drawn, before pieces are joined (D105).
+    for (Primitive& p : d.prims)
+        if (p.ltPattern > 0 && p.ltRun <= 0) p.ltRun = p.size();
     removeStackedDuplicates(d.prims, s);
     mergeCollinearLines(d.prims, s);
     mergeCocircularArcs(d.prims, s);

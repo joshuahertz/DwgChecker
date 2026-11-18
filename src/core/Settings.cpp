@@ -14,6 +14,7 @@ QString modeName(Mode m) {
     case Mode::Absolute: return QStringLiteral("absolute");
     case Mode::Relative: return QStringLiteral("relative");
     case Mode::Orthographic: return QStringLiteral("orthographic");
+    case Mode::Creative: return QStringLiteral("creative");
     }
     return {};
 }
@@ -23,6 +24,7 @@ bool parseMode(const QString& s, Mode* out) {
     if (l == "absolute" || l == "abs") { *out = Mode::Absolute; return true; }
     if (l == "relative" || l == "rel") { *out = Mode::Relative; return true; }
     if (l == "orthographic" || l == "ortho") { *out = Mode::Orthographic; return true; }
+    if (l == "creative") { *out = Mode::Creative; return true; }
     return false;
 }
 
@@ -107,8 +109,10 @@ QJsonObject AppSettings::toJson() const {
     for (const auto& [name, ds] : perDrawing)
         pd.insert(name, QJsonObject{{"mode", modeName(ds.mode)}, {"checkDimensions", ds.checkDimensions},
                                     {"checkHatches", ds.checkHatches}});
-    return QJsonObject{{"version", kFormatVersion}, {"canon", c}, {"compare", m}, {"perDrawing", pd}, {"duplicates", d},
-                       {"loader", l}, {"identityRegex", identityRegex}};
+    QJsonObject cr;
+    for (const auto& [name, ch] : creative) cr.insert(name, ch.toJson());
+    return QJsonObject{{"version", kFormatVersion}, {"canon", c}, {"compare", m}, {"perDrawing", pd}, {"creative", cr},
+                       {"duplicates", d}, {"loader", l}, {"identityRegex", identityRegex}};
 }
 
 CanonSettings AppSettings::referenceCanon() const {
@@ -128,7 +132,31 @@ CompareSettings AppSettings::compareFor(const QString& refPath) const {
         c.checkDimensions = it->second.checkDimensions;
         c.checkHatches = it->second.checkHatches;
     }
+    c.creative = creativeFor(refPath);
     return c;
+}
+
+CreativeChoices AppSettings::creativeFor(const QString& refPath) const {
+    const auto it = creative.find(drawingKey(refPath));
+    return it != creative.end() ? it->second : CreativeChoices{};
+}
+
+QJsonObject CreativeChoices::toJson() const {
+    QJsonObject n;
+    for (const auto& [kind, count] : counts) n.insert(kind, count);
+    return QJsonObject{{"off", QJsonArray::fromStringList(off)}, {"counts", n}, {"centerlines", centerlines}, {"corners", corners}};
+}
+
+CreativeChoices CreativeChoices::fromJson(const QJsonObject& o) {
+    CreativeChoices ch;
+    for (const QJsonValue& v : o.value("off").toArray())
+        if (v.isString() && !ch.off.contains(v.toString())) ch.off << v.toString();
+    const QJsonObject n = o.value("counts").toObject();
+    for (auto it = n.begin(); it != n.end(); ++it)
+        if (it.value().isDouble()) ch.counts[it.key()] = std::max(0, it.value().toInt());
+    ch.centerlines = o.value("centerlines").toBool(ch.centerlines);
+    ch.corners = o.value("corners").toBool(ch.corners);
+    return ch;
 }
 
 AppSettings AppSettings::fromJson(const QJsonObject& o) {
@@ -189,6 +217,9 @@ AppSettings AppSettings::fromJson(const QJsonObject& o) {
         ds.checkHatches = e.value("checkHatches").toBool(s.compare.checkHatches);
         s.perDrawing[it.key().toLower()] = ds;
     }
+    const QJsonObject cr = o.value("creative").toObject();
+    for (auto it = cr.begin(); it != cr.end(); ++it)
+        if (it.value().isObject()) s.creative[it.key().toLower()] = CreativeChoices::fromJson(it.value().toObject());
 
     const QJsonObject d = o.value("duplicates").toObject();
     s.duplicates.templateFiles = fromArr(d.value("templateFiles"), s.duplicates.templateFiles);

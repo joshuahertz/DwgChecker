@@ -15,7 +15,8 @@
 
 namespace dc {
 
-enum class ErrCat { Scale, Location, NearMiss, Linetype, Color, Lineweight, Layer, ByLayer, Precision, Missing, Extra, Alignment, Arrangement, Readability, Warning };
+// Rule: a drafting rule of Creative mode (D106), centerlines or corners.
+enum class ErrCat { Scale, Location, NearMiss, Linetype, Color, Lineweight, Layer, ByLayer, Precision, Missing, Extra, Alignment, Arrangement, Rule, Readability, Warning };
 enum class PrimStatus { Matched, Missing, Extra, NearMiss, WrongAttribute, NotCompared };
 
 struct ErrorItem {
@@ -95,6 +96,12 @@ std::vector<int> comparableIndices(const Drawing& d, const CompareSettings& s);
 // s.locationPenaltyErrors (or, with s.detectLocation off, where it was drawn, with a warning).
 // The readability checks the settings ask for (D101).
 ReadOptions readOptionsFrom(const CompareSettings& s);
+// The comparison without the readability checks, which judge the student's file on its own:
+// a batch adds them once per file, on the result it keeps (D105).
+CompareResult gradeDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views);
+// Adds the readability problems of stu to r (D101): counted ones with the errors, before the
+// warnings, which the others join.
+void addReadability(const Drawing& stu, const CompareSettings& s, const ViewSet* views, CompareResult& r);
 
 CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views);
 

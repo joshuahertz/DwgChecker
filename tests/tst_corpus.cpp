@@ -3,6 +3,7 @@
 // files (M2), Absolute (M3) and Relative (M4) comparison.
 
 #include "Comparator.h"
+#include "Creative.h"
 #include "Format.h"
 #include "Readability.h"
 #include "MetaExtractor.h"
@@ -105,6 +106,7 @@ private slots:
     void readabilityInResults();
     void readabilityUpperLimits_data();
     void readabilityUpperLimits();
+    void creativeMode();
 
 private:
     std::shared_ptr<Drawing> ref;
@@ -1044,6 +1046,22 @@ void TestCorpus::readabilityInResults() {
     QVERIFY(!r.pass);
     QCOMPARE(r.correctness, 100.0);  // the score is the drawing's; readability fails it, as a misaligned view does
     QCOMPARE(countLabel(r, QStringLiteral("text too small")), 1);
+    // Counted problems go with the errors, before the warnings (D105). On paper with no layout
+    // viewport, the note that says so is a warning, and stays with the warnings.
+    auto noLayout = std::make_shared<Drawing>(*d);
+    noLayout->viewports.clear();
+    noLayout->addWarning(WarnKind::Other, QStringLiteral("a warning of its own"));
+    s.readOnPaper = true;
+    r = compareDrawings(*d, *noLayout, s, nullptr);
+    int firstWarning = -1, lastError = -1, note = -1;
+    for (int k = 0; k < static_cast<int>(r.errors.size()); ++k) {
+        const ErrorItem& e = r.errors[k];
+        if (e.cat == ErrCat::Warning && firstWarning < 0) firstWarning = k;
+        if (e.cat == ErrCat::Readability && e.failing) lastError = k;
+        if (e.cat == ErrCat::Readability && !e.failing) note = k;
+    }
+    QVERIFY2(firstWarning >= 0 && lastError >= 0 && note >= 0, qPrintable(dumpErrors(r)));
+    QVERIFY2(lastError < firstWarning && note > firstWarning, qPrintable(dumpErrors(r)));
 }
 
 // Sizes too large (D102), in rd_big: a 6 x 3 plate with a hidden line at linetype scale 3
@@ -1090,6 +1108,53 @@ void TestCorpus::readabilityUpperLimits() {
     QVERIFY2(texts[2].startsWith(QStringLiteral("1 dimension has text too large: as large as 8.89 mm high on paper, at most 7 mm "
                                                 "(dimension 6.000 at (")),
              qPrintable(all));
+}
+
+// Creative mode on drawings made by AutoCAD (D106): the kinds of objects the solution has, as
+// many, anywhere and at any size, with the centerline and corner rules. cr_ref has a center mark
+// made by AutoCAD's CENTERMARK; cr_good is another design with all of it, cr_bad isn't.
+void TestCorpus::creativeMode() {
+    const auto sol = loadFixture("cr_ref");
+    CompareSettings s;
+    s.mode = Mode::Creative;
+    QStringList kinds;
+    for (const CreativeItems& it : creativeItems(*sol, s)) kinds << countOf(it.count, it.kind);
+    // The center mark's pieces (its cross too, on the CENTER layer) are one centerline each way,
+    // and the one across lines up with the other hole's: 3.
+    QCOMPARE(kinds.join(QStringLiteral(", ")), QStringLiteral("4 visible lines, 1 hidden line, 3 centerlines, 1 arc, 2 circles, "
+                                                              "1 linear dimension, 1 diameter dimension"));
+    QVERIFY(hasCenterlines(*sol));
+    QCOMPARE(countCorners(*sol, s.linTol), 5);
+    QVERIFY(centerlineProblems(*sol, s.linTol).empty());
+    const CompareResult self = compareDrawings(*sol, *sol, s, nullptr);
+    QVERIFY2(self.pass && self.correctness == 100, qPrintable(dumpErrors(self)));
+    const CompareResult good = compareDrawings(*sol, *loadFixture("cr_good"), s, nullptr);
+    QVERIFY2(good.pass && good.correctness == 100, qPrintable(dumpErrors(good)));
+    QCOMPARE(good.refCount, 13);
+
+    const auto bad = loadFixture("cr_bad");
+    const CompareResult r = compareDrawings(*sol, *bad, s, nullptr);
+    const QStringList texts = r.errorStrings();
+    QVERIFY2(texts.contains(QStringLiteral("0 of 1 hidden line (1 missing)")), qPrintable(dumpErrors(r)));
+    QVERIFY2(texts.contains(QStringLiteral("0 of 1 arc (1 missing)")), qPrintable(dumpErrors(r)));
+    QVERIFY2(texts.contains(QStringLiteral("0 of 1 diameter dimension (1 missing)")), qPrintable(dumpErrors(r)));
+    QCOMPARE(countLabel(r, QStringLiteral("missing centerlines")), 3);
+    QCOMPARE(countLabel(r, QStringLiteral("corner doesn't meet")), 2);
+    QVERIFY2(texts.filter(QStringLiteral("doesn't meet: a gap of 0.020")).size() == 1, qPrintable(dumpErrors(r)));
+    QVERIFY2(texts.filter(QStringLiteral("doesn't meet: a line runs 0.030 past it")).size() == 1, qPrintable(dumpErrors(r)));
+    QCOMPARE(r.refCount, 13);
+    QCOMPARE(r.matched, 10);
+    QVERIFY(std::fabs(r.correctness - 100.0 * 10 / 18) < 1e-9);  // each rule broken one more
+    QVERIFY(!r.pass);
+    // The kinds short of their count are red on the solution tab: every item of them.
+    int short_ = 0;
+    for (PrimStatus st : r.refStatus) short_ += st == PrimStatus::Missing;
+    QCOMPARE(short_, 3);
+    // Without the rules, only the counts.
+    s.creative.centerlines = s.creative.corners = false;
+    const CompareResult counts = compareDrawings(*sol, *bad, s, nullptr);
+    QVERIFY(std::fabs(counts.correctness - 100.0 * 10 / 13) < 1e-9);
+    QCOMPARE(countLabel(counts, QStringLiteral("missing centerlines")) + countLabel(counts, QStringLiteral("corner doesn't meet")), 0);
 }
 
 QTEST_GUILESS_MAIN(TestCorpus)

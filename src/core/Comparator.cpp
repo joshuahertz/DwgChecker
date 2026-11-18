@@ -2,6 +2,7 @@
 
 #include "Aligner.h"
 #include "Color.h"
+#include "Creative.h"
 #include "DimText.h"
 #include "Format.h"
 #include "HatchCheck.h"
@@ -916,29 +917,40 @@ ReadOptions readOptionsFrom(const CompareSettings& s) {
     return o;
 }
 
-static CompareResult gradeDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views);
-
 CompareResult compareDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
     CompareResult r = gradeDrawings(ref, stu, s, views);
-    // Readability (D101): the student's file on its own, but for an Ignored view's objects (a
-    // title block, say). One item per problem; as errors they fail the drawing, as the view
-    // checks do, without changing its score.
+    addReadability(stu, s, views, r);
+    return r;
+}
+
+void addReadability(const Drawing& stu, const CompareSettings& s, const ViewSet* views, CompareResult& r) {
+    // The student's file on its own, but for an Ignored view's objects (a title block, say). One
+    // item per problem; as errors they fail the drawing, as the view checks do, without changing
+    // its score (D101), and go with the errors, before the warnings (D105).
     const ReadOptions o = readOptionsFrom(s);
-    if (!o.any()) return r;
+    if (!o.any()) return;
     std::vector<char> skip(stu.prims.size(), 0);
     if (views && s.mode == Mode::Orthographic)
         for (size_t j = 0; j < stu.prims.size() && j < r.stuView.size(); ++j)
             skip[j] = r.stuView[j] >= 0 && views->isIgnored(r.stuView[j]);
+    std::vector<ErrorItem> failing;
     for (const ReadIssue& i : readabilityIssues(stu, o, &skip)) {
         const bool fails = s.readAsErrors && !i.label.isEmpty();
-        r.errors.push_back({ErrCat::Readability, (fails ? QString() : QStringLiteral("warning: ")) + i.text, -1, {}, i.prims, fails,
-                            fails ? i.label : QString()});
-        if (fails) r.pass = false;
+        ErrorItem e{ErrCat::Readability, (fails ? QString() : QStringLiteral("warning: ")) + i.text, -1, {}, i.prims, fails,
+                    fails ? i.label : QString()};
+        if (fails) failing.push_back(std::move(e));
+        else r.errors.push_back(std::move(e));
     }
-    return r;
+    if (failing.empty()) return;
+    r.pass = false;
+    const auto firstWarning = std::find_if(r.errors.begin(), r.errors.end(), [](const ErrorItem& e) { return e.cat == ErrCat::Warning; });
+    r.errors.insert(firstWarning, std::make_move_iterator(failing.begin()), std::make_move_iterator(failing.end()));
 }
 
-static CompareResult gradeDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
+CompareResult gradeDrawings(const Drawing& ref, const Drawing& stu, const CompareSettings& s, const ViewSet* views) {
+    // Creative mode counts kinds of objects, wherever and however large (D106): no scale or
+    // location to find.
+    if (s.mode == Mode::Creative) return compareCreative(ref, stu, s);
     // Dimensions and hatches are checked only where the solution has some; otherwise every
     // one the student drew would count as extra. (Settings hides those checks then.)
     const bool dims = s.checkDimensions && ref.count(PrimKind::Dimension) > 0;

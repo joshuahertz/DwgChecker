@@ -51,6 +51,8 @@ private slots:
     void turnedOffLayersInSolutionIgnored();
     void absoluteDrawingInWrongPlaceFindsItsDrawing();
     void oneToOneForTheBestTotal();
+    void readabilityOncePerFile();
+    void creativeChoicesApplied();
 
 private:
     QTemporaryDir m_dir;
@@ -303,6 +305,55 @@ void TestBatch::oneToOneForTheBestTotal() {
     // Fewer files than drawings: each file still gets one; a drawing stays free.
     QCOMPARE(assignOneToOne({{0, 100, 3}, {2, 4, 100}}), (std::vector<int>{1, 2}));
     QCOMPARE(assignOneToOne({}), std::vector<int>{});
+}
+
+// With several solution drawings, readability is judged once per file, on the result it keeps
+// (D105): as a single comparison reports it.
+void TestBatch::readabilityOncePerFile() {
+    BatchInput in = absoluteBatch();
+    in.refPaths = {fixture("rd_ref"), fixture("ref")};
+    in.studentPaths = {copyAs("rd_ref", QStringLiteral("smithjane_100_200_rd_ref.json"))};
+    in.settings.compare.readDashes = in.settings.compare.readHatches = in.settings.compare.readDimensions = true;
+    const JsonFileLoader loader;
+    const BatchOutput out = runBatch(in, loader);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(out.students.size(), size_t(1));
+    const StudentRun& r = out.students[0];
+    QCOMPARE(r.refIndex, 0);
+    int read = 0;
+    for (const auto& e : r.result.errors) read += e.cat == ErrCat::Readability;
+    const CompareResult single = compareDrawings(*out.refs[0], *r.drawing, in.settings.compareFor(out.refPaths[0]), nullptr);
+    int expected = 0;
+    for (const auto& e : single.errors) expected += e.cat == ErrCat::Readability;
+    QCOMPARE(expected, 5);  // medium, in model view
+    QCOMPARE(read, expected);
+}
+
+// Creative mode's choices reach the grading of a single solution drawing too (D106).
+void TestBatch::creativeChoicesApplied() {
+    BatchInput in = absoluteBatch();
+    in.settings.compare.mode = Mode::Creative;
+    in.refPaths = {fixture("cr_ref")};
+    in.studentPaths = {copyAs("cr_bad", QStringLiteral("smithjane_100_200_cr_bad.json"))};
+    CreativeChoices ch;
+    ch.off << QStringLiteral("circle");
+    ch.centerlines = false;
+    in.settings.creative[AppSettings::drawingKey(in.refPaths[0])] = ch;
+    const JsonFileLoader loader;
+    const BatchOutput out = runBatch(in, loader);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(out.students.size(), size_t(1));
+    const CompareResult& r = out.students[0].result;
+    QCOMPARE(r.mode, Mode::Creative);
+    QCOMPARE(r.refCount, 11);  // no circles
+    QCOMPARE(r.matched, 8);
+    QVERIFY(std::fabs(r.correctness - 100.0 * 8 / 13) < 1e-9);  // and the two corners
+    // The solution worked out once for the batch grades as a single comparison does (D108).
+    CompareSettings one = in.settings.compare;
+    one.creative = ch;
+    const CompareResult single = compareDrawings(*out.refs[0], *out.students[0].drawing, one, nullptr);
+    QCOMPARE(single.correctness, r.correctness);
+    QCOMPARE(single.errorStrings(), r.errorStrings());
 }
 
 QTEST_GUILESS_MAIN(TestBatch)

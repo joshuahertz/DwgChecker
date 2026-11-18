@@ -25,6 +25,7 @@ struct SplineData {
     // The curve sampled from start to end: parameters, and the points on it there.
     std::vector<double> su;
     std::vector<Vec2> sp;
+    BBox box;  // the sampled points' outline, kept with them (D105)
     double length = 0;
 
     double u0() const { return knots[degree]; }

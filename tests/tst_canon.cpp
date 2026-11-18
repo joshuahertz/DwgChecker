@@ -1,5 +1,6 @@
 // Canonicalization: one or more tests per spec rule (1-10).
 
+#include "Readability.h"
 #include "TestUtil.h"
 
 #include <QJsonDocument>
@@ -72,6 +73,7 @@ private slots:
     void nonZeroZWarning();
     void nanCoordinatesLeftOut();
     void dimensionLooksAsDrawn();
+    void dashRunOfJoinedPieces();
 };
 
 void TestCanon::bulgeArcs() {
@@ -869,6 +871,29 @@ void TestCanon::dimensionLooksAsDrawn() {
     // Shown only as the file is drawn: a moved copy goes without (D88); unmoved, it keeps it.
     QVERIFY(!transformed(*dim, Transform2D::translation(10, 5)).dimLook);
     QVERIFY(transformed(*dim, Transform2D::identity()).dimLook);
+}
+
+// Pieces of a dashed edge are joined into one object, but AutoCAD starts the dash pattern again
+// on each piece: the joined one keeps the shortest piece's run (D105).
+void TestCanon::dashRunOfJoinedPieces() {
+    DocBuilder b;
+    b.ltype("HIDDEN", {{"pattern_len", 0.375}, {"dashes", QJsonArray{QJsonObject{{"length", 0.25}}, QJsonObject{{"length", -0.125}}}}});
+    for (int k = 0; k < 4; ++k) b.line({0.2 * k, 0}, {0.2 * (k + 1), 0}, "0", "HIDDEN");  // 0.2 each: 0.8 joined
+    for (int k = 0; k < 3; ++k) b.arc({0, 5}, 1, 15 * k, 15 * (k + 1), "0", "HIDDEN");  // 0.26 each: 0.79 joined
+    b.line({0, 2}, {4, 2}, "0", "HIDDEN");                                                // one piece, 4 long
+    const Drawing d = b.canon();
+    QCOMPARE(countKind(d, PrimKind::Line), 2);
+    QCOMPARE(countKind(d, PrimKind::Arc), 1);
+    const Primitive* joined = findLine(d, {0, 0}, {0.8, 0});
+    QVERIFY(joined);
+    QVERIFY(std::fabs(joined->ltRun - 0.2) < 1e-9);
+    QVERIFY(std::fabs(findLine(d, {0, 2}, {4, 2})->ltRun - 4) < 1e-9);
+    ReadOptions o;
+    o.dashes = true;
+    const auto issues = readabilityIssues(d, o);
+    QCOMPARE(issues.size(), size_t(1));
+    QCOMPARE(issues[0].label, QStringLiteral("dashes don't show"));
+    QCOMPARE(issues[0].prims.size(), size_t(2));  // the joined line and the joined arc, not the long line
 }
 
 QTEST_GUILESS_MAIN(TestCanon)

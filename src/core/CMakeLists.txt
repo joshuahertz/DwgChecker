@@ -20,6 +20,7 @@ add_library(dwgcore STATIC
   Aligner.h Aligner.cpp
   Ortho.h Ortho.cpp
   Comparator.h Comparator.cpp
+  Creative.h Creative.cpp
   Duplicates.h Duplicates.cpp
   StudentIdentity.h StudentIdentity.cpp
   Archive.h Archive.cpp
@@ -28,6 +29,7 @@ add_library(dwgcore STATIC
   Csv.h Csv.cpp
   Format.h Format.cpp
   Readability.h Readability.cpp
+  ViewSync.h ViewSync.cpp
 )
 target_include_directories(dwgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 if(TARGET Qt6::ZlibPrivate)

@@ -150,8 +150,7 @@ BBox Primitive::bbox() const {
         break;
     }
     case PrimKind::Spline:
-        if (spline)
-            for (Vec2 q : spline->sp) b.add(q);
+        if (spline) b = spline->box;
         if (!b.valid()) b.add(center);
         break;
     case PrimKind::Dimension: b.add(center); b.add(p0); b.add(p1); break;

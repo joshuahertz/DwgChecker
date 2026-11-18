@@ -134,7 +134,10 @@ struct Primitive {
     // As drawn, for the readability checks (D101); transformed() leaves them as they are.
     double ltPattern = 0;   // a dashed linetype's pattern length: LTSCALE x the object's own scale x a block's; 0 continuous
     double ltGap = 0;       // ...and its shortest gap, likewise
-    double ltRun = 0;       // the length the pattern runs along, when longer than its own (polyline linetype generation)
+    // The length AutoCAD runs its dash pattern along: its own, a whole polyline's with linetype
+    // generation on, or the shortest of the pieces it was joined from (each starts the pattern
+    // again, D105). Set for every dashed object by postProcess; 0 means its own length.
+    double ltRun = 0;
     double dimTextHeight = 0, dimArrowSize = 0;  // Dimension: its text height and arrowhead size
     std::shared_ptr<const std::vector<HatchFamily>> hatchLines;  // Hatch: its pattern's families of lines
     // Annotation payload.

@@ -97,7 +97,7 @@ takes its place; a click on it shows the main window at once). The steps and Set
 fill the right side (drag the divider between them to resize). The app opens
 with nothing chosen and walks through four numbered steps: (1) click the first
 card to choose the reference (solution) drawing; (2) check the **location
-mode** (Absolute, Relative or Orthographic; with several drawings, one for each),
+mode** (Absolute, Relative, Orthographic or Creative; with several drawings, one for each),
 which is remembered for those reference solutions; (3) click the third card to
 choose the submissions folder, or its **Choose a .zip…** button for a zip of
 them (a Canvas bulk download as it comes); (4) click **Run**. The next step is outlined,
@@ -140,7 +140,8 @@ tolerance must be above 0. Then:
   extra and not graded, and the student's score is the mean over the drawings.
   Settings then shows a **Solution drawings** table with each drawing's location
   mode, **Dims.** and **Hatches** checks (only for a drawing that has them) and
-  **Edit views…** (only for an Orthographic one); the other settings apply to all
+  **Edit views…** (only for an Orthographic one) or **Choose items…** (only for a
+  Creative one); the other settings apply to all
   drawings. Click a drawing's name to see it, to tell the drawings apart: a window
   with the drawing in its own colors and linetypes, as in AutoCAD (ACI 7
   black/white contrasting with the background; a checkbox switches between
@@ -223,10 +224,41 @@ tolerance must be above 0. Then:
   its own color and linetype, stacked in AutoCAD's draw
   order (DRAWORDER), on AutoCAD's dark background or white. Clicking an error or a drawing object zooms all three tabs: in
   the student's file to the student's item, or to where a missing one should be,
-  and in the solution to the same place as the overlay. Then the full discrepancy list (click an error to zoom to it), metadata side
+  and in the solution to the same place as the overlay. Zooming or panning one tab
+  moves the others to the same place when you switch to them, at the same size on
+  screen: the student's file goes through the comparison's own move (in Orthographic
+  mode, that of the view under the middle of the window), keeping its own
+  orientation. Then the full discrepancy list (click an error to zoom to it), metadata side
   by side, and a **Drawing objects** tab. That tab lists everything the checker extracted from the
   student's or the reference's file, with layer, linetype, match status and
   source entity, which helps when a file grades unexpectedly.
+- **Creative mode**, for students' own designs: sizes and places are free. The
+  drawing needs the kinds of objects the solution has, at least as many: visible,
+  hidden and center lines, circles, arcs, ellipses and splines in each linetype,
+  dimensions by type, hatches (by pattern when patterns must match). Extras never
+  count against the student. **Choose items…** (step 2) shows the solution with a
+  list of its kinds: check those to grade and set how many each needs (it starts at
+  the solution's number); select one to see its objects. A centerline counts once
+  per axis, so AutoCAD's center marks and drawn centerlines count alike. The kinds are
+  always listed by linetype and hatch pattern; with "Linetypes must match" or "Hatch
+  pattern must match" off, they are graded together (lines of every linetype, needing
+  the sum of their counts), and the dialog says so. Where all of
+  the solution's objects of a kind are on one layer, or in one color or lineweight, a
+  student's must be too when the matching rules ask for that, and "set by layer"
+  applies when on; one that isn't doesn't count, and the error says why ("1 of 2
+  hidden lines (1 missing); 1 more hidden line doesn't count: layer 0, expected
+  HIDDEN"). Two drafting rules are offered when the solution follows them: **Every
+  circle has centerlines** (each circle, and each arc of 180° or more, needs
+  center-linetype lines through its center both ways, reaching past it; a bolt circle
+  through its center is one of them; fillets and center-linetype circles are left
+  alone), and **Corners meet** (an end that stops
+  short of another object, or a line that runs past one, within 1% of the drawing's
+  size; ends farther from everything aren't judged, a short stub hanging off an edge
+  isn't a corner, and a hidden line may stop short of the visible line it continues). The score is the objects counted out of those
+  required, with each circle or corner that breaks a rule one more. The detail
+  view's Overlay shows the student's file as drawn (counted green, not needed gray,
+  not counted or breaking a rule yellow), and the solution tab shows the kinds the
+  student is short of in red.
 - Orthographic mode: use **Edit views…** (step 2) to confirm how the reference
   splits into views. Name a view **Ignored** to leave it out of grading, such as
   a title block or notes: it is still found in each drawing, so a student's copy

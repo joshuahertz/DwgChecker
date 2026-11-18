@@ -1952,6 +1952,124 @@ file dwgread cannot read is listed as unreadable, with dwgread's error. The spec
 "documented fallback" (docs/SPEC.md) is no longer followed; the spec itself is left
 as written.
 
+**D105. Fixes from a code review of 0.4.0 (user approved, 2026-11-17), as 0.4.1.** Eight findings
+on the commit with D98 to D104, all fixed:
+- **Readability of a drawing with no geometry:** model view was sized from lines, arcs,
+  circles, ellipses and splines only, so with none every dimension read 0 px. It now
+  falls back to the box of everything in the file; a drawing that spans no distance
+  at all is not judged, with a note.
+- **Pieces joined into one dashed edge:** AutoCAD starts the dash pattern again on each
+  piece, so each dashed object now keeps the length its pattern runs along (its own,
+  or a whole polyline's with linetype generation), and joined lines and arcs keep the
+  shortest of their pieces'. Four 0.2 pieces of a hidden line look continuous, as they
+  do in AutoCAD; before, the 0.8 joined line passed.
+- **Ordinate dimensions** have no arrowheads: the arrow check skips them.
+- **Counted readability problems** go with the errors, before the warnings; as warnings
+  they stay with the warnings.
+- **The solution card** no longer reads the solution drawings again when only a
+  readability setting changes: its note is made again from the drawings already read.
+- **Readability once per student file:** a batch compares without it (`gradeDrawings`)
+  and adds it to the result each file keeps (`addReadability`), instead of once per
+  solution drawing; a single comparison (`compareDrawings`) still includes it.
+- **A spline keeps its outline** (`SplineData::box`), made with its samples and moved
+  with them, so its box costs nothing in matching, views and view splitting.
+- **The six size messages** (gaps, hatch spacing, text, each too small or too large)
+  share one formatter; their wording is unchanged.
+Tests: tst_canon `dashRunOfJoinedPieces`; tst_misc `readabilityEdgeCases` and the kept
+spline outline in `splineMatching`; tst_corpus the order of errors and warnings in
+`readabilityInResults`; tst_batch `readabilityOncePerFile`.
+
+**D106. Creative mode (user request and approved plan, 2026-11-18).** A fourth mode, set
+per solution drawing like the others, for assignments where students draw their own
+design. Sizes and places are free: nothing is aligned, scaled or moved.
+- **Kinds.** Each object counts as one kind: shape and linetype for geometry ("visible
+  line", "hidden line", "centerline", "circle", "hidden circle"; the shape alone with
+  "Linetypes must match" off), the type of a dimension (linear, aligned, radius,
+  diameter, angular, arc length, ordinate), hatching (by pattern when "Hatch pattern must
+  match" is on). Text is not counted. A centerline counts by axis: its collinear pieces
+  are one, so AutoCAD's center mark (CENTERMARK: an anonymous block with two pieces each
+  way and a small cross) counts as two, as two drawn lines do, and one centerline
+  through two holes counts once. A center mark's cross (a line centered on a circle's
+  or arc's center, inside it, not in a center linetype) is not counted.
+- **Choose items…** (beside the mode, or in the drawings table) shows the solution and
+  lists its kinds: a checkbox, how many the solution has, and the count required, which
+  starts at the solution's. Selecting a kind highlights its objects. The choices are
+  saved per solution drawing by file name (`AppSettings::creative`, saved as
+  `"creative"`), for one drawing or several; a kind the drawing doesn't have now keeps
+  its saved choice.
+- **Grading.** Each checked kind needs at least its count; extras never count. Within a
+  kind, a student's object must be on the solution's layer, in its color and lineweight
+  when the matching rules ask for that and all of the solution's objects of the kind
+  agree; "set by layer" applies when asked for. One that doesn't is not counted, and the
+  error says why: "1 of 2 hidden lines (1 missing); 1 more hidden line doesn't count:
+  layer 0, expected HIDDEN". When enough others count, that is a warning. The score is
+  the objects counted (up to each count) out of those required, plus one for each rule
+  broken. Errors are labeled "too few <kind>s" for the class summary; every solution
+  object of a short kind counts as missed there.
+- **Every circle has centerlines** (offered when the solution has center-linetype lines;
+  on by default). Each circle, and each arc of 180° or more (fillets are less), in a
+  visible, hidden or other linetype needs center-linetype lines through its center
+  (within the larger of the tolerance and 1% of its radius, and reaching into it) in two
+  directions at least 45° apart, the pieces along each reaching past it on both sides.
+  One error per circle: no centerlines, one direction only, or not reaching past.
+- **Corners meet** (offered when ends of the solution's outlines meet; on by default).
+  An end of a line, arc, elliptical arc or open spline (not a centerline or phantom
+  line) that touches nothing is a gap when another outline is within 1% of the drawing's
+  diagonal, or an overshoot when the line crosses one within that distance of its end.
+  Ends farther from everything are open and not judged; a hidden line may stop short of
+  the visible line it continues (the drafting convention); a center mark's cross is not
+  an edge. Bad ends near each other are one corner: "corner at (8.000, 4.000) doesn't
+  meet: a gap of 0.020", or "a line runs 0.030 past it".
+- **Results.** The overlay shows the student's file as drawn: counted green, not needed
+  gray, not counted or breaking a rule yellow. The solution tab shows the kinds the
+  student is short of in red. Scale detection, the location re-check, and the per-drawing
+  dimension and hatch checks don't apply (Settings hides them, and "Wrong scale" and
+  "Extra items"). Readability and cheating detection work as in Relative mode.
+- Tests: tst_misc `creativeKinds`, `creativeGrading`, `creativeCenterlineRule`,
+  `creativeCornerRule`, `creativeChoicesSaved`; tst_corpus `creativeMode` on `cr_ref`
+  (with an AutoCAD center mark), `cr_good` and `cr_bad`; tst_batch
+  `creativeChoicesApplied`.
+
+**D107. The detail view's tabs follow each other (user request and approved plan,
+2026-11-18).** Zooming or panning one of Overlay, Student's file and Reference solution
+moves the others to the same place when they are shown next: the same center and the
+same size on screen. Overlay and Reference solution share the reference frame. The
+student's file goes through the comparison's own transform at that point
+(`refToStudentAt`, `studentToRefAt`): Orthographic, that of the view under the center
+(else the nearest graded view); otherwise the whole drawing's. Its zoom is divided by
+the transform's scale, and it keeps its own orientation (not rotated or mirrored). A
+view set this way keeps its place when resized, as fits do. Clicking an error or a
+drawing object, or Zoom to all, still sets every tab, each to its own copy of the place.
+In Creative mode the overlay is the student's file, so it and the Student's file tab
+follow each other, and the solution tab is on its own. Test: tst_misc `viewSyncMapping`.
+
+**D108. Fixes from a code review of D106 and D107 (user approved, 2026-11-18).** Eight
+findings, all fixed:
+- **Bolt circles:** a center-linetype circle or arc whose path runs through a hole's
+  center counts as one of its centerline directions (along it there), reaching past when
+  it goes on beyond the hole's radius each way (a whole circle always). A radial
+  centerline and the bolt circle pass; before, every such hole was "one direction only".
+- **Ignored views in the zoom sync:** they are located like the other views and their
+  student items moved with them, so they are used too; one with nothing of the student's
+  in it falls back to the nearest view that has.
+- **Choices that survive the settings:** the kinds are always told apart by linetype and
+  hatch pattern, and the choices are saved for those. "Linetypes must match" off or
+  "Hatch pattern must match" off now grade kinds together (`CreativeNeed`): the group
+  needs the sum of its checked kinds' counts, and any student object of the group counts.
+  Before, turning either setting off renamed the kinds and dropped the choices. Choose
+  items… says when kinds count together. Centerlines are counted by axis either way.
+- **Stubs:** an end is not judged against what its object's other end is attached to, so
+  a short stub hanging off an edge is an open end, not "a line runs past it"; one that
+  stops short of another object is still a gap to it.
+- **Splines snapped closed** (ends within the tolerance, no closed flag) have no ends.
+- **The solution's analysis once:** a batch works out each Creative solution drawing's
+  kinds and rules once (`analyzeCreative`, `CompareSettings::creativeSolution`, not
+  saved); a single comparison works it out itself.
+- The batch sets the Creative choices in one place; the detail view's error box lost a
+  Creative case nothing reached.
+Tests: tst_misc `viewSyncMapping`, `creativeKinds`, `creativeGrading`,
+`creativeCenterlineRule`, `creativeCornerRule`; tst_batch `creativeChoicesApplied`.
+
 **D38. No CLI (user decision, 2026-11-05).** The spec's `dwgcheck` front end was
 removed because only the GUI is used. The core library still uses QtCore only,
 so the logic stays testable without the GUI. The spec's reason for the CLI is

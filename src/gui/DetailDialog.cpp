@@ -3,6 +3,7 @@
 #include "DrawingView.h"
 #include "Csv.h"
 #include "Format.h"
+#include "ViewSync.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -47,9 +48,13 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
     auto* lay = new QVBoxLayout(this);
 
     const CompareResult& r = run.result;
-    QString summary = tr("<b>%1</b> — %2 — %3  (%4 of %5 matched, %6 penalized extras)")
-                          .arg(run.identity.name.toHtmlEscaped(), correctnessText(run), r.errorSummary().toHtmlEscaped())
-                          .arg(r.matched).arg(r.refCount).arg(r.penalizedExtras);
+    QString summary = r.mode == Mode::Creative
+                          ? tr("<b>%1</b> — %2 — %3  (%4 of %5 required objects counted)")
+                                .arg(run.identity.name.toHtmlEscaped(), correctnessText(run), r.errorSummary().toHtmlEscaped())
+                                .arg(r.matched).arg(r.refCount)
+                          : tr("<b>%1</b> — %2 — %3  (%4 of %5 matched, %6 penalized extras)")
+                                .arg(run.identity.name.toHtmlEscaped(), correctnessText(run), r.errorSummary().toHtmlEscaped())
+                                .arg(r.matched).arg(r.refCount).arg(r.penalizedExtras);
     const QString refName = QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName().toHtmlEscaped();
     if (!run.matched())
         summary += tr(" — <b>extra file, not graded</b>: shown against the closest solution drawing, %1").arg(refName);
@@ -77,8 +82,11 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
     m_viewTabs->addTab(m_view, tr("Overlay"));
     m_viewTabs->addTab(m_raw, tr("Student's file"));
     m_viewTabs->addTab(m_refView, tr("Reference solution"));
-    m_viewTabs->setTabToolTip(0, tr("The student's drawing placed on the solution (each view moved, rescaled if needed), "
-                                    "colored by result"));
+    m_viewTabs->setTabToolTip(0, r.mode == Mode::Creative
+                                     ? tr("The student's drawing as drawn (Creative mode: nothing is placed on the solution), "
+                                          "colored by what counts")
+                                     : tr("The student's drawing placed on the solution (each view moved, rescaled if needed), "
+                                          "colored by result"));
     m_viewTabs->setTabToolTip(1, tr("%1, as submitted: nothing moved, rescaled or rearranged")
                                      .arg(QFileInfo(run.path).fileName()));
     const QString refFile = QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName();
@@ -121,12 +129,18 @@ DetailDialog::DetailDialog(std::shared_ptr<const BatchOutput> batch, int student
         m_view->zoomToAll();
         m_raw->zoomToAll();
         m_refView->zoomToAll();
+        allInPlace();
     });
+    for (int tab = 0; tab < kTabs; ++tab)
+        connect(tabView(tab), &DrawingView::userMoved, this, [this, tab]() { viewMoved(tab); });
     connect(m_rawDark, &QCheckBox::toggled, this, [this](bool on) {
         QSettings().setValue(QStringLiteral("preview/darkBackground"), on);
         buildRaw();
     });
-    connect(m_viewTabs, &QTabWidget::currentChanged, this, &DetailDialog::updateLegend);
+    connect(m_viewTabs, &QTabWidget::currentChanged, this, [this](int tab) {
+        tabShown(tab);
+        updateLegend();
+    });
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
     connect(m_errors, &QListWidget::currentRowChanged, this, &DetailDialog::zoomToError);
     // Clicking the row that is already current (e.g. the error the window was opened for) zooms too.
@@ -177,6 +191,19 @@ void DetailDialog::buildOverlay() {
     const Drawing& ref = m_batch->refDrawing(run);
     const CompareResult& r = run.result;
     m_view->clearDrawing();
+    if (creative()) {  // nothing to place on the solution (D106): what counts, as drawn
+        if (run.drawing)
+            for (int j = 0; j < static_cast<int>(run.drawing->prims.size()); ++j) {
+                const PrimStatus st = r.stuStatus[j];
+                QColor c = kRefGray;  // not needed, or not a kind that is counted
+                if (st == PrimStatus::Matched) c = kMatched;
+                else if (st == PrimStatus::NearMiss || st == PrimStatus::WrongAttribute) c = kShifted;
+                if (auto* it = m_view->addPrimitive(run.drawing->prims[j], c, st == PrimStatus::Matched ? 1.4 : 1.8))
+                    it->setZValue(st == PrimStatus::Matched ? 1 : st == PrimStatus::NearMiss || st == PrimStatus::WrongAttribute ? 3 : 0);
+            }
+        m_view->zoomToAll();
+        return;
+    }
     // Dimensions only where they are graded (the solution has them, the check is on, and they
     // are not in an Ignored view); one that isn't graded would only be a number in the way.
     auto ungradedDim = [](const Primitive& p, PrimStatus st) {
@@ -226,7 +253,12 @@ void DetailDialog::buildRaw() {
     // what is graded), each item in its own color, as in the preview; the views keep their zoom
     // and pan.
     m_raw->showAsDrawn(run.drawing.get(), dark);
-    m_refView->showAsDrawn(&m_batch->refDrawing(run), dark);
+    const Drawing& ref = m_batch->refDrawing(run);
+    m_refView->showAsDrawn(&ref, dark);
+    if (creative())  // the kinds the student has too few of (D106)
+        for (int i = 0; i < static_cast<int>(ref.prims.size()) && i < static_cast<int>(run.result.refStatus.size()); ++i)
+            if (run.result.refStatus[i] == PrimStatus::Missing)
+                if (auto* it = m_refView->addPrimitive(ref.prims[i], kMissing, 2.5)) it->setZValue(3e9);
 }
 
 void DetailDialog::updateLegend() {
@@ -237,18 +269,24 @@ void DetailDialog::updateLegend() {
     if (shown == m_raw)
         text = tr("<b>The student's file</b> (%1) as submitted: its own coordinates, scale and layout, everything in it "
                   "including dimensions, each item in its own color and linetype (hover over one for its layer). "
-                  "Clicking an error or a drawing object zooms here too. (wheel: zoom, drag: pan)")
-                   .arg(QFileInfo(run.path).fileName().toHtmlEscaped());
+                  "Clicking an error or a drawing object zooms here too. %2")
+                   .arg(QFileInfo(run.path).fileName().toHtmlEscaped(), navHint(kRaw));
     else if (shown == m_refView)
         text = tr("<b>The reference solution</b> (%1) as drawn: everything in it, including dimensions and anything in "
                   "Ignored views, each item in its own color and linetype (hover over one for its layer). Clicking an "
-                  "error or a drawing object zooms here too. (wheel: zoom, drag: pan)")
-                   .arg(QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName().toHtmlEscaped());
+                  "error or a drawing object zooms here too. %2")
+                   .arg(QFileInfo(m_batch->refPaths.value(m_batch->refOf(run))).fileName().toHtmlEscaped(), navHint(kRef)) +
+               (creative() ? tr(" <span style='color:#d21e1e'>■</span> kinds the student has too few of.") : QString());
+    else if (creative())
+        text = tr("The student's drawing as drawn: <span style='color:#1e9632'>■</span> counted &nbsp; "
+                  "<span style='color:#afafaf'>■</span> not needed (never counts against the student) &nbsp; "
+                  "<span style='color:#e1af00'>■</span> doesn't count, or breaks a drafting rule &nbsp; %1")
+                   .arg(navHint(kOverlay));
     else
         text = tr("<span style='color:#afafaf'>■</span> reference &nbsp; <span style='color:#1e9632'>■</span> matched "
                   "&nbsp; <span style='color:#d21e1e'>■</span> missing (where it should be) &nbsp; "
                   "<span style='color:#e1af00'>■</span> present but wrong: shifted, wrong size… &nbsp; "
-                  "<span style='color:#9646c8'>■</span> extra &nbsp; (wheel: zoom, drag: pan)");
+                  "<span style='color:#9646c8'>■</span> extra &nbsp; %1").arg(navHint(kOverlay));
     m_legend->setText(text);
 }
 
@@ -259,17 +297,9 @@ void DetailDialog::zoomRef(const BBox& b) {
 
 std::optional<Transform2D> DetailDialog::refToStudent(int view) const {
     const StudentRun& run = m_batch->students[m_student];
-    const CompareResult& r = run.result;
-    const bool ortho = r.mode == Mode::Orthographic && m_batch->viewsOf(run);
     // Each student item's transform takes it into the reference frame (view, scale, a wrong
-    // location moved back). Prefer one paired with a reference item of that view.
-    for (int pass = 0; pass < 2; ++pass)
-        for (int j = 0; j < static_cast<int>(r.stuT.size()); ++j) {
-            if (ortho && (j >= static_cast<int>(r.stuView.size()) || r.stuView[j] != view)) continue;
-            if (pass == 0 && (j >= static_cast<int>(r.stuPartner.size()) || r.stuPartner[j] < 0)) continue;
-            return r.stuT[j].inverse();
-        }
-    return std::nullopt;
+    // location moved back).
+    return refToStudentOfView(run.result, run.result.mode == Mode::Orthographic && m_batch->viewsOf(run), view);
 }
 
 BBox DetailDialog::rawBoxOfRef(int i) const {
@@ -299,8 +329,15 @@ BBox DetailDialog::rawErrorBox(int k) const {
     const ErrorItem& e = r.errors[k];
     for (int j : e.stuPrims)
         if (j >= 0 && j < static_cast<int>(run.drawing->prims.size())) b.add(run.drawing->prims[j].bbox());
-    for (int i : e.refPrims) b.add(rawBoxOfRef(i));
+    if (!creative())  // Creative: the solution's objects have no place in the student's file
+        for (int i : e.refPrims) b.add(rawBoxOfRef(i));
     return b;
+}
+
+void DetailDialog::zoomOverlayCreative(const BBox& b) {
+    const StudentRun& run = m_batch->students[m_student];
+    if (!b.valid() || !run.drawing) { m_view->zoomToAll(); return; }
+    m_view->zoomTo(withContext(b, run.drawing->bbox().diagonal()), 0.2);
 }
 
 void DetailDialog::zoomRaw(const BBox& b) {
@@ -328,7 +365,18 @@ void DetailDialog::zoomToError(int k) {
         const QSignalBlocker block(m_errors);
         m_errors->setCurrentRow(k);
     }
+    allInPlace();
     zoomRaw(rawErrorBox(k));  // the other tabs too, shown or not
+    if (creative()) {  // the overlay is the student's file; the solution tab shows the solution's objects of it
+        zoomOverlayCreative(rawErrorBox(k));
+        BBox rb;
+        const StudentRun& run = m_batch->students[m_student];
+        for (int i : run.result.errors[k].refPrims)
+            if (i >= 0 && i < static_cast<int>(m_batch->refDrawing(run).prims.size())) rb.add(m_batch->refDrawing(run).prims[i].bbox());
+        zoomRef(rb.valid() ? withContext(rb, m_batch->refDrawing(run).bbox().diagonal()) : rb);
+        allInPlace();
+        return;
+    }
     const BBox b = errorBox(k);
     if (!b.valid()) {
         m_view->zoomToAll();
@@ -338,10 +386,65 @@ void DetailDialog::zoomToError(int k) {
     const BBox z = withContext(b, m_batch->refDrawing(m_batch->students[m_student]).bbox().diagonal());
     m_view->zoomTo(z, 0.2);
     zoomRef(z);  // the solution is in the overlay's frame: the same place
+    allInPlace();
+}
+
+DrawingView* DetailDialog::tabView(int tab) const {
+    return tab == kRaw ? m_raw : tab == kRef ? m_refView : m_view;
+}
+
+bool DetailDialog::creative() const { return m_batch->students[m_student].result.mode == Mode::Creative; }
+
+bool DetailDialog::synced(int tab) const { return !(creative() && tab == kRef); }
+
+bool DetailDialog::studentFrame(int tab) const { return tab == kRaw || (tab == kOverlay && creative()); }
+
+std::optional<Transform2D> DetailDialog::tabTransform(int from, int to, Vec2 at) const {
+    if (!synced(from) || !synced(to)) return std::nullopt;
+    if (studentFrame(from) == studentFrame(to)) return Transform2D::identity();
+    const StudentRun& run = m_batch->students[m_student];
+    const ViewSet* vs = m_batch->viewsOf(run);
+    if (!studentFrame(from)) return refToStudentAt(run.result, vs, at);
+    if (!run.drawing) return std::nullopt;
+    return studentToRefAt(run.result, vs, *run.drawing, at);
+}
+
+void DetailDialog::viewMoved(int tab) {
+    if (!synced(tab) || tab != m_viewTabs->currentIndex()) return;
+    for (int t = 0; t < kTabs; ++t) m_stale[t] = t != tab && synced(t);
+    m_syncFrom = tab;
+}
+
+void DetailDialog::tabShown(int tab) {
+    if (tab < 0 || tab >= kTabs || !m_stale[tab]) return;
+    m_stale[tab] = false;
+    // The tab moved last keeps its place while hidden: nothing moves it but the user, or a zoom
+    // of every tab, which leaves none waiting.
+    const Camera c = tabView(m_syncFrom)->camera();
+    if (const auto t = tabTransform(m_syncFrom, tab, c.center)) tabView(tab)->setCamera(mapCamera(c, *t));
+}
+
+void DetailDialog::allInPlace() {
+    for (bool& s : m_stale) s = false;
+}
+
+QString DetailDialog::navHint(int tab) const {
+    if (!synced(tab)) return tr("(wheel: zoom, drag: pan)");
+    if (creative()) return tab == kRaw ? tr("(wheel: zoom, drag: pan; the Overlay tab follows)")
+                                       : tr("(wheel: zoom, drag: pan; the Student's file tab follows)");
+    return tr("(wheel: zoom, drag: pan; the other tabs follow)");
 }
 
 namespace {
-QString statusText(PrimStatus s) {
+QString statusText(PrimStatus s, bool creative) {
+    if (creative) switch (s) {  // D106
+        case PrimStatus::Matched: return QObject::tr("counted");
+        case PrimStatus::Missing: return QObject::tr("too few of its kind");
+        case PrimStatus::Extra: return QObject::tr("not needed");
+        case PrimStatus::NearMiss: return QObject::tr("breaks a drafting rule");
+        case PrimStatus::WrongAttribute: return QObject::tr("doesn't count: wrong layer, color or lineweight, or not by layer");
+        case PrimStatus::NotCompared: return QObject::tr("not counted");
+        }
     switch (s) {
     case PrimStatus::Matched: return QObject::tr("matched");
     case PrimStatus::Missing: return QObject::tr("missing");
@@ -420,7 +523,7 @@ void DetailDialog::fillPrimitives() {
         QString src = p.sourceType + QStringLiteral("  ") + p.sourceId;
         if (!p.mergedFrom.isEmpty()) src += tr("  merged with %1").arg(p.mergedFrom.join(", "));
         if (p.stacked > 0) src += tr("  (%1 stacked duplicate(s) removed)").arg(p.stacked);
-        const QStringList cells = {QString::number(i + 1), kindName(p.kind), describeGeometry(p), p.layer, lt, statusText(st), src};
+        const QStringList cells = {QString::number(i + 1), kindName(p.kind), describeGeometry(p), p.layer, lt, statusText(st, creative()), src};
         for (int c = 0; c < cells.size(); ++c) {
             auto* item = new QTableWidgetItem(cells[c]);
             if (c == 5) {
@@ -442,6 +545,16 @@ void DetailDialog::zoomToPrimitive(int row) {
     const bool student = m_primSource->currentIndex() == 0;
     const Drawing* d = student ? run.drawing.get() : &m_batch->refDrawing(run);
     if (!d || row < 0 || row >= static_cast<int>(d->prims.size())) return;
+    if (creative()) {  // the student's file in two tabs, the solution in the third (D106)
+        if (student) {
+            zoomRaw(d->prims[row].bbox());
+            zoomOverlayCreative(d->prims[row].bbox());
+        } else {
+            zoomRef(withContext(d->prims[row].bbox(), d->bbox().diagonal()));
+        }
+        allInPlace();
+        return;
+    }
     // The raw tab: a student item where it is, a reference item where it is (or should be)
     // in the student's file.
     zoomRaw(student ? d->prims[row].bbox() : rawBoxOfRef(row));
@@ -450,6 +563,7 @@ void DetailDialog::zoomToPrimitive(int row) {
     const BBox z = withContext(p.bbox(), m_batch->refDrawing(run).bbox().diagonal());
     m_view->zoomTo(z, 0.2);
     zoomRef(z);
+    allInPlace();
 }
 
 void DetailDialog::buildMetadata(QTableWidget* t) {

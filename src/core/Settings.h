@@ -7,11 +7,13 @@
 #include <QStringList>
 
 #include <map>
+#include <memory>
 #include <optional>
 
 namespace dc {
 
-enum class Mode { Absolute, Relative, Orthographic };
+enum class Mode { Absolute, Relative, Orthographic, Creative };
+struct CreativeSolution;  // Creative.h
 enum class ExtrasPolicy { Penalize, ReportOnly };
 enum class Severity { Fail, Warn, Off };
 
@@ -41,6 +43,19 @@ struct CanonSettings {
     // Find the edges the drawing's dimensions measure from (D78). Only a solution's are used, so
     // student drawings skip it (effectiveCanon).
     bool dimensionEdges = true;
+};
+
+// Creative mode (D106), per solution drawing: which of its kinds of objects a student's drawing
+// must have, and how many, and the drafting rules asked for. A kind not listed in `off` is
+// checked, and needs as many as the solution has unless `counts` says otherwise.
+struct CreativeChoices {
+    QStringList off;                // kinds not checked: "hidden line", "radius dimension"
+    std::map<QString, int> counts;  // required counts other than the solution's own
+    bool centerlines = true;        // every circle has centerlines (offered when the solution has centerlines)
+    bool corners = true;            // corners meet (offered when the solution has corners)
+    bool operator==(const CreativeChoices&) const = default;
+    QJsonObject toJson() const;
+    static CreativeChoices fromJson(const QJsonObject& o);
 };
 
 struct CompareSettings {
@@ -79,6 +94,11 @@ struct CompareSettings {
     double alignTol = 0;            // 0 = linTol
     Severity alignmentSeverity = Severity::Fail;
     Severity arrangementSeverity = Severity::Fail;
+    // Creative mode: the drawing's choices, from AppSettings::creative (not saved with these).
+    CreativeChoices creative;
+    // ...and what the solution drawing asks, worked out once by a batch for all its students
+    // (D108). Not saved; when null, each comparison works it out.
+    std::shared_ptr<const CreativeSolution> creativeSolution;
 };
 
 struct DuplicateSettings {
@@ -105,6 +125,9 @@ struct AppSettings {
     // Several solution drawings: per drawing, by file name in lower case ("part a.dwg").
     // Used only when an assignment has more than one solution drawing.
     std::map<QString, DrawingSettings> perDrawing;
+    // Creative mode's choices (D106), per solution drawing by the same key, for one solution
+    // drawing or several. A drawing not listed has the defaults.
+    std::map<QString, CreativeChoices> creative;
     DuplicateSettings duplicates;
     LoaderSettings loader;
     QString identityRegex = defaultIdentityRegex();
@@ -120,8 +143,10 @@ struct AppSettings {
     // ignoreHiddenLayersInReference is on.
     CanonSettings referenceCanon() const;
     static QString drawingKey(const QString& refPath);  // the perDrawing key of a solution drawing
-    // `compare` with the drawing's mode and checks applied (when listed in perDrawing).
+    // `compare` with the drawing's mode and checks applied (when listed in perDrawing), and its
+    // Creative choices.
     CompareSettings compareFor(const QString& refPath) const;
+    CreativeChoices creativeFor(const QString& refPath) const;
 
     QJsonObject toJson() const;
     static AppSettings fromJson(const QJsonObject& o);

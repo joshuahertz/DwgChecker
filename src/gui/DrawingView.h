@@ -3,6 +3,7 @@
 // middle/right-button pan, cosmetic pens. Optional lasso selection.
 
 #include "Model.h"
+#include "ViewSync.h"
 
 #include <QGraphicsView>
 #include <QPainterPath>
@@ -32,6 +33,10 @@ public:
     // Either fit is redone when the view is resized, until the user zooms or pans: the view
     // opens fitted to its real size, and one zoomed while hidden (another tab) shows that zoom.
     void zoomToAll();
+    // The view position: the drawing point at the center and the zoom (pixels per unit). One
+    // set is kept when the view is resized, until the user zooms or pans (as the fits).
+    dc::Camera camera() const;
+    void setCamera(const dc::Camera& c);
     void clearDrawing();
 
     void setLassoEnabled(bool on) { m_lassoEnabled = on; }
@@ -42,6 +47,8 @@ public:
 signals:
     // Lasso finished: polygon in reference (CAD) coordinates.
     void lassoFinished(const QPolygonF& cadPolygon, bool addToSelection);
+    // The user zoomed or panned (wheel, drag, scroll bars or keys), not a zoom asked for in code.
+    void userMoved();
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
@@ -52,6 +59,8 @@ protected:
 
 private:
     void fit(const dc::BBox& b, double marginFraction);
+    void applyCamera(const dc::Camera& c);
+    void movedByUser();
 
     // Extent of what was drawn, from the geometry itself: Qt's item bounds count
     // cosmetic pen widths and fixed-size labels as drawing units.
@@ -62,6 +71,8 @@ private:
         bool all = true;  // everything drawn (m_extent as it is then), else `box`
         dc::BBox box;
         double margin = 0;
+        bool camera = false;  // else a fit: `cam`, a center and zoom (setCamera)
+        dc::Camera cam;
     } m_target;
     bool m_panning = false;
     QPoint m_lastPan;

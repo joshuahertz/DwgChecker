@@ -83,7 +83,11 @@ void finish(SplineData& s) {
     for (size_t k = 0; k + 1 < breaks.size(); ++k)
         for (int q = 0; q < per; ++q) s.su.push_back(breaks[k] + (breaks[k + 1] - breaks[k]) * q / per);
     s.su.push_back(s.u1());
-    for (double u : s.su) s.sp.push_back(s.at(u));
+    s.box = BBox();
+    for (double u : s.su) {
+        s.sp.push_back(s.at(u));
+        s.box.add(s.sp.back());
+    }
     static const double x[4] = {-0.8611363115940526, -0.3399810435848563, 0.3399810435848563, 0.8611363115940526};
     static const double w[4] = {0.3478548451374538, 0.6521451548625461, 0.6521451548625461, 0.3478548451374538};
     s.length = 0;
@@ -232,7 +236,11 @@ std::shared_ptr<SplineData> splineFromFrame(const std::vector<Vec2>& frame, int 
 void mapSpline(SplineData& s, const Transform2D& t, double lengthScale) {
     for (Vec2& q : s.ctrl) q = t.apply(q);
     for (Vec2& q : s.fit) q = t.apply(q);
-    for (Vec2& q : s.sp) q = t.apply(q);  // a point of the curve moves to the moved curve's
+    s.box = BBox();
+    for (Vec2& q : s.sp) {  // a point of the curve moves to the moved curve's
+        q = t.apply(q);
+        s.box.add(q);
+    }
     if (lengthScale >= 0)
         s.length *= lengthScale;
     else

@@ -139,6 +139,15 @@ viewport showing it all at 1:2. `rd_big.dwg` (D102): sizes too large, on the sam
 plate and layout: a hidden line at linetype scale 3 (gaps 0.375), a 2 × 2 square
 hatched ANSI31 at scale 4 (lines 0.5 apart), and a dimension with text and arrows 0.7.
 
+Creative set (D106). `cr_ref.dwg`: a 6 × 3 plate with its top-right corner rounded
+R0.5, a hole Ø1 with centerlines drawn as lines, a hole Ø0.8 with AutoCAD's own center
+mark (CENTERMARK: two pieces each way and a small cross, in a block), a hidden line, a
+linear and a diameter dimension. `cr_good.dwg`: another design with all of that and
+more (an 8 × 4 plate with a fillet, three holes with centerlines, two hidden lines).
+`cr_bad.dwg`: a corner with a gap of 0.02, a line running 0.03 past a corner, a hole
+without centerlines, one with them one way only, one with them too short to reach past
+it, and no hidden line, arc or diameter dimension.
+
 Regenerate everything (a few minutes; it needs a licensed AutoCAD):
 
 ```bash

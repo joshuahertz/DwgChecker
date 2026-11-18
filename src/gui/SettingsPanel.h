@@ -45,11 +45,14 @@ public:
     QWidget* modeStepWidget() const { return m_modeStep; }
     // What each solution drawing contains, by AppSettings::drawingKey (once they are read).
     void setDrawingContents(const std::map<QString, DrawingContent>& byKey);
+    // A solution drawing's Creative mode choices (D106), by AppSettings::drawingKey.
+    void setCreativeChoices(const QString& key, const dc::CreativeChoices& c);
     dc::AppSettings settings() const;
 
 signals:
     void changed();
     void editViewsRequested(const QString& refPath);  // "Edit views…"; empty = the only drawing
+    void chooseItemsRequested(const QString& refPath);  // "Choose items…" (Creative mode); empty = the only drawing
     void previewRequested(const QString& refPath);    // a drawing's name in the Solution drawings table
 
 protected:
@@ -94,6 +97,7 @@ private:
     QGroupBox* m_orthoBox;
     Scope m_dimPrecScope, m_hatchPatternScope, m_orthoScope;
     QWidget* m_editViewsRow;
+    QWidget* m_chooseItemsRow;
     QWidget* m_dimPrecRow;
     QWidget* m_hatchPatternRow;
     std::map<QString, DrawingContent> m_contents;
@@ -103,12 +107,14 @@ private:
         QWidget* dims;
         QWidget* hatches;
         QWidget* views;
+        QWidget* items;  // Choose items… (Creative mode)
     };
     std::vector<DrawingRow> m_rows;
     QWidget* m_headDims = nullptr;
     QWidget* m_headHatches = nullptr;
     QStringList m_drawingPaths;
     std::map<QString, dc::DrawingSettings> m_perDrawing;
+    std::map<QString, dc::CreativeChoices> m_creative;
     QLabel* m_modeHelp;
     QToolButton* m_advancedToggle;
     QWidget* m_advanced;

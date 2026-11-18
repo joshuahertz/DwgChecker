@@ -23,6 +23,7 @@ qt_add_executable(DwgChecker WIN32 MACOSX_BUNDLE
   DrawingView.h DrawingView.cpp
   PreviewDialog.h PreviewDialog.cpp
   ViewEditorDialog.h ViewEditorDialog.cpp
+  CreativeDialog.h CreativeDialog.cpp
   AutoCadController.h AutoCadController.cpp
 )
 target_link_libraries(DwgChecker PRIVATE dwgcore dwgplatform Qt6::Widgets Qt6::Concurrent)

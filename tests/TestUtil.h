@@ -46,10 +46,12 @@ public:
         layer0 = layer("0");
     }
 
-    quint64 ltype(const QString& name) {
+    // `extra`: its pattern ("pattern_len", "dashes"), when it is made here.
+    quint64 ltype(const QString& name, QJsonObject extra = {}) {
         for (const auto& [n, h] : m_ltypes)
             if (n.compare(name, Qt::CaseInsensitive) == 0) return h;
-        const quint64 h = addObject("LTYPE", {{"name", name}});
+        extra.insert("name", name);
+        const quint64 h = addObject("LTYPE", extra);
         m_ltypes.push_back({name, h});
         return h;
     }

@@ -1,6 +1,7 @@
 #include "Batch.h"
 
 #include "Canonicalizer.h"
+#include "Creative.h"
 
 #include <QDir>
 #include <QHash>
@@ -224,6 +225,10 @@ BatchOutput runBatch(const BatchInput& in, const IDrawingLoader& loader, const P
     std::vector<CompareSettings> cmpOf;
     for (int r = 0; r < nRefs; ++r) {
         cmpOf.push_back(nRefs > 1 ? in.settings.compareFor(out.refPaths[r]) : cmp);
+        if (nRefs == 1) cmpOf.back().creative = in.settings.creativeFor(out.refPaths[r]);  // compareFor sets it for several (D106)
+        // Creative mode: what the solution asks, worked out once for all its students (D108).
+        if (cmpOf.back().mode == Mode::Creative)
+            cmpOf.back().creativeSolution = std::make_shared<const CreativeSolution>(analyzeCreative(*out.refs[r], cmpOf.back()));
         out.refModes.push_back(cmpOf.back().mode);
         if (nRefs > 1)
             out.log << QStringLiteral("%1: %2 mode").arg(QFileInfo(out.refPaths[r]).fileName(), modeName(cmpOf.back().mode));
@@ -267,7 +272,7 @@ BatchOutput runBatch(const BatchInput& in, const IDrawingLoader& loader, const P
                 else {
                     std::vector<CompareResult> res;
                     res.reserve(nRefs);
-                    for (int k = 0; k < nRefs; ++k) res.push_back(compareDrawings(*out.refs[k], *d, cmpOf[k], viewsPtr[k]));
+                    for (int k = 0; k < nRefs; ++k) res.push_back(gradeDrawings(*out.refs[k], *d, cmpOf[k], viewsPtr[k]));
                     results[i] = std::move(res);
                     r.drawing = d;
                 }
@@ -319,6 +324,12 @@ BatchOutput runBatch(const BatchInput& in, const IDrawingLoader& loader, const P
         for (int f : grp.files) extras += out.students[f].ok() && !out.students[f].matched();
         for (int f : grp.byRef) missing += f < 0;
     }
+    // Readability: each file judged once, on the result it keeps (D105), not once per solution drawing.
+    for (StudentRun& r : out.students)
+        if (r.ok() && r.drawing) {
+            const int k = out.refOf(r);
+            if (k >= 0 && k < nRefs) addReadability(*r.drawing, cmpOf[k], viewsPtr[k], r.result);
+        }
     if (nRefs > 1 || extras > 0)
         out.log << QStringLiteral("%1 students; %2 extra file(s) not matched to a solution drawing; %3 solution drawing(s) "
                                   "without a file")

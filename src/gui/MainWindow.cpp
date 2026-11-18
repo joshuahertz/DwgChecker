@@ -3,6 +3,7 @@
 #include "Archive.h"
 #include "AutoCadController.h"
 #include "ClassSummaryTab.h"
+#include "CreativeDialog.h"
 #include "Canonicalizer.h"
 #include "Csv.h"
 #include "DetailDialog.h"
@@ -77,13 +78,20 @@ QByteArray canonSignature(const AppSettings& s) {
     o.insert(QStringLiteral("mergeByColor"), c.mergeByColor);
     o.insert(QStringLiteral("colorTolerance"), c.colorTolerance);
     o.insert(QStringLiteral("mergeByLineweight"), c.mergeByLineweight);
-    // The card also says whether the solution passes the readability checks (D101).
-    const CompareSettings& r = s.compare;
-    o.insert(QStringLiteral("readability"), QStringLiteral("%1%2%3/%4/%5")
-                                                .arg(int(r.readDashes)).arg(int(r.readHatches)).arg(int(r.readDimensions))
-                                                .arg(r.readStrictness).arg(int(r.readOnPaper)));
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
+
+// The readability settings the solution card's note was made with (D101): when only these
+// change, the note is made again from the drawings already read (D105).
+QByteArray readSignature(const AppSettings& s) {
+    const CompareSettings& r = s.compare;
+    return QStringLiteral("%1%2%3/%4/%5")
+        .arg(int(r.readDashes)).arg(int(r.readHatches)).arg(int(r.readDimensions)).arg(r.readStrictness).arg(int(r.readOnPaper))
+        .toLatin1();
+}
+
+QString refCardText(const QStringList& paths, const std::map<QString, QString>& lines,
+                    const std::map<QString, DrawingPtr>& drawings, const AppSettings& s);  // below
 
 const char* const kRecentRefs = "recent/references";
 const char* const kRecentDirs = "recent/folders";
@@ -365,9 +373,16 @@ void MainWindow::buildUi() {
     });
     connect(m_settings, &SettingsPanel::changed, this, &MainWindow::storeQuizSettings);
     connect(m_settings, &SettingsPanel::changed, this, [this]() {  // the solution card's counts follow the reading rules
-        if (canonSignature(currentSettings()) != m_refCanonSig) updateRefInfo();
+        const AppSettings s = currentSettings();
+        if (canonSignature(s) != m_refCanonSig) {
+            updateRefInfo();
+        } else if (m_refReadable == 1 && readSignature(s) != m_refReadSig) {  // only the readability note changes (D105)
+            m_refReadSig = readSignature(s);
+            m_refCard->setDetail(refCardText(m_refCard->paths(), m_refLines, m_refDrawings, s));
+        }
     });
     connect(m_settings, &SettingsPanel::editViewsRequested, this, &MainWindow::editViews);
+    connect(m_settings, &SettingsPanel::chooseItemsRequested, this, &MainWindow::chooseItems);
     connect(m_settings, &SettingsPanel::previewRequested, this, &MainWindow::previewDrawing);
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::run);
     connect(m_cancelBtn, &QPushButton::clicked, this, &MainWindow::cancel);
@@ -466,7 +481,34 @@ struct RefSummary {
     // Edit views, and its own line ("inches  ·  42 objects, 2 dimensions") for the preview.
     std::map<QString, DrawingPtr> drawings;
     std::map<QString, QString> summaries;
+    std::map<QString, QString> lines;  // by path, each drawing's line on the card, without the readability note
 };
+
+// The solution card's text: each drawing's line, with a note when the drawing itself fails the
+// readability checks the settings ask for (D101; if it does, so would a student's exact copy).
+// Built from drawings already read, so a readability change needs no new read (D105).
+QString refCardText(const QStringList& paths, const std::map<QString, QString>& lines,
+                    const std::map<QString, DrawingPtr>& drawings, const AppSettings& s) {
+    const ReadOptions ro = readOptionsFrom(s.compare);
+    QStringList out, units;
+    for (const QString& path : paths) {
+        const auto l = lines.find(path);
+        const auto d = drawings.find(path);
+        if (l == lines.end() || d == drawings.end() || !d->second) continue;
+        QString line = l->second;
+        QStringList unreadable;
+        for (const ReadIssue& i : readabilityIssues(*d->second, ro))
+            if (!i.label.isEmpty()) unreadable << i.label;
+        if (!unreadable.isEmpty()) line += QObject::tr("; the solution itself fails readability: %1").arg(unreadable.join(QStringLiteral(", ")));
+        const int u = d->second->meta.insUnits;
+        if (u > 0 && !units.contains(insUnitsName(u))) units << insUnitsName(u);
+        out << (paths.size() > 1 ? QStringLiteral("%1 \u2013 %2").arg(QFileInfo(path).completeBaseName(), line) : line);
+    }
+    const QString sep = paths.size() > 1 ? QStringLiteral("\n") : QStringLiteral("  \u00B7  ");  // one drawing per line
+    QString text = out.join(sep);
+    if (!units.isEmpty()) text = units.join(QStringLiteral(" / ")) + sep + text;
+    return text;
+}
 
 // "inches  ·  42 objects, 2 dimensions; ignoring 51 objects on turned-off or frozen layers",
 // or "inches" and then a line per drawing ("Part A – 42 objects, …") when there are several.
@@ -476,10 +518,9 @@ RefSummary describeReferences(const QStringList& paths, const AppSettings& s,
                               const std::function<void(int, int, const QString&)>& progress, const std::atomic_bool& cancel) {
     AutoLoader loader(s.loader);
     RefSummary out;
-    QStringList lines, units;
     for (const QString& path : paths) {
         if (cancel) return out;  // superseded: nobody reads the result
-        progress(static_cast<int>(lines.size()), static_cast<int>(paths.size()), QFileInfo(path).completeBaseName());
+        progress(static_cast<int>(out.drawings.size()), static_cast<int>(paths.size()), QFileInfo(path).completeBaseName());
         QString err;
         const auto d = loadDrawing(path, loader, s.referenceCanon(), &err);
         if (!d) {
@@ -501,20 +542,11 @@ RefSummary describeReferences(const QStringList& paths, const AppSettings& s,
             line += (d->hiddenLayerObjectsSkipped ? QObject::tr("; ignoring %1 on turned-off or frozen layers")
                                                   : QObject::tr("; including %1 on turned-off or frozen layers"))
                         .arg(countText(d->hiddenLayerObjects, QObject::tr("object"), QObject::tr("objects")));
-        // The readability checks on the solution itself (D101): if it fails them, so would a
-        // student's exact copy, and the limits may want loosening.
-        QStringList unreadable;
-        for (const ReadIssue& i : readabilityIssues(*d, readOptionsFrom(s.compare)))
-            if (!i.label.isEmpty()) unreadable << i.label;
-        if (!unreadable.isEmpty()) line += QObject::tr("; the solution itself fails readability: %1").arg(unreadable.join(QStringLiteral(", ")));
         out.drawings[path] = d;
+        out.lines[path] = line;
         out.summaries[path] = d->meta.insUnits > 0 ? insUnitsName(d->meta.insUnits) + QStringLiteral("  ·  ") + line : line;
-        if (d->meta.insUnits > 0 && !units.contains(insUnitsName(d->meta.insUnits))) units << insUnitsName(d->meta.insUnits);
-        lines << (paths.size() > 1 ? QStringLiteral("%1 \u2013 %2").arg(QFileInfo(path).completeBaseName(), line) : line);
     }
-    const QString sep = paths.size() > 1 ? QStringLiteral("\n") : QStringLiteral("  ·  ");  // one drawing per line
-    out.text = lines.join(sep);
-    if (!units.isEmpty()) out.text = units.join(QStringLiteral(" / ")) + sep + out.text;
+    out.text = refCardText(paths, out.lines, out.drawings, s);
     out.ok = true;
     return out;
 }
@@ -610,6 +642,7 @@ void MainWindow::referenceChanged() {
     m_pendingPreview.clear();
     m_refDrawings.clear();
     m_refSummaries.clear();
+    m_refLines.clear();
     closePreviews();
     m_showRef->setVisible(paths.size() == 1);
     m_refReadable = 0;
@@ -666,6 +699,7 @@ void MainWindow::updateRefInfo() {
     m_refCancel = std::make_shared<std::atomic_bool>(false);
     m_refDrawings.clear();  // read again with the current reading rules
     m_refSummaries.clear();
+    m_refLines.clear();
     closePreviews();  // they show the drawings as read with the old rules (D76)
     m_refCard->setDetail(paths.size() > 1 ? tr("reading %1 drawings…").arg(paths.size()) : tr("reading…"));
     m_refCard->showProgress(0, static_cast<int>(paths.size()));
@@ -703,7 +737,11 @@ void MainWindow::updateRefInfo() {
         m_refReadable = res.ok ? 1 : -1;
         m_refDrawings = res.drawings;
         m_refSummaries = res.summaries;
-        m_refCard->setDetail(res.text, !res.ok);
+        m_refLines = res.lines;
+        // The readability note as the settings are now, which may have changed while reading (D105).
+        const AppSettings now = currentSettings();
+        m_refReadSig = readSignature(now);
+        m_refCard->setDetail(res.ok ? refCardText(m_refCard->paths(), res.lines, res.drawings, now) : res.text, !res.ok);
         if (res.ok) m_settings->setDrawingContents(res.contents);  // checks only for what the drawings have
         updateSteps();
         if (!pending.isEmpty()) previewDrawing(pending);
@@ -1055,33 +1093,51 @@ void MainWindow::onFinished() {
     m_table->expandAll();
 }
 
-void MainWindow::editViews(const QString& chosen) {
+bool MainWindow::solutionDrawing(const QString& chosen, const QString& title, QString* refPath, DrawingPtr* ref) {
     const QStringList refs = m_refCard->paths();
-    if (refs.isEmpty()) { QMessageBox::warning(this, tr("Views"), tr("Choose the reference drawing first.")); return; }
-    QString refPath = chosen.isEmpty() ? refs.front() : chosen;
+    if (refs.isEmpty()) { QMessageBox::warning(this, title, tr("Choose the reference drawing first.")); return false; }
+    *refPath = chosen.isEmpty() ? refs.front() : chosen;
     if (chosen.isEmpty() && refs.size() > 1) {  // which solution drawing?
         QStringList names;
         for (const QString& r : refs) names << QFileInfo(r).fileName();
         bool ok = false;
-        const QString pick = QInputDialog::getItem(this, tr("Edit views"), tr("Solution drawing:"), names, 0, false, &ok);
-        if (!ok) return;
-        refPath = refs.value(static_cast<int>(names.indexOf(pick)), refs.front());
+        const QString pick = QInputDialog::getItem(this, title, tr("Solution drawing:"), names, 0, false, &ok);
+        if (!ok) return false;
+        *refPath = refs.value(static_cast<int>(names.indexOf(pick)), refs.front());
     }
-    if (!QFileInfo(refPath).isFile()) { QMessageBox::warning(this, tr("Views"), tr("File not found: %1").arg(refPath)); return; }
-    AppSettings s = currentSettings();
+    if (!QFileInfo(*refPath).isFile()) { QMessageBox::warning(this, title, tr("File not found: %1").arg(*refPath)); return false; }
     // The drawing as read for the card (same reading rules), else read now.
-    DrawingPtr ref;
-    if (const auto known = m_refDrawings.find(refPath); known != m_refDrawings.end()) {
-        ref = known->second;
-    } else {
-        s.loader.dwgreadPath = platform::findDwgRead();
-        AutoLoader loader(s.loader);
-        QApplication::setOverrideCursor(Qt::WaitCursor);
-        QString err;
-        ref = loadDrawing(refPath, loader, s.referenceCanon(), &err);
-        QApplication::restoreOverrideCursor();
-        if (!ref) { QMessageBox::warning(this, tr("Views"), tr("Could not read the reference: %1").arg(err)); return; }
+    if (const auto known = m_refDrawings.find(*refPath); known != m_refDrawings.end()) {
+        *ref = known->second;
+        return true;
     }
+    AppSettings s = currentSettings();
+    s.loader.dwgreadPath = platform::findDwgRead();
+    AutoLoader loader(s.loader);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString err;
+    *ref = loadDrawing(*refPath, loader, s.referenceCanon(), &err);
+    QApplication::restoreOverrideCursor();
+    if (!*ref) { QMessageBox::warning(this, title, tr("Could not read the reference: %1").arg(err)); return false; }
+    return true;
+}
+
+void MainWindow::chooseItems(const QString& chosen) {
+    QString refPath;
+    DrawingPtr ref;
+    if (!solutionDrawing(chosen, tr("Choose items"), &refPath, &ref)) return;
+    const AppSettings s = currentSettings();
+    CreativeDialog dlg(ref, refPath, s.compareFor(refPath), s.creativeFor(refPath), this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    m_settings->setCreativeChoices(AppSettings::drawingKey(refPath), dlg.choices());
+    log(tr("Creative mode items chosen for %1").arg(QFileInfo(refPath).fileName()));
+}
+
+void MainWindow::editViews(const QString& chosen) {
+    QString refPath;
+    DrawingPtr ref;
+    if (!solutionDrawing(chosen, tr("Edit views"), &refPath, &ref)) return;
+    const AppSettings s = currentSettings();
     // Views confirmed earlier, else what a run would use now: the sidecar, or found with the
     // current settings.
     QString note;

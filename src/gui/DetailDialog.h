@@ -2,7 +2,7 @@
 // Detail view for one student: the drawing in three tabs (the overlay on the solution, the
 // student's file as submitted, the reference solution as drawn), discrepancy list, metadata
 // side by side and (Orthographic) per-view results and alignment checks. Clicking an error or
-// a primitive zooms all three tabs.
+// a primitive zooms all three tabs, and the tabs follow each other's zoom and pan (D107).
 
 #include "Batch.h"
 
@@ -45,7 +45,7 @@ private:
     QWidget* buildPrimitivesPage(QWidget* parent);
     void fillPrimitives();
     void zoomToPrimitive(int row);
-    dc::BBox errorBox(int errorIndex) const;     // reference frame (the overlay)
+    dc::BBox errorBox(int errorIndex) const;     // reference frame (the overlay); not for Creative mode
     dc::BBox rawErrorBox(int errorIndex) const;  // the student's file (the raw tab)
     // Where reference item i is, or should be, in the student's file: its partner, else the
     // item moved back by the transform its view was graded with.
@@ -54,6 +54,23 @@ private:
     // transforms of the student items graded in it; none when the view wasn't found.
     std::optional<dc::Transform2D> refToStudent(int view) const;
     void zoomRaw(const dc::BBox& b);  // with some context around it; invalid: zoom to all
+    void zoomOverlayCreative(const dc::BBox& b);  // Creative mode: the overlay is the student's file, as zoomRaw
+
+    // The tabs follow each other (D107). A zoom or pan in one tab is taken to the tabs it is
+    // synced with when they are shown next; zooms asked for here (an error, an object, zoom to
+    // all) set every tab, each to its own copy of the place.
+    enum Tab { kOverlay = 0, kRaw = 1, kRef = 2, kTabs = 3 };
+    DrawingView* tabView(int tab) const;
+    bool creative() const;
+    bool synced(int tab) const;        // Creative: the solution tab is on its own
+    bool studentFrame(int tab) const;  // the student's coordinates (else the reference frame)
+    // One tab's coordinates -> another's at a point of the first; none when they don't follow
+    // each other.
+    std::optional<dc::Transform2D> tabTransform(int from, int to, dc::Vec2 at) const;
+    void viewMoved(int tab);
+    void tabShown(int tab);
+    void allInPlace();  // every tab was just zoomed: none waits for another's place
+    QString navHint(int tab) const;
 
     std::shared_ptr<const dc::BatchOutput> m_batch;
     int m_student;
@@ -67,6 +84,8 @@ private:
     QComboBox* m_primSource = nullptr;  // student / reference
     QTableWidget* m_prims = nullptr;
     QLabel* m_primWarnings = nullptr;
+    bool m_stale[kTabs] = {false, false, false};  // waits for m_syncFrom's place
+    int m_syncFrom = kOverlay;                    // the tab the user moved last
 };
 
 }  // namespace dcgui

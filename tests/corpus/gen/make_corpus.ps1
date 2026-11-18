@@ -132,6 +132,9 @@ $variants = [ordered]@{
   'lw_bylayer'           = @{ body = '(dc-lw-bylayer)' }
   'rd_ref'               = @{ body = '(dc-rd)' }
   'rd_big'               = @{ body = '(dc-rd-big)' }
+  'cr_ref'               = @{ body = '(dc-cr-ref)' }
+  'cr_good'              = @{ body = '(dc-cr-good)' }
+  'cr_bad'               = @{ body = '(dc-cr-bad)' }
 }
 
 foreach ($name in $variants.Keys) {
